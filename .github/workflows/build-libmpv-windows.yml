@@ -59,9 +59,16 @@ jobs:
         # 修改方式：用 libcavs.c + libcavsdec.c 替换原 cavsdec.c（内部实现，无需外部库）
         run: |
           cd mpv-winbuild-cmake
+          # 1. 替换 FFmpeg 仓库为 sumingyd/FFmpeg fork
           sed -i 's|https://github.com/FFmpeg/FFmpeg.git|https://github.com/sumingyd/FFmpeg.git|' packages/ffmpeg.cmake
-          echo "=== Patched ffmpeg.cmake ==="
+          # 2. 禁用 libdavs2 (AVS2 解码器)：sumingyd/FFmpeg fork 的 libdavs2.c 与
+          #    mpv-winbuild-cmake 构建的 davs2 库版本不兼容 (结构体成员缺失)
+          #    CAVS (AVS1) 不依赖 libdavs2，禁用它不影响 CAVS Guangdian profile 支持
+          sed -i 's|set(ffmpeg_davs2_cmd "--enable-libdavs2")|set(ffmpeg_davs2_cmd "")|' cmake/packages_check.cmake
+          echo "=== Patched ffmpeg.cmake (GIT_REPOSITORY) ==="
           grep "GIT_REPOSITORY" packages/ffmpeg.cmake
+          echo "=== Patched packages_check.cmake (ffmpeg_davs2_cmd) ==="
+          grep "ffmpeg_davs2_cmd" cmake/packages_check.cmake
 
       - name: Loading toolchain cache
         # 缓存 GCC 交叉编译工具链构建结果，失败也保存（重试可复用源码和配置）
