@@ -83,9 +83,16 @@ jobs:
           #    libbluray.a 和 libdvdread.a 都编译了 file_dir_win32.c 和 file_file_win32.c
           #    导致 dir_open_default 和 file_open_default 多重定义
           #    蓝光播放对 IPTV 应用不需要，禁用不影响 CAVS Guangdian profile 支持
+          #    注意：必须同时禁用 FFmpeg 和 mpv 的 libbluray，因为两者都默认启用：
+          #    - FFmpeg: --enable-libbluray (packages/ffmpeg.cmake)
+          #    - mpv: -Dlibbluray=enabled (packages/mpv.cmake)
+          #    只禁用 FFmpeg 不够，mpv 仍会通过 pkg-config 找到 libbluray.a 并链接
           sed -i 's|--enable-libbluray|--disable-libbluray|' packages/ffmpeg.cmake
+          sed -i 's|-Dlibbluray=enabled|-Dlibbluray=disabled|' packages/mpv.cmake
           echo "=== Patched ffmpeg.cmake (GIT_REPOSITORY, libbluray) ==="
           grep -E "GIT_REPOSITORY|libbluray" packages/ffmpeg.cmake
+          echo "=== Patched mpv.cmake (libbluray) ==="
+          grep -E "libbluray" packages/mpv.cmake
           echo "=== Patched packages_check.cmake (ffmpeg_davs2_cmd, ffmpeg_cuda) ==="
           grep -E "ffmpeg_davs2_cmd|ffmpeg_cuda" cmake/packages_check.cmake
           # 4. 固定 spirv-headers、spirv-tools、glslang 到 shaderc DEPS 文件声明的兼容版本
@@ -197,11 +204,14 @@ jobs:
         # 失败时输出所有包的构建日志，便于诊断编译错误
         run: |
           cd mpv-winbuild-cmake
-          # 删除 FFmpeg 的 configure 和 build stamp 文件，强制重新 configure
-          # 原因：上次构建 configure 成功了（stamp 文件被缓存），但修改了 configure 选项（禁用 libdavs2）
+          # 删除 FFmpeg 和 mpv 的 configure/build stamp 文件，强制重新 configure
+          # 原因：修改了 configure 选项（FFmpeg 禁用 libbluray，mpv 禁用 libbluray）
           # 如果不删除 stamp 文件，ninja 会跳过 configure，使用旧的配置结果
           rm -f build_x86_64/packages/ffmpeg-prefix/src/ffmpeg-stamp/ffmpeg-configure
           rm -f build_x86_64/packages/ffmpeg-prefix/src/ffmpeg-stamp/ffmpeg-build
+          rm -f build_x86_64/packages/mpv-prefix/src/mpv-stamp/mpv-configure
+          rm -f build_x86_64/packages/mpv-prefix/src/mpv-stamp/mpv-force-meson-configure
+          rm -f build_x86_64/packages/mpv-prefix/src/mpv-stamp/mpv-build
           # 删除 spirv-headers、spirv-tools、glslang 的 HEAD stamp 文件
           # 原因：force_rebuild_git 的 reset_head.sh 会检查 HEAD 文件是否存在
           # 如果 HEAD 文件存在且与 git rev-parse @{u} 匹配，会走 else 分支（git reset --hard -q）
