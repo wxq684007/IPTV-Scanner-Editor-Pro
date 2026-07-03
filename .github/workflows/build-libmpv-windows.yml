@@ -72,8 +72,10 @@ jobs:
           #    - libdavs2: 结构体成员缺失
           #    - NVENC: nvcodec-headers 版本中 NV_ENC_CLOCK_TIMESTAMP_SET.countingType 不存在
           #    CAVS (AVS1) 不依赖这两者，禁用不影响 CAVS Guangdian profile 支持
+          #    注意：仅将 ffmpeg_cuda 设为空字符串不够，FFmpeg configure 检测到
+          #    nvcodec-headers 后会自动启用 nvenc，必须显式 --disable-nvenc
           sed -i 's|set(ffmpeg_davs2_cmd "--enable-libdavs2")|set(ffmpeg_davs2_cmd "")|' cmake/packages_check.cmake
-          sed -i 's|set(ffmpeg_cuda "--enable-cuda-llvm --enable-cuvid --enable-nvdec --enable-nvenc")|set(ffmpeg_cuda "")|' cmake/packages_check.cmake
+          sed -i 's|set(ffmpeg_cuda "--enable-cuda-llvm --enable-cuvid --enable-nvdec --enable-nvenc")|set(ffmpeg_cuda "--disable-cuda-llvm --disable-cuvid --disable-nvdec --disable-nvenc")|' cmake/packages_check.cmake
           echo "=== Patched ffmpeg.cmake (GIT_REPOSITORY) ==="
           grep "GIT_REPOSITORY" packages/ffmpeg.cmake
           echo "=== Patched packages_check.cmake (ffmpeg_davs2_cmd, ffmpeg_cuda) ==="
