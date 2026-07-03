@@ -1128,7 +1128,9 @@ class SettingsFileOperations:
                 return
 
             if content.lstrip().startswith('#EXTM3U'):
-                is_hls = '#EXT-X-STREAM-INF' in content or '#EXT-X-TARGETDURATION' in content or '#EXTINF' in content
+                # HLS Playlist 特有标记：#EXT-X-STREAM-INF（主播放列表）或 #EXT-X-TARGETDURATION（媒体播放列表）
+                # 注意：#EXTINF 不能作为 HLS 判断依据，因为普通 M3U 频道列表也包含 #EXTINF
+                is_hls = '#EXT-X-STREAM-INF' in content or '#EXT-X-TARGETDURATION' in content
                 if is_hls:
                     logger.info("检测到HLS Playlist，作为单频道串流处理")
                     name = custom_name
@@ -1159,9 +1161,17 @@ class SettingsFileOperations:
                         w._local_channels.append(copy.deepcopy(ch))
                     w._local_channels_dirty = True
                     w._update_groups_for('local')
+                    # 显式切换到"全部频道"，确保新添加的频道能全部显示
+                    # （_update_groups_for 在分组未变化时会跳过 combo 更新，
+                    #  若当前选中的是某个特定分组，新频道会被过滤掉而不显示）
+                    all_channels_text = tr("all_channels", "All Channels")
+                    w.local_group_combo.blockSignals(True)
+                    if w.local_group_combo.currentText() != all_channels_text:
+                        w.local_group_combo.setCurrentText(all_channels_text)
+                    w.local_group_combo.blockSignals(False)
                     w._populate_channel_list_for(
                         w.local_channel_list, w._local_channels,
-                        w.local_group_combo.currentText()
+                        all_channels_text
                     )
                     logger.info(f"已从M3U列表加载 {len(channels)} 个频道到本地列表")
                     if hasattr(w, 'status_bar_show_message'):

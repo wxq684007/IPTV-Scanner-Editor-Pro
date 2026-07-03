@@ -1037,7 +1037,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // 与 PC 端 PlaybackController.play_channel() → fcc.on_channel_change() 对齐。
         fccService.onChannelChange(channel.url)
 
-        // 播放（去除 URL 中的 ?fcc= 参数，mpv 不理解该查询参数）
+        // 播放（HTTP 代理 URL 保留 ?fcc= 由 rt2phttpd 处理；直接 RTP/UDP URL 去除 ?fcc=）
         val playUrl = FccHelper.extractOriginalUrl(channel.url)
 
         // 协议兼容性检查：IJK/ExoPlayer 不支持 RTP/UDP 等非 HTTP 协议。

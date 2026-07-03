@@ -517,22 +517,32 @@ class MpvPlayerController(QObject):
         return _mpv_set_property_string(self.mpv_handle, name, str(value))
 
     def _extract_original_url(self, url):
-        if '/rtp/' in url and 'fcc=' in url:
-            try:
-                from urllib.parse import urlparse, parse_qs
-                parsed = urlparse(url)
-                query = parse_qs(parsed.query)
-                if 'fcc' in query:
-                    fcc_server = query['fcc'][0]
-                    path_parts = parsed.path.split('/rtp/')
-                    if len(path_parts) > 1:
-                        rtp_part = path_parts[1]
-                        original_url = f'rtp://{rtp_part}'
-                        self.logger.info(f"从 FCC URL 提取原始地址：{original_url}")
-                        return original_url
-            except Exception as e:
-                self.logger.debug(f"提取原始 URL 失败：{str(e)}")
-        return url
+        """从 URL 中提取原始播放地址（去除 FCC 代理参数）。
+
+        处理两种 URL 格式：
+        1. HTTP/HTTPS 代理 URL：http://proxy/rtp/239.1.1.1:5002?fcc=...
+           → 直接返回原 URL（保留 ?fcc= 参数，由 rt2phttpd 代理在服务端处理 FCC）
+        2. 直接 RTP/UDP URL：rtp://239.1.1.1:5002?fcc=...
+           → 返回 rtp://239.1.1.1:5002（去除 ?fcc= 查询参数，mpv 不理解该参数）
+
+        注意：此方法当前为备用实现，未被调用。PC 端直接把完整 URL 传给 mpv，
+        由 rt2phttpd 代理通过 ?fcc= 参数在服务端处理 FCC。保持逻辑与 Android 端
+        FccHelper.extractOriginalUrl() 一致以便维护。
+        """
+        # HTTP/HTTPS URL：直接返回原 URL（保留 ?fcc= 参数，由 rt2phttpd 代理处理 FCC）
+        if url.lower().startswith(('http://', 'https://')):
+            return url
+
+        # 直接 RTP/UDP URL：去除 ?fcc= 查询参数（mpv 不理解该参数）
+        url_lower = url.lower()
+        fcc_idx = url_lower.find('?fcc=')
+        if fcc_idx < 0:
+            return url
+
+        amp_idx = url.find('&', fcc_idx)
+        if amp_idx >= 0:
+            return url[:fcc_idx] + '?' + url[amp_idx + 1:]
+        return url[:fcc_idx]
 
 
     def _is_network_url(self, url):
