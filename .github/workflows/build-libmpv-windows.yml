@@ -157,7 +157,7 @@ jobs:
 
       - name: Building mpv with CAVS support
         # 构建 mpv 及所有依赖（包括 FFmpeg）
-        # 失败时输出 FFmpeg 的构建日志，便于诊断编译错误
+        # 失败时输出所有包的构建日志，便于诊断编译错误
         run: |
           cd mpv-winbuild-cmake
           # 删除 FFmpeg 的 configure 和 build stamp 文件，强制重新 configure
@@ -168,12 +168,18 @@ jobs:
           ninja -C build_x86_64 update
           ninja -C build_x86_64 mpv || {
             echo "=== mpv build failed! Diagnostics below ==="
-            echo "=== FFmpeg build logs ==="
-            find build_x86_64/packages/ffmpeg-prefix -name "ffmpeg-build-*.log" -exec sh -c 'echo "--- {} ---"; tail -200 {}' \;
-            echo "=== FFmpeg configure logs ==="
-            find build_x86_64/packages/ffmpeg-prefix -name "ffmpeg-configure-*.log" -exec sh -c 'echo "--- {} ---"; tail -100 {}' \;
+            echo "=== All package build logs (last 200 lines each) ==="
+            find build_x86_64/packages -name "*-build-*.log" -exec sh -c 'echo "--- {} ---"; tail -200 {}' \;
+            echo "=== All package configure logs (last 100 lines each) ==="
+            find build_x86_64/packages -name "*-configure-*.log" -exec sh -c 'echo "--- {} ---"; tail -100 {}' \;
             echo "=== FFmpeg config.log ==="
             find build_x86_64/packages/ffmpeg-prefix -name "config.log" -exec sh -c 'echo "--- {} ---"; tail -200 {}' \;
+            echo "=== Disk space ==="
+            df -h
+            echo "=== Memory ==="
+            free -h
+            echo "=== dmesg (OOM killer check) ==="
+            dmesg 2>/dev/null | grep -i "killed process\|out of memory" | tail -20 || echo "Cannot access dmesg"
             exit 1
           }
 
