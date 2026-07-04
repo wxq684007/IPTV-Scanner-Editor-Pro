@@ -154,6 +154,10 @@ jobs:
           fi
           # davs2 是 C++ 项目（默认用 g++），NDK 只有 clang++，用 CXX 覆盖
           export CC="$CXX"
+          # 根因修复：version.sh 用 `git rev-list --count origin/master` 获取构建号(VER_R)，
+          # 浅克隆 --branch 1.7 缺少 origin/master 引用，导致 VER_R 变空、POINTVER 变成 "1.6."，
+          # davs2.pc 的 Version 字段不完整，FFmpeg 的 "davs2 >= 1.6.0" 检查失败。
+          git fetch origin master --depth 1
           cd build/linux
           ./configure \
           	--host=$ndk_triple \
@@ -164,11 +168,6 @@ jobs:
           	--disable-asm
           make -j$cores
           make DESTDIR="$prefix_dir" install
-          # 修复 pkg-config 文件名：davs2.pc → libdavs2.pc
-          # FFmpeg 的 --enable-libdavs2 查找 libdavs2.pc，但 davs2 安装的是 davs2.pc
-          # path.sh 设置 PKG_CONFIG_LIBDIR="$prefix_dir/lib/pkgconfig"，故在此目录创建符号链接
-          cd "$prefix_dir/lib/pkgconfig"
-          [ -f davs2.pc ] && [ ! -f libdavs2.pc ] && ln -sf davs2.pc libdavs2.pc
           DAVS2_EOF
           chmod +x scripts/davs2.sh
           echo "=== Created scripts/davs2.sh ==="

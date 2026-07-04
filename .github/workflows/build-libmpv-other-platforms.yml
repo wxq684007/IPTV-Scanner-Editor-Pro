@@ -60,10 +60,16 @@ jobs:
         # 修复 3 个问题：
         # 1. config.guess (2017) 不识别 macOS ARM64 → 更新到最新版本
         # 2. ARM64 上 aarch64 汇编源文件缺失 → --disable-asm
-        # 3. davs2 安装 davs2.pc，FFmpeg 查找 libdavs2.pc → 创建符号链接
+        # 3. 浅克隆缺少 origin/master，version.sh 的 VER_R 变空 → git fetch master 修根源
         run: |
           cd build/davs2
           git clone --depth 1 --branch 1.7 https://github.com/pkuvcl/davs2.git .
+          # 根因修复：version.sh 用 `git rev-list --count origin/master` 获取构建号(VER_R)，
+          # 浅克隆 --branch 1.7 只拉取 1.7 tag，缺少 origin/master 引用，
+          # 导致 git 命令失败、VER_R 变空、POINTVER 变成 "1.6."（末尾是点），
+          # davs2.pc 的 Version 字段不完整，FFmpeg 的 "davs2 >= 1.6.0" 检查失败。
+          # fetch master 分支创建 origin/master 引用，让 version.sh 正常生成版本号。
+          git fetch origin master --depth 1
           cd build/linux
           # 更新 config.guess/config.sub 到最新版本（davs2 1.7 自带的是 2017 版本，不识别 macOS ARM64）
           curl -fsSL https://git.savannah.gnu.org/cgit/config.git/plain/config.guess -o config.guess
@@ -77,13 +83,8 @@ jobs:
             --enable-pic
           make -j$(sysctl -n hw.ncpu)
           make install
-          # 修复 pkg-config 文件名：davs2.pc → libdavs2.pc
-          # FFmpeg 的 --enable-libdavs2 查找 libdavs2.pc，但 davs2 安装的是 davs2.pc
-          cd "$HOME/davs2-install/lib/pkgconfig"
-          [ -f davs2.pc ] && [ ! -f libdavs2.pc ] && ln -sf davs2.pc libdavs2.pc
-          # 验证 pkg-config 元数据
           export PKG_CONFIG_PATH="$HOME/davs2-install/lib/pkgconfig:$PKG_CONFIG_PATH"
-          pkg-config --modversion libdavs2
+          pkg-config --modversion davs2
           echo "PKG_CONFIG_PATH=$HOME/davs2-install/lib/pkgconfig" >> "$GITHUB_ENV"
 
       - name: Download and patch FFmpeg
@@ -252,10 +253,16 @@ jobs:
         # 修复 3 个问题：
         # 1. config.guess (2017) 不识别 macOS ARM64 → 更新到最新版本
         # 2. ARM64 上 aarch64 汇编源文件缺失 → --disable-asm
-        # 3. davs2 安装 davs2.pc，FFmpeg 查找 libdavs2.pc → 创建符号链接
+        # 3. 浅克隆缺少 origin/master，version.sh 的 VER_R 变空 → git fetch master 修根源
         run: |
           cd build/davs2
           git clone --depth 1 --branch 1.7 https://github.com/pkuvcl/davs2.git .
+          # 根因修复：version.sh 用 `git rev-list --count origin/master` 获取构建号(VER_R)，
+          # 浅克隆 --branch 1.7 只拉取 1.7 tag，缺少 origin/master 引用，
+          # 导致 git 命令失败、VER_R 变空、POINTVER 变成 "1.6."（末尾是点），
+          # davs2.pc 的 Version 字段不完整，FFmpeg 的 "davs2 >= 1.6.0" 检查失败。
+          # fetch master 分支创建 origin/master 引用，让 version.sh 正常生成版本号。
+          git fetch origin master --depth 1
           cd build/linux
           # 更新 config.guess/config.sub 到最新版本（davs2 1.7 自带的是 2017 版本，不识别 macOS ARM64）
           curl -fsSL https://git.savannah.gnu.org/cgit/config.git/plain/config.guess -o config.guess
@@ -270,11 +277,8 @@ jobs:
           make -j$(nproc)
           make install
           sudo ldconfig
-          # 修复 pkg-config 文件名：davs2.pc → libdavs2.pc
-          cd "$HOME/davs2-install/lib/pkgconfig"
-          [ -f davs2.pc ] && [ ! -f libdavs2.pc ] && ln -sf davs2.pc libdavs2.pc
           export PKG_CONFIG_PATH="$HOME/davs2-install/lib/pkgconfig:$PKG_CONFIG_PATH"
-          pkg-config --modversion libdavs2
+          pkg-config --modversion davs2
           echo "PKG_CONFIG_PATH=$HOME/davs2-install/lib/pkgconfig" >> "$GITHUB_ENV"
 
       - name: Download and patch FFmpeg
@@ -427,10 +431,16 @@ jobs:
         # 修复 3 个问题：
         # 1. config.guess (2017) 不识别 macOS ARM64 → 更新到最新版本
         # 2. ARM64 上 aarch64 汇编源文件缺失 → --disable-asm
-        # 3. davs2 安装 davs2.pc，FFmpeg 查找 libdavs2.pc → 创建符号链接
+        # 3. 浅克隆缺少 origin/master，version.sh 的 VER_R 变空 → git fetch master 修根源
         run: |
           cd build/davs2
           git clone --depth 1 --branch 1.7 https://github.com/pkuvcl/davs2.git .
+          # 根因修复：version.sh 用 `git rev-list --count origin/master` 获取构建号(VER_R)，
+          # 浅克隆 --branch 1.7 只拉取 1.7 tag，缺少 origin/master 引用，
+          # 导致 git 命令失败、VER_R 变空、POINTVER 变成 "1.6."（末尾是点），
+          # davs2.pc 的 Version 字段不完整，FFmpeg 的 "davs2 >= 1.6.0" 检查失败。
+          # fetch master 分支创建 origin/master 引用，让 version.sh 正常生成版本号。
+          git fetch origin master --depth 1
           cd build/linux
           # 更新 config.guess/config.sub 到最新版本（davs2 1.7 自带的是 2017 版本，不识别 macOS ARM64）
           curl -fsSL https://git.savannah.gnu.org/cgit/config.git/plain/config.guess -o config.guess
@@ -445,11 +455,8 @@ jobs:
           make -j$(nproc)
           make install
           sudo ldconfig
-          # 修复 pkg-config 文件名：davs2.pc → libdavs2.pc
-          cd "$HOME/davs2-install/lib/pkgconfig"
-          [ -f davs2.pc ] && [ ! -f libdavs2.pc ] && ln -sf davs2.pc libdavs2.pc
           export PKG_CONFIG_PATH="$HOME/davs2-install/lib/pkgconfig:$PKG_CONFIG_PATH"
-          pkg-config --modversion libdavs2
+          pkg-config --modversion davs2
           echo "PKG_CONFIG_PATH=$HOME/davs2-install/lib/pkgconfig" >> "$GITHUB_ENV"
 
       - name: Download and patch FFmpeg
