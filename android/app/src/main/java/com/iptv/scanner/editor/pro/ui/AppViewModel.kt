@@ -2767,16 +2767,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * 调用 GitHub API 获取最新 release 信息。
      * 返回 (最新版本号, Android APK 下载链接, Release 页面链接)。
      *
-     * APK 按 ABI 拆分后，Release 中有 4 个 APK：
-     * - IPTV Scanner Editor Pro-Android-arm64-v8a.apk
-     * - IPTV Scanner Editor Pro-Android-armeabi-v7a.apk
-     * - IPTV Scanner Editor Pro-Android-x86_64.apk
-     * - IPTV Scanner Editor Pro-Android-x86.apk
+     * 单一通用 APK：Release 中是 IPTV Scanner Editor Pro-Android.apk（含所有 ABI）。
      *
-     * 根据设备首选 ABI 选择对应 APK，匹配优先级：
-     * 1. 精确匹配 Build.SUPPORTED_ABIS[0]
-     * 2. 匹配任意 Build.SUPPORTED_ABIS
-     * 3. 回退到任意 Android APK（兼容旧版单 APK 发布）
+     * 兼容性：如果 Release 中存在旧版按 ABI 拆分的 APK（如 -arm64-v8a.apk），
+     * 仍会按设备首选 ABI 匹配对应文件，确保旧版本用户也能正常更新。
      */
     private fun fetchLatestRelease(): Triple<String?, String?, String?> {
         val conn = java.net.URL(GITHUB_LATEST_API).openConnection() as java.net.HttpURLConnection
@@ -2792,10 +2786,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val tagName = release.optString("tag_name", "").removePrefix("v")
                 val releaseUrl = release.optString("html_url", "")
 
-                // 设备支持的 ABI 列表（按优先级排序，首选 ABI 在前）
-                val deviceAbis = android.os.Build.SUPPORTED_ABIS.toList()
-                Log.i(TAG, "fetchLatestRelease: device ABIs=$deviceAbis")
-
                 val assets = release.optJSONArray("assets")
                 var downloadUrl = releaseUrl
                 if (assets != null) {
@@ -2809,12 +2799,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     }
 
-                    // 按设备 ABI 优先级匹配
-                    downloadUrl = deviceAbis.firstNotNullOfOrNull { abi ->
-                        androidApks.firstOrNull { (name, _) ->
-                            name.endsWith("-$abi.apk", ignoreCase = true)
-                        }?.second
-                    } ?: androidApks.firstOrNull()?.second ?: releaseUrl
+                    // 优先匹配通用 APK（IPTV Scanner Editor Pro-Android.apk，无 ABI 后缀）
+                    val universalApk = androidApks.firstOrNull { (name, _) ->
+                        name.equals("IPTV Scanner Editor Pro-Android.apk", ignoreCase = true)
+                    }
+                    if (universalApk != null) {
+                        downloadUrl = universalApk.second
+                    } else {
+                        // 兼容旧版按 ABI 拆分的 APK：按设备首选 ABI 匹配
+                        val deviceAbis = android.os.Build.SUPPORTED_ABIS.toList()
+                        Log.i(TAG, "fetchLatestRelease: universal APK not found, fallback to ABI-specific, device ABIs=$deviceAbis")
+                        downloadUrl = deviceAbis.firstNotNullOfOrNull { abi ->
+                            androidApks.firstOrNull { (name, _) ->
+                                name.endsWith("-$abi.apk", ignoreCase = true)
+                            }?.second
+                        } ?: androidApks.firstOrNull()?.second ?: releaseUrl
+                    }
                 }
                 Log.i(TAG, "Latest release: $tagName, downloadUrl=$downloadUrl")
                 return Triple(tagName, downloadUrl, releaseUrl)

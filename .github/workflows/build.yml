@@ -372,20 +372,16 @@ jobs:
         id: apk
         working-directory: android
         run: |
-          # APK 按 ABI 拆分（productFlavors），生成 4 个 APK：
-          # - arm64-v8a (现代手机/电视盒子)
-          # - armeabi-v7a (老旧 32 位 ARM)
-          # - x86_64 / x86 (模拟器)
+          # 单一通用 APK（包含所有 ABI），生成 1 个 APK
           APK_DIR="app/build/outputs/apk"
-          APK_COUNT=$(find "$APK_DIR" -name "IPTV Scanner Editor Pro-Android-*.apk" -type f | wc -l)
-          echo "Found $APK_COUNT APK files:"
-          find "$APK_DIR" -name "IPTV Scanner Editor Pro-Android-*.apk" -type f -exec ls -la {} \;
-          if [ "$APK_COUNT" -lt 4 ]; then
-            echo "Expected at least 4 APKs (one per ABI), found $APK_COUNT"
+          APK_COUNT=$(find "$APK_DIR" -name "IPTV Scanner Editor Pro-Android.apk" -type f | wc -l)
+          echo "Found $APK_COUNT APK file(s):"
+          find "$APK_DIR" -name "IPTV Scanner Editor Pro-Android.apk" -type f -exec ls -la {} \;
+          if [ "$APK_COUNT" -lt 1 ]; then
+            echo "Expected 1 APK, found $APK_COUNT"
             exit 1
           fi
-          # 用 glob 模式匹配所有 APK（softprops/action-gh-release 支持）
-          echo "apk_glob=android/app/build/outputs/apk/**/IPTV Scanner Editor Pro-Android-*.apk" >> "$GITHUB_OUTPUT"
+          echo "apk_glob=android/app/build/outputs/apk/**/IPTV Scanner Editor Pro-Android.apk" >> "$GITHUB_OUTPUT"
 
       - name: Upload APKs to release
         uses: softprops/action-gh-release@v2
