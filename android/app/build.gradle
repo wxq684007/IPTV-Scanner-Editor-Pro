@@ -46,12 +46,29 @@ android {
         versionCode versionCodeVal
         versionName versionNameStr
 
-        ndk {
-            // Chaquopy 16.1.0 + Python 3.11 支持所有 4 种 ABI
-            // armeabi-v7a 用于老旧电视/盒子设备
-            // 恢复所有 4 种 ABI，支持 32 位/64 位/x86 设备
-            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64', 'x86'
-        }
+        // 注：ABI 拆分通过下方 productFlavors 实现（Chaquopy 要求每个变体有明确的 abiFilters）
+    }
+
+    /* 按 ABI 拆分 productFlavors：为每个 ABI 生成独立 APK。
+     *
+     * 之前单 APK 包含 4 个 ABI 的 native 库（libvlc/libavcodec/libmpv/libpython 等），
+     * 总体积 440MB。拆分后每个 ABI 的 APK 约 100MB，与同类应用（80MB 左右）接近。
+     *
+     * 用户根据设备选择对应 APK：
+     * - arm64：现代手机/电视盒子（99% 设备，arm64-v8a）
+     * - armv7：老旧 32 位 ARM 设备（armeabi-v7a）
+     * - x64 / x86：模拟器（真机罕见）
+     *
+     * 用 productFlavors 而非 splits.abi：Chaquopy 插件要求 defaultConfig 或 flavor
+     * 中明确设置 abiFilters，splits.abi 与 abiFilters 冲突会构建失败。
+     *
+     * 构建命令：./gradlew assembleRelease 会生成 4 个 APK（每个 flavor 一个） */
+    flavorDimensions "abi"
+    productFlavors {
+        arm64 { ndk { abiFilters 'arm64-v8a' } }
+        armv7 { ndk { abiFilters 'armeabi-v7a' } }
+        x64   { ndk { abiFilters 'x86_64' } }
+        x86   { ndk { abiFilters 'x86' } }
     }
 
     /* APK 签名配置（用于 release 构建）
@@ -69,16 +86,35 @@ android {
     buildTypes {
         release {
             signingConfig signingConfigs.release
-            minifyEnabled false
+            // 开启 R8 代码压缩 + 资源压缩：
+            // - 移除未使用的 Kotlin/Java 类（classes.dex 从 50MB 减到 ~25MB）
+            // - 移除未使用的资源
+            // - proguard-rules.pro 保留 Chaquopy/VLC/IJK/Compose 反射类
+            minifyEnabled true
+            shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
 
-    /* 自定义 APK 输出文件名：IPTV Scanner Editor Pro-Android.apk
-     * 与其他平台（Windows/macOS/Linux）命名规则一致，不含版本号 */
+    /* 自定义 APK 输出文件名：按 flavor（ABI）命名
+     * - arm64 flavor → IPTV Scanner Editor Pro-Android-arm64-v8a.apk
+     * - armv7 flavor → IPTV Scanner Editor Pro-Android-armeabi-v7a.apk
+     * - x64 flavor   → IPTV Scanner Editor Pro-Android-x86_64.apk
+     * - x86 flavor   → IPTV Scanner Editor Pro-Android-x86.apk
+     *
+     * 与其他平台（Windows/macOS/Linux）命名规则一致，不含版本号
+     * flavor.name 映射到标准 ABI 名称，便于用户识别 */
     applicationVariants.all { variant ->
+        def abiMap = [
+            'arm64': 'arm64-v8a',
+            'armv7': 'armeabi-v7a',
+            'x64'  : 'x86_64',
+            'x86'  : 'x86'
+        ]
+        def abiName = variant.productFlavors.find { it.dimension == 'abi' }?.name
+        def standardAbi = abiMap[abiName] ?: abiName
         variant.outputs.all { output ->
-            outputFileName = "IPTV Scanner Editor Pro-Android.apk"
+            outputFileName = "IPTV Scanner Editor Pro-Android-${standardAbi}.apk"
         }
     }
 

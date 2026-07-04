@@ -234,28 +234,29 @@ fun TvUnifiedPanel(viewModel: AppViewModel) {
                         viewModel.toggleTvUnifiedPanel()
                     },
                     onOpenPlaylist = {
-                        // FileBrowserPanel 在统一面板之后渲染；SAF launcher 是系统级浮层。
-                        // 两者关闭后焦点自然回到统一面板菜单项。
-                        openOverlay {
-                            if (!viewModel.isSafAvailable()) {
-                                viewModel.showFileBrowser()
-                            } else {
-                                playlistLauncher.launch(arrayOf(
-                                    "application/x-mpegurl", "application/vnd.apple.mpegurl",
-                                    "audio/x-mpegurl", "video/x-mpegurl",
-                                    "text/plain", "application/octet-stream"
-                                ))
-                            }
+                        // SAF launcher 注册在 TvUnifiedPanel 内，必须在结果返回时保持面板存活。
+                        // 之前用 openOverlay 先关面板再 launch，导致 launcher 被反注册、SAF 结果被丢弃。
+                        // 修复：SAF 是系统级浮层会覆盖面板，保持面板打开让 launcher 存活；
+                        //       FileBrowser 路径才需要关闭统一面板（FileBrowser 在统一面板之后渲染会被遮挡）。
+                        if (!viewModel.isSafAvailable()) {
+                            viewModel.toggleTvUnifiedPanel()
+                            viewModel.showFileBrowser()
+                        } else {
+                            playlistLauncher.launch(arrayOf(
+                                "application/x-mpegurl", "application/vnd.apple.mpegurl",
+                                "audio/x-mpegurl", "video/x-mpegurl",
+                                "text/plain", "application/octet-stream"
+                            ))
                         }
                     },
                     onOpenUrl = { openOverlay { viewModel.toggleOpenUrlDialog() } },
                     onOpenLocalVideo = {
-                        openOverlay {
-                            if (!viewModel.isSafAvailable()) {
-                                viewModel.showMediaFileBrowser()
-                            } else {
-                                videoLauncher.launch(arrayOf("video/*", "audio/*", "application/x-matroska", "application/octet-stream"))
-                            }
+                        // 同 onOpenPlaylist：SAF 路径保持面板打开，FileBrowser 路径关闭面板
+                        if (!viewModel.isSafAvailable()) {
+                            viewModel.toggleTvUnifiedPanel()
+                            viewModel.showMediaFileBrowser()
+                        } else {
+                            videoLauncher.launch(arrayOf("video/*", "audio/*", "application/x-matroska", "application/octet-stream"))
                         }
                     },
                     onSources = {

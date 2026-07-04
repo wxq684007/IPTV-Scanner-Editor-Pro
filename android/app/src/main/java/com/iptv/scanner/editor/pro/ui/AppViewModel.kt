@@ -2733,6 +2733,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * 调用 GitHub API 获取最新 release 信息。
      * 返回 (最新版本号, Android APK 下载链接, Release 页面链接)。
+     *
+     * APK 按 ABI 拆分后，Release 中有 4 个 APK：
+     * - IPTV Scanner Editor Pro-Android-arm64-v8a.apk
+     * - IPTV Scanner Editor Pro-Android-armeabi-v7a.apk
+     * - IPTV Scanner Editor Pro-Android-x86_64.apk
+     * - IPTV Scanner Editor Pro-Android-x86.apk
+     *
+     * 根据设备首选 ABI 选择对应 APK，匹配优先级：
+     * 1. 精确匹配 Build.SUPPORTED_ABIS[0]
+     * 2. 匹配任意 Build.SUPPORTED_ABIS
+     * 3. 回退到任意 Android APK（兼容旧版单 APK 发布）
      */
     private fun fetchLatestRelease(): Triple<String?, String?, String?> {
         val conn = java.net.URL(GITHUB_LATEST_API).openConnection() as java.net.HttpURLConnection
@@ -2747,18 +2758,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val release = JSONObject(json)
                 val tagName = release.optString("tag_name", "").removePrefix("v")
                 val releaseUrl = release.optString("html_url", "")
-                // 查找 Android APK 下载链接（命名规则：IPTV Scanner Editor Pro-Android.apk）
+
+                // 设备支持的 ABI 列表（按优先级排序，首选 ABI 在前）
+                val deviceAbis = android.os.Build.SUPPORTED_ABIS.toList()
+                Log.i(TAG, "fetchLatestRelease: device ABIs=$deviceAbis")
+
                 val assets = release.optJSONArray("assets")
                 var downloadUrl = releaseUrl
                 if (assets != null) {
+                    // 收集所有 Android APK asset
+                    val androidApks = mutableListOf<Pair<String, String>>() // (name, url)
                     for (i in 0 until assets.length()) {
                         val asset = assets.optJSONObject(i) ?: continue
                         val name = asset.optString("name", "")
                         if (name.contains("Android", ignoreCase = true) && name.endsWith(".apk")) {
-                            downloadUrl = asset.optString("browser_download_url", releaseUrl)
-                            break
+                            androidApks.add(name to asset.optString("browser_download_url", releaseUrl))
                         }
                     }
+
+                    // 按设备 ABI 优先级匹配
+                    downloadUrl = deviceAbis.firstNotNullOfOrNull { abi ->
+                        androidApks.firstOrNull { (name, _) ->
+                            name.endsWith("-$abi.apk", ignoreCase = true)
+                        }?.second
+                    } ?: androidApks.firstOrNull()?.second ?: releaseUrl
                 }
                 Log.i(TAG, "Latest release: $tagName, downloadUrl=$downloadUrl")
                 return Triple(tagName, downloadUrl, releaseUrl)
@@ -3931,21 +3954,72 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * 播放本地音视频文件（直接调 mpv.playFile，不走频道列表）。
-     * @param uri SAF 返回的 content:// URI 或 file:// 路径
+     *
+     * @param uri SAF 返回的 content:// URI 或 file:// 路径或绝对文件路径
+     *
+     * 注意：libmpv 不识别 content:// 协议，SAF 返回的 content:// URI 必须先拷贝到
+     * 缓存文件再传文件路径给 mpv，否则会触发 native 崩溃（参照 loadSubtitleFile 实现）。
      */
     fun playLocalVideo(uri: String) {
         Log.i(TAG, "playLocalVideo: $uri")
-        _currentIdx.value = -1  // 清除当前频道选择（本地文件不在频道列表中）
-        _playbackState.value = PlaybackState(mode = PlayMode.LIVE)
-        // 续播位置：记录本地文件信息
-        currentPlaybackUrl = uri
-        currentPlaybackName = uri.substringAfterLast('/').substringAfterLast('%')
-        currentIsLocalFile = true
-        // 刷新当前 URL 的书签列表
-        refreshCurrentBookmarks()
-        mpv.playFile(uri)
-        showOsd("本地文件", currentPlaybackName)
-        closeAllPanels()
+        viewModelScope.launch {
+            _currentIdx.value = -1  // 清除当前频道选择（本地文件不在频道列表中）
+            _playbackState.value = PlaybackState(mode = PlayMode.LIVE)
+            currentIsLocalFile = true
+
+            // content:// URI 需要拷贝到缓存文件；file:// 和绝对路径直接用
+            val playPath = withContext(Dispatchers.IO) {
+                if (uri.startsWith("content://")) {
+                    try {
+                        val app = getApplication<Application>()
+                        val resolver = app.contentResolver
+                        val cacheDir = app.cacheDir
+                        // 从 MIME 类型推断扩展名（mpv 需要正确扩展名识别容器格式）
+                        val mime = try { resolver.getType(Uri.parse(uri)) } catch (_: Exception) { null }
+                        val ext = when {
+                            mime == null -> ".mp4"
+                            mime.contains("matroska") -> ".mkv"
+                            mime.contains("mp4") -> ".mp4"
+                            mime.contains("mpeg") -> ".mpg"
+                            mime.contains("webm") -> ".webm"
+                            mime.contains("audio/mpeg") -> ".mp3"
+                            mime.contains("audio/") -> ".m4a"
+                            else -> ".mp4"
+                        }
+                        val tempFile = File(cacheDir, "local_video_${System.currentTimeMillis()}$ext")
+                        resolver.openInputStream(Uri.parse(uri))?.use { input ->
+                            tempFile.outputStream().use { input.copyTo(it) }
+                        } ?: return@withContext null
+                        tempFile.absolutePath
+                    } catch (e: Exception) {
+                        Log.e(TAG, "playLocalVideo copy content:// failed", e)
+                        null
+                    }
+                } else {
+                    // file:// 或绝对路径，去除 file:// 前缀
+                    uri.removePrefix("file://")
+                }
+            }
+
+            if (playPath == null) {
+                showOsd("播放失败", "无法读取文件")
+                return@launch
+            }
+
+            // 续播位置：记录本地文件信息（用缓存文件路径，便于下次恢复）
+            currentPlaybackUrl = playPath
+            currentPlaybackName = playPath.substringAfterLast('/').substringAfterLast('%')
+            refreshCurrentBookmarks()
+
+            try {
+                mpv.playFile(playPath)
+                showOsd("本地文件", currentPlaybackName)
+                closeAllPanels()
+            } catch (e: Throwable) {
+                Log.e(TAG, "playLocalVideo mpv.playFile failed", e)
+                showOsd("播放失败", e.message ?: "无法播放此文件")
+            }
+        }
     }
 
     /**
