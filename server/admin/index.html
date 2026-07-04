@@ -1680,13 +1680,14 @@ function showImportM3U() {
     '<input class="form-input" id="importName" placeholder="导入的频道集合名称">' +
     '</div>' +
     '<div class="form-group">' +
-    '<label class="form-label">M3U 内容</label>' +
+    '<label class="form-label">选择 M3U 文件（或直接粘贴内容）</label>' +
+    '<input type="file" id="importFile" accept=".m3u,.m3u8,.txt,audio/x-mpegurl,application/vnd.apple.mpegurl,text/plain" style="margin-bottom:8px;">' +
     '<textarea class="form-input" id="importContent" rows="10" placeholder="#EXTM3U&#10;#EXTINF:-1,...&#10;http://..."></textarea>' +
     '</div>';
   showModal('导入 M3U', body, async () => {
     const content = document.getElementById('importContent').value;
     const name = document.getElementById('importName').value.trim();
-    if (!content.trim()) { showToast('请粘贴 M3U 内容', 'error'); return false; }
+    if (!content.trim()) { showToast('请选择文件或粘贴 M3U 内容', 'error'); return false; }
     const payload = { content };
     if (name) payload.name = name;
     const d = await apiPost('/api/channels/import', payload);
@@ -1698,6 +1699,22 @@ function showImportM3U() {
       return false;
     }
   }, '导入');
+  // 文件选择后自动填充到 textarea
+  setTimeout(() => {
+    const fileInput = document.getElementById('importFile');
+    if (fileInput) {
+      fileInput.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(ev) {
+          document.getElementById('importContent').value = ev.target.result;
+        };
+        reader.onerror = function() { showToast('文件读取失败', 'error'); };
+        reader.readAsText(file);
+      });
+    }
+  }, 50);
 }
 
 // ====== 扫描 ======

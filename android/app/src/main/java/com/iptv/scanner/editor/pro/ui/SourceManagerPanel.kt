@@ -30,7 +30,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.SettingsBackupRestore
 import androidx.compose.material.icons.filled.Timer
-import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.filled.Phonelink
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -52,6 +52,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.focusable
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -113,10 +114,11 @@ fun SourceManagerPanel(viewModel: AppViewModel) {
                     color = Color.White
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    // 局域网管理按钮
+                    // 局域网管理按钮（用 Phonelink 图标：表示 TV 与手机连接管理，
+                    // 避免与系统栏 Wifi 图标冲突，且暗示启动后会出现二维码供手机扫码）
                     IconButton(onClick = { viewModel.toggleAdminServer() }, modifier = Modifier.tvFocusBorder()) {
                         Icon(
-                            Icons.Default.Wifi,
+                            Icons.Default.Phonelink,
                             contentDescription = "局域网管理",
                             tint = if (adminRunning) Color(0xFF4CAF50) else Color.White
                         )
@@ -170,16 +172,21 @@ fun SourceManagerPanel(viewModel: AppViewModel) {
                 AdminAutoStopToggle(viewModel = viewModel)
             } else if (!adminRunning) {
                 Spacer(modifier = Modifier.height(8.dp))
+                // 启动提示卡片：可被遥控器焦点选中（tvFocusBorder + focusable）
                 Surface(
                     color = Color(0xFF1A237E),
                     shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.fillMaxWidth().clickable { viewModel.toggleAdminServer() }
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .tvFocusBorder()
+                        .focusable()
+                        .clickable { viewModel.toggleAdminServer() }
                 ) {
                     Row(
                         modifier = Modifier.padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.Wifi, contentDescription = null, tint = Color(0xFF90CAF9))
+                        Icon(Icons.Default.Phonelink, contentDescription = null, tint = Color(0xFF90CAF9))
                         Spacer(modifier = Modifier.width(8.dp))
                         Column {
                             Text(
@@ -519,7 +526,7 @@ private fun LanAdminInfoBar(
                 modifier = Modifier.padding(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.Wifi, contentDescription = null, tint = Color(0xFFA5D6A7))
+                Icon(Icons.Default.Phonelink, contentDescription = null, tint = Color(0xFFA5D6A7))
                 Spacer(modifier = Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
