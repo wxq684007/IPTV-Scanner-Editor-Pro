@@ -157,7 +157,10 @@ jobs:
           # 根因修复：version.sh 用 `git rev-list --count origin/master` 获取构建号(VER_R)，
           # 浅克隆 --branch 1.7 缺少 origin/master 引用，导致 VER_R 变空、POINTVER 变成 "1.6."，
           # davs2.pc 的 Version 字段不完整，FFmpeg 的 "davs2 >= 1.6.0" 检查失败。
-          git fetch origin master --depth 1
+          # 注意：`git fetch origin master` 只更新 FETCH_HEAD，不创建 refs/remotes/origin/master，
+          # 必须用 refspec `master:refs/remotes/origin/master` 显式创建引用，
+          # 否则 `git rev-list --count origin/master` 仍然失败。
+          git fetch origin --depth 1 master:refs/remotes/origin/master
           cd build/linux
           ./configure \
           	--host=$ndk_triple \

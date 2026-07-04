@@ -57,10 +57,11 @@ jobs:
 
       - name: Build libdavs2 (AVS2 decoder)
         # 构建 AVS2 外部解码器库 (pkuvcl/davs2 1.7)
-        # 修复 3 个问题：
+        # 修复 4 个问题：
         # 1. config.guess (2017) 不识别 macOS ARM64 → 更新到最新版本
         # 2. ARM64 上 aarch64 汇编源文件缺失 → --disable-asm
         # 3. 浅克隆缺少 origin/master，version.sh 的 VER_R 变空 → git fetch master 修根源
+        # 4. git.savannah.gnu.org 经常 502 → 优先用 GitHub raw 镜像（GCC 镜像）
         run: |
           cd build/davs2
           git clone --depth 1 --branch 1.7 https://github.com/pkuvcl/davs2.git .
@@ -68,12 +69,18 @@ jobs:
           # 浅克隆 --branch 1.7 只拉取 1.7 tag，缺少 origin/master 引用，
           # 导致 git 命令失败、VER_R 变空、POINTVER 变成 "1.6."（末尾是点），
           # davs2.pc 的 Version 字段不完整，FFmpeg 的 "davs2 >= 1.6.0" 检查失败。
-          # fetch master 分支创建 origin/master 引用，让 version.sh 正常生成版本号。
-          git fetch origin master --depth 1
+          # 注意：`git fetch origin master` 只更新 FETCH_HEAD，不创建 refs/remotes/origin/master，
+          # 必须用 refspec `master:refs/remotes/origin/master` 显式创建引用，
+          # 否则 `git rev-list --count origin/master` 仍然失败。
+          git fetch origin --depth 1 master:refs/remotes/origin/master
           cd build/linux
           # 更新 config.guess/config.sub 到最新版本（davs2 1.7 自带的是 2017 版本，不识别 macOS ARM64）
-          curl -fsSL https://git.savannah.gnu.org/cgit/config.git/plain/config.guess -o config.guess
-          curl -fsSL https://git.savannah.gnu.org/cgit/config.git/plain/config.sub -o config.sub
+          # 优先从 GCC 镜像（GitHub raw，稳定）下载，备用从 GNU Savannah 下载
+          curl -fsSL --retry 3 "https://raw.githubusercontent.com/gcc-mirror/gcc/master/config.guess" -o config.guess || \
+            curl -fsSL --retry 3 "https://git.savannah.gnu.org/cgit/config.git/plain/config.guess" -o config.guess
+          curl -fsSL --retry 3 "https://raw.githubusercontent.com/gcc-mirror/gcc/master/config.sub" -o config.sub || \
+            curl -fsSL --retry 3 "https://git.savannah.gnu.org/cgit/config.git/plain/config.sub" -o config.sub
+          test -s config.guess && test -s config.sub || { echo "ERROR: Failed to download config.guess/config.sub"; exit 1; }
           chmod +x config.guess config.sub
           ./configure \
             --prefix="$HOME/davs2-install" \
@@ -250,10 +257,11 @@ jobs:
           ls -la build/patches/
 
       - name: Build libdavs2 (AVS2 decoder)
-        # 修复 3 个问题：
+        # 修复 4 个问题：
         # 1. config.guess (2017) 不识别 macOS ARM64 → 更新到最新版本
         # 2. ARM64 上 aarch64 汇编源文件缺失 → --disable-asm
         # 3. 浅克隆缺少 origin/master，version.sh 的 VER_R 变空 → git fetch master 修根源
+        # 4. git.savannah.gnu.org 经常 502 → 优先用 GitHub raw 镜像（GCC 镜像）
         run: |
           cd build/davs2
           git clone --depth 1 --branch 1.7 https://github.com/pkuvcl/davs2.git .
@@ -261,12 +269,18 @@ jobs:
           # 浅克隆 --branch 1.7 只拉取 1.7 tag，缺少 origin/master 引用，
           # 导致 git 命令失败、VER_R 变空、POINTVER 变成 "1.6."（末尾是点），
           # davs2.pc 的 Version 字段不完整，FFmpeg 的 "davs2 >= 1.6.0" 检查失败。
-          # fetch master 分支创建 origin/master 引用，让 version.sh 正常生成版本号。
-          git fetch origin master --depth 1
+          # 注意：`git fetch origin master` 只更新 FETCH_HEAD，不创建 refs/remotes/origin/master，
+          # 必须用 refspec `master:refs/remotes/origin/master` 显式创建引用，
+          # 否则 `git rev-list --count origin/master` 仍然失败。
+          git fetch origin --depth 1 master:refs/remotes/origin/master
           cd build/linux
           # 更新 config.guess/config.sub 到最新版本（davs2 1.7 自带的是 2017 版本，不识别 macOS ARM64）
-          curl -fsSL https://git.savannah.gnu.org/cgit/config.git/plain/config.guess -o config.guess
-          curl -fsSL https://git.savannah.gnu.org/cgit/config.git/plain/config.sub -o config.sub
+          # 优先从 GCC 镜像（GitHub raw，稳定）下载，备用从 GNU Savannah 下载
+          curl -fsSL --retry 3 "https://raw.githubusercontent.com/gcc-mirror/gcc/master/config.guess" -o config.guess || \
+            curl -fsSL --retry 3 "https://git.savannah.gnu.org/cgit/config.git/plain/config.guess" -o config.guess
+          curl -fsSL --retry 3 "https://raw.githubusercontent.com/gcc-mirror/gcc/master/config.sub" -o config.sub || \
+            curl -fsSL --retry 3 "https://git.savannah.gnu.org/cgit/config.git/plain/config.sub" -o config.sub
+          test -s config.guess && test -s config.sub || { echo "ERROR: Failed to download config.guess/config.sub"; exit 1; }
           chmod +x config.guess config.sub
           ./configure \
             --prefix="$HOME/davs2-install" \
@@ -428,10 +442,11 @@ jobs:
           ls -la build/patches/
 
       - name: Build libdavs2 (AVS2 decoder)
-        # 修复 3 个问题：
+        # 修复 4 个问题：
         # 1. config.guess (2017) 不识别 macOS ARM64 → 更新到最新版本
         # 2. ARM64 上 aarch64 汇编源文件缺失 → --disable-asm
         # 3. 浅克隆缺少 origin/master，version.sh 的 VER_R 变空 → git fetch master 修根源
+        # 4. git.savannah.gnu.org 经常 502 → 优先用 GitHub raw 镜像（GCC 镜像）
         run: |
           cd build/davs2
           git clone --depth 1 --branch 1.7 https://github.com/pkuvcl/davs2.git .
@@ -439,12 +454,18 @@ jobs:
           # 浅克隆 --branch 1.7 只拉取 1.7 tag，缺少 origin/master 引用，
           # 导致 git 命令失败、VER_R 变空、POINTVER 变成 "1.6."（末尾是点），
           # davs2.pc 的 Version 字段不完整，FFmpeg 的 "davs2 >= 1.6.0" 检查失败。
-          # fetch master 分支创建 origin/master 引用，让 version.sh 正常生成版本号。
-          git fetch origin master --depth 1
+          # 注意：`git fetch origin master` 只更新 FETCH_HEAD，不创建 refs/remotes/origin/master，
+          # 必须用 refspec `master:refs/remotes/origin/master` 显式创建引用，
+          # 否则 `git rev-list --count origin/master` 仍然失败。
+          git fetch origin --depth 1 master:refs/remotes/origin/master
           cd build/linux
           # 更新 config.guess/config.sub 到最新版本（davs2 1.7 自带的是 2017 版本，不识别 macOS ARM64）
-          curl -fsSL https://git.savannah.gnu.org/cgit/config.git/plain/config.guess -o config.guess
-          curl -fsSL https://git.savannah.gnu.org/cgit/config.git/plain/config.sub -o config.sub
+          # 优先从 GCC 镜像（GitHub raw，稳定）下载，备用从 GNU Savannah 下载
+          curl -fsSL --retry 3 "https://raw.githubusercontent.com/gcc-mirror/gcc/master/config.guess" -o config.guess || \
+            curl -fsSL --retry 3 "https://git.savannah.gnu.org/cgit/config.git/plain/config.guess" -o config.guess
+          curl -fsSL --retry 3 "https://raw.githubusercontent.com/gcc-mirror/gcc/master/config.sub" -o config.sub || \
+            curl -fsSL --retry 3 "https://git.savannah.gnu.org/cgit/config.git/plain/config.sub" -o config.sub
+          test -s config.guess && test -s config.sub || { echo "ERROR: Failed to download config.guess/config.sub"; exit 1; }
           chmod +x config.guess config.sub
           ./configure \
             --prefix="$HOME/davs2-install" \
