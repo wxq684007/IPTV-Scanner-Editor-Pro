@@ -104,6 +104,18 @@ class UserPrefs private constructor() {
     }
 
     // -----------------------------------------------------------------
+    // 上次播放频道（启动时恢复）
+    // -----------------------------------------------------------------
+
+    /** 获取上次播放频道的 URL（启动时按 URL 在频道列表中查找并恢复播放） */
+    fun getLastChannelUrl(): String = prefs.getString(KEY_LAST_CHANNEL_URL, "") ?: ""
+
+    /** 保存上次播放频道的 URL（playChannel 时调用） */
+    fun setLastChannelUrl(url: String) {
+        prefs.edit().putString(KEY_LAST_CHANNEL_URL, url).apply()
+    }
+
+    // -----------------------------------------------------------------
     // 批量恢复（备份恢复时一次性写入，替代逐条 add）
     // -----------------------------------------------------------------
 
@@ -618,6 +630,8 @@ class UserPrefs private constructor() {
         private const val KEY_HISTORY = "history"
         private const val KEY_QUEUE = "queue"
         private const val MAX_HISTORY = 100
+        // 上次播放的频道 URL（启动时按 URL 查找频道恢复播放，URL 比 idx 更稳健）
+        private const val KEY_LAST_CHANNEL_URL = "last_channel_url"
 
         // 播放器设置 key
         private const val KEY_VO = "player_vo"

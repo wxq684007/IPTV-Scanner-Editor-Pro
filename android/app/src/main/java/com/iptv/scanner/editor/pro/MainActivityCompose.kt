@@ -81,14 +81,14 @@ class MainActivityCompose : ComponentActivity() {
             }
         }
 
-        // 监听初始化完成，自动加载第一个频道（如果有）
+        // 监听初始化完成，自动恢复上次播放的频道（如果有）
         lifecycleScope.launch {
             viewModel.initState
                 .filterIsInstance<AppViewModel.InitState.Ready>()
                 .distinctUntilChanged()
                 .collect { state ->
                     Log.i(TAG, "Init Ready, channels=${state.status.channelsTotal}")
-                    // 自动播放第一个频道：等待 channels 加载完成（startInitialization 已触发 loadChannels）
+                    // 恢复上次播放的频道：等待 channels 加载完成（startInitialization 已触发 loadChannels）
                     if (state.status.channelsTotal > 0 && viewModel.currentIdx.value < 0) {
                         val startTime = System.currentTimeMillis()
                         // 最多等待 5 秒 channels 加载完成
@@ -98,8 +98,9 @@ class MainActivityCompose : ComponentActivity() {
                             delay(200L)
                         }
                         if (viewModel.channels.value.isNotEmpty() && viewModel.currentIdx.value < 0) {
-                            viewModel.playChannel(0, silent = true)
-                            Log.i(TAG, "Auto-played first channel")
+                            // 优先按 URL 恢复上次播放的频道，找不到则播放第一个
+                            viewModel.restoreLastChannel()
+                            Log.i(TAG, "Auto-restored last channel")
                         }
                     }
                 }

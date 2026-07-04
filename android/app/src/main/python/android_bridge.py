@@ -544,6 +544,8 @@ def add_channel(url, name, group=''):
             'id': len(ctx._channels) + 1,
         }
         ctx._channels.append(new_ch)
+        # 持久化：进程重启后添加的频道不丢失
+        ctx._save_channels_to_cache()
         return _ok({'idx': len(ctx._channels) - 1})
     except Exception as e:
         return _err(str(e))
@@ -560,6 +562,8 @@ def update_channel(idx, json_data):
             return _err('idx out of range')
         data = _json.loads(json_data) if isinstance(json_data, str) else json_data
         ctx._channels[idx].update(data)
+        # 持久化：更新频道信息后立即保存
+        ctx._save_channels_to_cache()
         return _ok({'ok': True})
     except Exception as e:
         return _err(str(e))
@@ -575,6 +579,8 @@ def delete_channel(idx):
         if idx < 0 or idx >= len(ctx._channels):
             return _err('idx out of range')
         ctx._channels.pop(idx)
+        # 持久化：删除后立即保存，防止已删除频道在重启后复活
+        ctx._save_channels_to_cache()
         return _ok({'ok': True})
     except Exception as e:
         return _err(str(e))
@@ -594,6 +600,8 @@ def import_channels(content, name=''):
             for i, c in enumerate(channels):
                 c['id'] = base_id + i + 1
             ctx._channels.extend(channels)
+            # 持久化：导入的频道重启后不丢失
+            ctx._save_channels_to_cache()
         return _ok({'imported': len(channels)})
     except Exception as e:
         return _err(str(e))

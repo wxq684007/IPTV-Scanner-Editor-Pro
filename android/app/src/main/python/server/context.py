@@ -275,10 +275,12 @@ class StandaloneScanner:
             if found_channels and not self._stop_event.is_set():
                 # 追加到现有频道列表（不覆盖订阅源加载的频道）
                 self._ctx._channels = self._ctx._channels + found_channels
+                # 持久化到 channels_cache.json：进程重启后扫描频道不丢失
+                self._ctx._save_channels_to_cache()
                 import time
                 self._ctx._last_load_time = time.time()
                 self.last_message = f'完成：发现 {len(found_channels)} 个有效频道'
-                logger.info(f"URL 范围扫描完成，发现 {len(found_channels)} 个有效频道")
+                logger.info(f"URL 范围扫描完成，发现 {len(found_channels)} 个有效频道，已持久化")
             elif self._stop_event.is_set():
                 self.last_message = '已停止'
             else:
@@ -584,14 +586,22 @@ class ServerContext:
 
             # 更新频道列表
             if all_channels:
-                self._channels = all_channels
+                # 合并而非覆盖：保留不在订阅源中的扫描/导入频道（按 URL 去重）
+                # 根因：之前 self._channels = all_channels 完全覆盖，导致扫描/导入的频道丢失
+                existing_urls = {c.get('url', '') for c in all_channels if c.get('url', '')}
+                extra_channels = [c for c in self._channels if c.get('url', '') and c.get('url', '') not in existing_urls]
+                if extra_channels:
+                    self._channels = all_channels + extra_channels
+                    logger.info(f"订阅源 {len(all_channels)} 个 + 本地保留 {len(extra_channels)} 个（扫描/导入）")
+                else:
+                    self._channels = all_channels
                 self._save_channels_to_cache()
                 import time
                 self._last_load_time = time.time()
                 with self._source_load_lock:
                     self._source_loading = False
-                    self._source_load_status = {'loading': False, 'total': len(sources), 'loaded': len(sources), 'channels': len(all_channels), 'message': f'完成：{len(all_channels)} 个频道'}
-                logger.info(f"订阅源加载完成，共 {len(all_channels)} 个频道")
+                    self._source_load_status = {'loading': False, 'total': len(sources), 'loaded': len(sources), 'channels': len(self._channels), 'message': f'完成：{len(self._channels)} 个频道'}
+                logger.info(f"订阅源加载完成，共 {len(self._channels)} 个频道")
             else:
                 # 加载到空列表时不覆盖已有频道，提示当前频道数和失败原因
                 existing = len(self._channels)

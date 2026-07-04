@@ -996,6 +996,36 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * 启动时恢复上次播放的频道。
+     *
+     * 优先按 URL 在频道列表中查找上次播放的频道（URL 比 idx 更稳健，即使频道顺序
+     * 变化也能找到）。找不到则播放第一个频道（与之前行为一致）。
+     *
+     * 由 MainActivityCompose 在 InitState.Ready + channels 加载完成后调用。
+     */
+    fun restoreLastChannel() {
+        if (_currentIdx.value >= 0) {
+            // 已经在播放（可能被其他逻辑触发），不重复恢复
+            return
+        }
+        val channels = _channels.value
+        if (channels.isEmpty()) return
+
+        val lastUrl = userPrefs.getLastChannelUrl()
+        if (lastUrl.isNotEmpty()) {
+            val lastIdx = channels.indexOfFirst { it.url == lastUrl }
+            if (lastIdx >= 0) {
+                Log.i(TAG, "restoreLastChannel: restoring '$lastUrl' at idx=$lastIdx")
+                playChannel(lastIdx, silent = true)
+                return
+            }
+            Log.i(TAG, "restoreLastChannel: last URL '$lastUrl' not found in ${channels.size} channels, playing first")
+        }
+        // 回退：播放第一个频道
+        playChannel(0, silent = true)
+    }
+
     /** 加载用户偏好（收藏/历史/队列/提醒/续播位置/书签） */
     private fun loadUserPrefs() {
         _favorites.value = userPrefs.getFavorites()
@@ -1150,6 +1180,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // 加入历史
         userPrefs.addToHistory(idx)
         _history.value = userPrefs.getHistory()
+
+        // 记住上次播放的频道 URL（启动时按 URL 查找恢复，比 idx 更稳健）
+        userPrefs.setLastChannelUrl(channel.url)
 
         // 预取 EPG（避免用户必须先打开 EPG 面板才能看到节目信息）
         fetchEpgForCurrent()
