@@ -236,11 +236,22 @@ jobs:
             patch -p1 --batch --forward -i "$PATCHES_DIR/${sha}.patch" || true
           done
 
-          # 手动修复 codec_id.h：在 AV_CODEC_ID_AHX 后添加 AV_CODEC_ID_DRA
-          # patch d208cf8 的 codec_id.h hunk 因官方 FFmpeg 行号变化而失败
-          # 使用 perl 替代 sed，确保跨平台兼容性和可靠性
+          # 手动修复 codec_id.h：添加 AV_CODEC_ID_DRA
+          # patch d208cf8 的 codec_id.h hunk 期望在 AV_CODEC_ID_AHX 后添加 AV_CODEC_ID_DRA，
+          # 但不同 FFmpeg 版本的 codec_id.h 内容不同：
+          # - master 有 AV_CODEC_ID_AHX（hunk 因行号偏移失败）
+          # - n8.0.1 没有 AV_CODEC_ID_AHX（hunk 必然失败）
+          # 通用策略：优先在 AV_CODEC_ID_AHX 后添加（保持与 patch 一致）；
+          # 若不存在，则在音频 codec 末尾（AV_CODEC_ID_G728 后）添加，确保不改变现有 ID 值。
           if ! grep -q AV_CODEC_ID_DRA libavcodec/codec_id.h; then
-            perl -i -pe 's/(AV_CODEC_ID_AHX,)/$1\n    AV_CODEC_ID_DRA,/' libavcodec/codec_id.h
+            if grep -q 'AV_CODEC_ID_AHX,' libavcodec/codec_id.h; then
+              perl -i -pe 's/(AV_CODEC_ID_AHX,)/$1\n    AV_CODEC_ID_DRA,/' libavcodec/codec_id.h
+            elif grep -q 'AV_CODEC_ID_G728,' libavcodec/codec_id.h; then
+              perl -i -pe 's/(AV_CODEC_ID_G728,)/$1\n    AV_CODEC_ID_DRA,/' libavcodec/codec_id.h
+            else
+              echo "ERROR: Cannot find a suitable location to add AV_CODEC_ID_DRA to codec_id.h"
+              exit 1
+            fi
           fi
           # 验证修复成功
           grep -q AV_CODEC_ID_DRA libavcodec/codec_id.h || \

@@ -105,11 +105,37 @@ jobs:
             echo "=== Applying CAVS patch $sha ==="
             patch -p1 --batch --forward -i ../patches/${sha}.patch || true
           done
-          # 手动修复 codec_id.h：在 AV_CODEC_ID_AHX 后添加 AV_CODEC_ID_DRA
-          # d208cf8 patch 中这个 hunk 因官方 FFmpeg 行号变化而失败
-          # 使用 perl 替代 sed，确保 macOS(BSD) 和 Linux(GNU) 兼容
+          # 手动修复 codec_id.h：添加 AV_CODEC_ID_DRA
+          # patch d208cf8 的 codec_id.h hunk 期望在 AV_CODEC_ID_AHX 后添加 AV_CODEC_ID_DRA，
+          # 但不同 FFmpeg 版本的 codec_id.h 内容不同：
+          # - master 有 AV_CODEC_ID_AHX（hunk 因行号偏移失败）
+          # - n8.0.1 没有 AV_CODEC_ID_AHX（hunk 必然失败）
+          # 通用策略：优先在 AV_CODEC_ID_AHX 后添加（保持与 patch 一致）；
+          # 若不存在，则在音频 codec 末尾（AV_CODEC_ID_G728 后）添加，确保不改变现有 ID 值。
+          if ! grep -q AV_CODEC_ID_DRA libavcodec/codec_id.h; then
+            if grep -q 'AV_CODEC_ID_AHX,' libavcodec/codec_id.h; then
+              perl -i -pe 's/(AV_CODEC_ID_AHX,)/$1\n    AV_CODEC_ID_DRA,/' libavcodec/codec_id.h
+            elif grep -q 'AV_CODEC_ID_G728,' libavcodec/codec_id.h; then
+              perl -i -pe 's/(AV_CODEC_ID_G728,)/$1\n    AV_CODEC_ID_DRA,/' libavcodec/codec_id.h
+            else
+              echo "ERROR: Cannot find a suitable location to add AV_CODEC_ID_DRA to codec_id.h"
+              exit 1
+            fi
+          fi
+          # 验证修复成功
           grep -q AV_CODEC_ID_DRA libavcodec/codec_id.h || \
-            perl -i -pe 's/(AV_CODEC_ID_AHX,)/$1\n    AV_CODEC_ID_DRA,/' libavcodec/codec_id.h
+            { echo "ERROR: Failed to add AV_CODEC_ID_DRA to codec_id.h"; exit 1; }
+          echo "=== AV_CODEC_ID_DRA added to codec_id.h ==="
+
+          # 修复 macOS 兼容性：libcavs.c 的 SYS_LINUX 宏错误地把所有非 Windows 系统当作
+          # Linux（#else #define SYS_LINUX 1），导致 macOS 上使用 Linux 特有的
+          # cpu_set_t/sched_getaffinity 而编译失败。改为仅在 __linux__ 下定义 SYS_LINUX=1。
+          perl -i -0777 -pe 's/#define SYS_WINDOWS 0\n#define SYS_LINUX 1/#define SYS_WINDOWS 0\n#if defined(__linux__)\n#define SYS_LINUX 1\n#else\n#define SYS_LINUX 0\n#endif/' libavcodec/libcavs.c
+          # 验证修复成功
+          grep -q '__linux__' libavcodec/libcavs.c || \
+            { echo "ERROR: Failed to patch SYS_LINUX macro in libcavs.c"; exit 1; }
+          echo "=== libcavs.c SYS_LINUX macro patched for macOS ==="
+
           # 验证 patch 应用结果
           echo "=== Verify CAVS files exist ==="
           ls -la libavcodec/libcavs* libavcodec/libcavsdec* libavcodec/dradec* 2>/dev/null || \
@@ -304,9 +330,20 @@ jobs:
             echo "=== Applying CAVS patch $sha ==="
             patch -p1 --batch --forward -i ../patches/${sha}.patch || true
           done
-          # 手动修复 codec_id.h
+          # 手动修复 codec_id.h：添加 AV_CODEC_ID_DRA（通用方案，兼容不同 FFmpeg 版本）
+          if ! grep -q AV_CODEC_ID_DRA libavcodec/codec_id.h; then
+            if grep -q 'AV_CODEC_ID_AHX,' libavcodec/codec_id.h; then
+              perl -i -pe 's/(AV_CODEC_ID_AHX,)/$1\n    AV_CODEC_ID_DRA,/' libavcodec/codec_id.h
+            elif grep -q 'AV_CODEC_ID_G728,' libavcodec/codec_id.h; then
+              perl -i -pe 's/(AV_CODEC_ID_G728,)/$1\n    AV_CODEC_ID_DRA,/' libavcodec/codec_id.h
+            else
+              echo "ERROR: Cannot find a suitable location to add AV_CODEC_ID_DRA to codec_id.h"
+              exit 1
+            fi
+          fi
           grep -q AV_CODEC_ID_DRA libavcodec/codec_id.h || \
-            sed -i '/AV_CODEC_ID_AHX,/a\    AV_CODEC_ID_DRA,' libavcodec/codec_id.h
+            { echo "ERROR: Failed to add AV_CODEC_ID_DRA to codec_id.h"; exit 1; }
+          echo "=== AV_CODEC_ID_DRA added to codec_id.h ==="
           echo "=== Verify CAVS files exist ==="
           ls -la libavcodec/libcavs* libavcodec/libcavsdec* libavcodec/dradec* 2>/dev/null || \
             { echo "ERROR: CAVS patch did not apply correctly"; exit 1; }
@@ -489,8 +526,20 @@ jobs:
             echo "=== Applying CAVS patch $sha ==="
             patch -p1 --batch --forward -i ../patches/${sha}.patch || true
           done
+          # 手动修复 codec_id.h：添加 AV_CODEC_ID_DRA（通用方案，兼容不同 FFmpeg 版本）
+          if ! grep -q AV_CODEC_ID_DRA libavcodec/codec_id.h; then
+            if grep -q 'AV_CODEC_ID_AHX,' libavcodec/codec_id.h; then
+              perl -i -pe 's/(AV_CODEC_ID_AHX,)/$1\n    AV_CODEC_ID_DRA,/' libavcodec/codec_id.h
+            elif grep -q 'AV_CODEC_ID_G728,' libavcodec/codec_id.h; then
+              perl -i -pe 's/(AV_CODEC_ID_G728,)/$1\n    AV_CODEC_ID_DRA,/' libavcodec/codec_id.h
+            else
+              echo "ERROR: Cannot find a suitable location to add AV_CODEC_ID_DRA to codec_id.h"
+              exit 1
+            fi
+          fi
           grep -q AV_CODEC_ID_DRA libavcodec/codec_id.h || \
-            sed -i '/AV_CODEC_ID_AHX,/a\    AV_CODEC_ID_DRA,' libavcodec/codec_id.h
+            { echo "ERROR: Failed to add AV_CODEC_ID_DRA to codec_id.h"; exit 1; }
+          echo "=== AV_CODEC_ID_DRA added to codec_id.h ==="
           echo "=== Verify CAVS files exist ==="
           ls -la libavcodec/libcavs* libavcodec/libcavsdec* libavcodec/dradec* 2>/dev/null || \
             { echo "ERROR: CAVS patch did not apply correctly"; exit 1; }
