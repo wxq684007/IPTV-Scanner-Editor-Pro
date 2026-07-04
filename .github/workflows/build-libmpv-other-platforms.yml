@@ -188,6 +188,8 @@ jobs:
 
       - name: Package libmpv
         # 打包 libmpv 及其依赖（libdavs2, FFmpeg libs）
+        # 注意：避免使用 cd 切换目录（之前的 cd "$STAGING/lib" 后 cd release 会切换到
+        # 错误的嵌套目录，导致 tar.gz 创建在错误位置，上传步骤找不到文件）
         run: |
           STAGING="release/libmpv-cavs-macos-arm64"
           mkdir -p "$STAGING/lib"
@@ -199,25 +201,27 @@ jobs:
           cp -L "$HOME/ffmpeg-cavs/lib/"libsw*.dylib "$STAGING/lib/" 2>/dev/null || true
           # 复制 libdavs2
           cp -L "$HOME/davs2-install/lib/"libdavs2*.dylib "$STAGING/lib/" 2>/dev/null || true
-          # 修复 dylib 链接路径（使用 @rpath）
-          cd "$STAGING/lib"
-          for f in *.dylib; do
-            install_name_tool -id "@rpath/$f" "$f" 2>/dev/null || true
-            # 将对同级库的引用改为 @rpath
-            for dep in *.dylib; do
+          # 验证 dylib 文件
+          echo "=== Files in $STAGING/lib ==="
+          ls -la "$STAGING/lib/"
+          # 修复 dylib 链接路径（使用 @rpath），使用绝对路径避免 cd
+          for f in "$STAGING/lib/"*.dylib; do
+            fname=$(basename "$f")
+            install_name_tool -id "@rpath/$fname" "$f" 2>/dev/null || true
+            for dep in "$STAGING/lib/"*.dylib; do
               [ "$f" = "$dep" ] && continue
-              install_name_tool -change "$HOME/ffmpeg-cavs/lib/$dep" "@rpath/$dep" "$f" 2>/dev/null || true
-              install_name_tool -change "$HOME/davs2-install/lib/$dep" "@rpath/$dep" "$f" 2>/dev/null || true
-              install_name_tool -change "$HOME/mpv-install/lib/$dep" "@rpath/$dep" "$f" 2>/dev/null || true
+              depname=$(basename "$dep")
+              install_name_tool -change "$HOME/ffmpeg-cavs/lib/$depname" "@rpath/$depname" "$f" 2>/dev/null || true
+              install_name_tool -change "$HOME/davs2-install/lib/$depname" "@rpath/$depname" "$f" 2>/dev/null || true
+              install_name_tool -change "$HOME/mpv-install/lib/$depname" "@rpath/$depname" "$f" 2>/dev/null || true
             done
           done
           # 复制头文件（供 Python ctypes 绑定使用）
           mkdir -p "$STAGING/include/mpv"
           cp -r "$HOME/mpv-install/include/mpv/"* "$STAGING/include/mpv/"
-          # 打包
-          cd release
-          tar czf libmpv-cavs-macos-arm64.tar.gz libmpv-cavs-macos-arm64
-          ls -la libmpv-cavs-macos-arm64.tar.gz
+          # 打包（使用 -C 选项避免 cd）
+          tar czf release/libmpv-cavs-macos-arm64.tar.gz -C release libmpv-cavs-macos-arm64
+          ls -la release/libmpv-cavs-macos-arm64.tar.gz
 
       - name: Verify CAVS support
         run: |
@@ -254,16 +258,19 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install build dependencies
+        # 不通过 apt 安装 meson（版本太旧）和 libplacebo-dev（6.338.2 太旧，mpv 要求 >= 7.360.1），
+        # meson 改用 pip 安装最新版，libplacebo 从源码编译（见 Build libplacebo 步骤）
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential meson ninja-build pkg-config \
+            build-essential ninja-build pkg-config \
             nasm yasm python3-pip git autoconf automake libtool \
-            libass-dev zlib1g-dev libjpeg-dev libplacebo-dev \
+            libass-dev zlib1g-dev libjpeg-dev \
             libgl-dev libx11-dev libxrandr-dev libxext-dev \
             libxss-dev libxpresent-dev libvdpau-dev libva-dev \
             libx264-dev libx265-dev libvpx-dev libmp3lame-dev libopus-dev \
             liblua5.1-0-dev libjpeg-dev
+          sudo pip3 install --upgrade meson
           meson --version
           ninja --version
 
@@ -371,9 +378,25 @@ jobs:
           "$HOME/ffmpeg-cavs/bin/ffmpeg" -decoders 2>/dev/null | grep -E "cavs|avs2" || true
           echo "PKG_CONFIG_PATH=$HOME/ffmpeg-cavs/lib/pkgconfig:$HOME/davs2-install/lib/pkgconfig" >> "$GITHUB_ENV"
 
+      - name: Build libplacebo
+        # mpv 要求 libplacebo >= 7.360.1，但 apt 安装的是 6.338.2，需从源码编译
+        run: |
+          cd build
+          git clone --depth 1 https://github.com/haasn/libplacebo.git
+          cd libplacebo
+          meson setup build_dir \
+            --prefix="$HOME/libplacebo-install" \
+            --buildtype=release \
+            -Dtests=false \
+            -Ddemos=false
+          meson compile -C build_dir
+          meson install -C build_dir
+          pkg-config --modversion libplacebo
+          echo "PKG_CONFIG_PATH=$HOME/libplacebo-install/lib/pkgconfig" >> "$GITHUB_ENV"
+
       - name: Build mpv
         run: |
-          export PKG_CONFIG_PATH="$HOME/ffmpeg-cavs/lib/pkgconfig:$HOME/davs2-install/lib/pkgconfig:$PKG_CONFIG_PATH"
+          export PKG_CONFIG_PATH="$HOME/ffmpeg-cavs/lib/pkgconfig:$HOME/davs2-install/lib/pkgconfig:$HOME/libplacebo-install/lib/pkgconfig:$PKG_CONFIG_PATH"
           cd build/mpv
           git clone --depth 1 https://github.com/mpv-player/mpv.git .
           meson setup build_dir \
@@ -450,16 +473,19 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install build dependencies
+        # 不通过 apt 安装 meson（版本太旧）和 libplacebo-dev（6.338.2 太旧，mpv 要求 >= 7.360.1），
+        # meson 改用 pip 安装最新版，libplacebo 从源码编译（见 Build libplacebo 步骤）
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential meson ninja-build pkg-config \
+            build-essential ninja-build pkg-config \
             nasm yasm python3-pip git autoconf automake libtool \
-            libass-dev zlib1g-dev libjpeg-dev libplacebo-dev \
+            libass-dev zlib1g-dev libjpeg-dev \
             libgl-dev libx11-dev libxrandr-dev libxext-dev \
             libxss-dev libxpresent-dev libvdpau-dev libva-dev \
             libx264-dev libx265-dev libvpx-dev libmp3lame-dev libopus-dev \
             liblua5.1-0-dev libjpeg-dev
+          sudo pip3 install --upgrade meson
           meson --version
           ninja --version
 
@@ -567,9 +593,25 @@ jobs:
           "$HOME/ffmpeg-cavs/bin/ffmpeg" -decoders 2>/dev/null | grep -E "cavs|avs2" || true
           echo "PKG_CONFIG_PATH=$HOME/ffmpeg-cavs/lib/pkgconfig:$HOME/davs2-install/lib/pkgconfig" >> "$GITHUB_ENV"
 
+      - name: Build libplacebo
+        # mpv 要求 libplacebo >= 7.360.1，但 apt 安装的是 6.338.2，需从源码编译
+        run: |
+          cd build
+          git clone --depth 1 https://github.com/haasn/libplacebo.git
+          cd libplacebo
+          meson setup build_dir \
+            --prefix="$HOME/libplacebo-install" \
+            --buildtype=release \
+            -Dtests=false \
+            -Ddemos=false
+          meson compile -C build_dir
+          meson install -C build_dir
+          pkg-config --modversion libplacebo
+          echo "PKG_CONFIG_PATH=$HOME/libplacebo-install/lib/pkgconfig" >> "$GITHUB_ENV"
+
       - name: Build mpv
         run: |
-          export PKG_CONFIG_PATH="$HOME/ffmpeg-cavs/lib/pkgconfig:$HOME/davs2-install/lib/pkgconfig:$PKG_CONFIG_PATH"
+          export PKG_CONFIG_PATH="$HOME/ffmpeg-cavs/lib/pkgconfig:$HOME/davs2-install/lib/pkgconfig:$HOME/libplacebo-install/lib/pkgconfig:$PKG_CONFIG_PATH"
           cd build/mpv
           git clone --depth 1 https://github.com/mpv-player/mpv.git .
           meson setup build_dir \
