@@ -79,12 +79,17 @@ jobs:
           #    真正的 patch 文件在 Building mpv 步骤中下载并放到 src_packages/cavs_patches
           #    PATCH_COMMAND 在 SOURCE_DIR (src_packages/ffmpeg) 中执行
           #    所以用 ../cavs_patches/ 引用 patch 文件
+          #    使用 --batch --forward 选项：忽略已应用的 patch，跳过失败的 hunk
+          #    失败的 hunk 由后续 sed 命令手动修复（例如 codec_id.h 在新 FFmpeg 中行号变化）
           CAVS_PATCHES="d208cf8 48ad875 e633613 fb9a3ec 0de8ee1 4cd3e6d"
           CAVS_PATCH_CMD=""
           for sha in $CAVS_PATCHES; do
-            CAVS_PATCH_CMD="${CAVS_PATCH_CMD} && patch -p1 -i ../cavs_patches/${sha}.patch"
+            CAVS_PATCH_CMD="${CAVS_PATCH_CMD} && patch -p1 --batch --forward -i ../cavs_patches/${sha}.patch || true"
           done
           CAVS_PATCH_CMD="${CAVS_PATCH_CMD# && }"
+          # 手动修复 codec_id.h：在 AV_CODEC_ID_AHX 后添加 AV_CODEC_ID_DRA
+          # d208cf8 patch 中这个 hunk 因官方 FFmpeg 行号变化而失败
+          CAVS_PATCH_CMD="${CAVS_PATCH_CMD} && grep -q AV_CODEC_ID_DRA libavcodec/codec_id.h || sed -i '/AV_CODEC_ID_AHX,/a\\    AV_CODEC_ID_DRA,' libavcodec/codec_id.h"
           sed -i "/UPDATE_COMMAND \"\"/a\\    PATCH_COMMAND bash -c \"${CAVS_PATCH_CMD}\"" packages/ffmpeg.cmake
           echo "=== Patched ffmpeg.cmake (CAVS patches injection) ==="
           grep -A2 "PATCH_COMMAND" packages/ffmpeg.cmake
