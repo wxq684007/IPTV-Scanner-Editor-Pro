@@ -58,26 +58,70 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
      *
      * HDR 直通说明：VLC 使用 MediaCodec 直接渲染到 Surface，HDR 元数据由
      * MediaCodec 自动协商 Surface 格式，由系统 HDR 显示管线处理，无需额外选项。
+     *
+     * 如果 native 库加载失败（x86/x86_64 设备无 libvlc.so），[libVLC] 为 null，
+     * [nativeAvailable] 为 false，所有方法安全降级。
      */
-    private val libVLC: LibVLC = LibVLC(
-        context,
-        arrayListOf(
-            "--rtsp-tcp",               // RTSP 强制 TCP（避免 UDP 丢包）
-            "--network-caching=1000",   // 网络缓存 1 秒（平衡延迟与卡顿）
-            "--live-caching=1000",      // 直播缓存 1 秒
-            "--codec=mediacodec_ndk",   // 硬件解码（MediaCodec NDK 接口）
-            "--fullscreen",             // 全屏渲染
-            "--no-drop-late-frames",    // 不丢弃迟到帧（减少画面跳跃）
-            "--no-skip-frames"          // 不跳帧（保证画面连续性）
-        )
-    )
+    private val libVLC: LibVLC?
+
+    /**
+     * VLC native 库是否可用。
+     *
+     * 在 x86/x86_64 设备上 VLC 的 native 库（libvlc.so）可能不存在，
+     * 构造 LibVLC 时会抛 UnsatisfiedLinkError。
+     * 此时 nativeAvailable=false，所有方法安全降级，switchPlayer 会回退到 MPV。
+     */
+    val nativeAvailable: Boolean
 
     /**
      * VLC MediaPlayer 实例。
      * 对外可见，供 [VlcVideoView] 访问 vlcVout 进行 Surface 绑定。
+     * native 不可用时为 null。
      */
-    val mediaPlayer: MediaPlayer = MediaPlayer(libVLC).apply {
-        setEventListener(this@VlcController)
+    val mediaPlayer: MediaPlayer?
+
+    init {
+        // 尝试创建 LibVLC + MediaPlayer 实例。
+        // 在 x86/x86_64 设备上，VLC native 库（libvlc.so）加载失败会抛
+        // UnsatisfiedLinkError / ExceptionInInitializerError，此时 nativeAvailable=false。
+        val (available, lib, mp) = tryCreateInstances(context)
+        nativeAvailable = available
+        libVLC = lib
+        mediaPlayer = mp
+        if (!available) {
+            Log.e(TAG, "VLC native library not available on this ABI (likely x86/x86_64). " +
+                "VLC player will be disabled. Please use MPV/ExoPlayer/IJK instead.")
+        }
+    }
+
+    /**
+     * 尝试创建 LibVLC + MediaPlayer 实例。
+     * 返回 (nativeAvailable, libVLC, mediaPlayer)：成功时 (true, 实例, 实例)，失败时 (false, null, null)。
+     *
+     * 捕获 Throwable（包括 RuntimeException、LinkageError 等）。
+     */
+    private fun tryCreateInstances(context: Context): Triple<Boolean, LibVLC?, MediaPlayer?> {
+        return try {
+            val lib = LibVLC(
+                context,
+                arrayListOf(
+                    "--rtsp-tcp",               // RTSP 强制 TCP（避免 UDP 丢包）
+                    "--network-caching=1000",   // 网络缓存 1 秒（平衡延迟与卡顿）
+                    "--live-caching=1000",      // 直播缓存 1 秒
+                    "--codec=mediacodec_ndk",   // 硬件解码（MediaCodec NDK 接口）
+                    "--fullscreen",             // 全屏渲染
+                    "--no-drop-late-frames",    // 不丢弃迟到帧（减少画面跳跃）
+                    "--no-skip-frames"          // 不跳帧（保证画面连续性）
+                )
+            )
+            val mp = MediaPlayer(lib).apply {
+                setEventListener(this@VlcController)
+            }
+            Triple(true, lib, mp)
+        } catch (e: Throwable) {
+            Log.e(TAG, "tryCreateInstances failed: ${e.javaClass.simpleName}: ${e.message}")
+            Triple(false, null, null)
+        }
     }
 
     // -----------------------------------------------------------------
@@ -188,7 +232,7 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
         override fun run() {
             if (!_paused.value && _fileLoaded.value && !_eofReached.value) {
                 try {
-                    val timeMs = mediaPlayer.time
+                    val timeMs = mediaPlayer?.time ?: -1L
                     if (timeMs >= 0) {
                         _timePos.value = timeMs / 1000.0
                     }
@@ -220,16 +264,24 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
     /**
      * 释放资源：停止轮询、移除事件监听、停止播放、释放 MediaPlayer 和 LibVLC。
      * VlcVideoView 的 surfaceDestroyed 应在此之前调用（detachViews）。
+     *
+     * native 不可用时为 no-op（无 native 资源可释放）。
      */
     override fun detach() {
+        if (!nativeAvailable) {
+            Log.i(TAG, "detach: skipped (native not available)")
+            return
+        }
         stopPolling()
+        val mp = mediaPlayer ?: return
+        val lib = libVLC ?: return
         try {
-            mediaPlayer.setEventListener(null)
-            mediaPlayer.stop()
+            mp.setEventListener(null)
+            mp.stop()
             // vlcVout 应由 VlcVideoView.surfaceDestroyed 调用 detachViews，
             // 但以防万一，检查并补调
-            if (mediaPlayer.vlcVout.areViewsAttached()) {
-                mediaPlayer.vlcVout.detachViews()
+            if (mp.vlcVout.areViewsAttached()) {
+                mp.vlcVout.detachViews()
             }
         } catch (e: Exception) {
             Log.e(TAG, "detach stop/detachViews failed", e)
@@ -238,8 +290,6 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
         // 根因：SurfaceView 的 surfaceDestroyed 是异步的，onRelease 后 Surface 可能仍有效，
         // 立即 release() 释放 native 资源后，RenderThread 仍渲染 → SIGSEGV @ 0x8。
         // postDelayed(200ms) 让 RenderThread 有时间处理完最后一帧并停止。
-        val mpToRelease = mediaPlayer
-        val libToRelease = libVLC
         _fileLoaded.value = false
         _eofReached.value = false
         _paused.value = true
@@ -248,8 +298,8 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
         Log.i(TAG, "VlcController detached, release deferred 200ms")
         handler.postDelayed({
             try {
-                mpToRelease.release()
-                libToRelease.release()
+                mp.release()
+                lib.release()
             } catch (e: Exception) {
                 Log.e(TAG, "deferred release failed", e)
             }
@@ -271,6 +321,12 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
      * 5. 速度在 Playing 事件中通过 mediaPlayer.rate 设置（media 的 :rate 只支持整数）
      */
     override fun playFile(url: String) {
+        if (!nativeAvailable) {
+            Log.e(TAG, "playFile: VLC native library not available on this device")
+            return
+        }
+        val mp = mediaPlayer ?: return
+        val lib = libVLC ?: return
         currentUrl = url
         _eofReached.value = false
         _fileLoaded.value = false
@@ -283,7 +339,7 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
             } else {
                 Uri.parse(url)
             }
-            val media = Media(libVLC, uri)
+            val media = Media(lib, uri)
             // 启用/禁用硬件解码（与 LibVLC 的 --codec=mediacodec_ndk 一致，软解时禁用）
             media.setHWDecoderEnabled(hardwareDecode, false)
             media.addOption(":fullscreen")
@@ -295,10 +351,10 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
 
             // 显式释放旧的 Media 对象，避免 native 引用泄漏
             // （VLCObject finalized but not natively released 警告）
-            mediaPlayer.media?.release()
-            mediaPlayer.media = media
+            mp.media?.release()
+            mp.media = media
             media.release() // MediaPlayer 持有引用，释放本地包装
-            mediaPlayer.play()
+            mp.play()
 
             _mediaTitle.value = extractTitle(url)
         } catch (e: Exception) {
@@ -307,8 +363,9 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
     }
 
     override fun stop() {
+        if (!nativeAvailable) return
         try {
-            mediaPlayer.stop()
+            mediaPlayer?.stop()
         } catch (e: Exception) {
             Log.w(TAG, "stop failed: ${e.message}")
         }
@@ -323,11 +380,12 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
      * VLC 的 pause() 是 toggle 语义，play() 始终恢复播放。
      */
     override fun togglePause() {
+        val mp = mediaPlayer ?: return
         try {
             if (_paused.value) {
-                mediaPlayer.play()
+                mp.play()
             } else {
-                mediaPlayer.pause()
+                mp.pause()
             }
         } catch (e: Exception) {
             Log.w(TAG, "togglePause failed: ${e.message}")
@@ -344,8 +402,9 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
      * VLC 用毫秒：mediaPlayer.time = (seconds * 1000).toLong()
      */
     override fun seekTo(seconds: Double) {
+        val mp = mediaPlayer ?: return
         try {
-            mediaPlayer.time = (seconds * 1000).toLong()
+            mp.time = (seconds * 1000).toLong()
             _timePos.value = seconds
         } catch (e: Exception) {
             Log.w(TAG, "seekTo($seconds) failed: ${e.message}")
@@ -380,7 +439,7 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
         val clamped = v.coerceIn(0, 130)
         try {
             // VLC 接受 0-200，接口最大 130 在 VLC 支持范围内
-            mediaPlayer.volume = clamped
+            mediaPlayer?.volume = clamped
         } catch (e: Exception) {
             Log.w(TAG, "setVolume($clamped) failed: ${e.message}")
         }
@@ -408,14 +467,14 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
                 preMuteVolume = _volume.value
             }
             try {
-                mediaPlayer.volume = 0
+                mediaPlayer?.volume = 0
             } catch (e: Exception) {
                 Log.w(TAG, "setMute(true) failed: ${e.message}")
             }
             _muted.value = true
         } else {
             try {
-                mediaPlayer.volume = preMuteVolume
+                mediaPlayer?.volume = preMuteVolume
             } catch (e: Exception) {
                 Log.w(TAG, "setMute(false) failed: ${e.message}")
             }
@@ -430,7 +489,7 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
     override fun setSpeed(s: Double) {
         _speed.value = s
         try {
-            mediaPlayer.rate = s.toFloat()
+            mediaPlayer?.rate = s.toFloat()
         } catch (e: Exception) {
             Log.w(TAG, "setSpeed($s) failed: ${e.message}")
         }
@@ -445,13 +504,14 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
      * 遍历 getAudioTracks()，在当前轨道后选择下一个。
      */
     override fun cycleAudio() {
+        val mp = mediaPlayer ?: return
         try {
-            val tracks = mediaPlayer.audioTracks ?: return
+            val tracks = mp.audioTracks ?: return
             if (tracks.isEmpty()) return
-            val currentId = mediaPlayer.audioTrack
+            val currentId = mp.audioTrack
             val currentIndex = tracks.indexOfFirst { it.id == currentId }
             val nextIndex = if (currentIndex < 0) 0 else (currentIndex + 1) % tracks.size
-            mediaPlayer.audioTrack = tracks[nextIndex].id
+            mp.audioTrack = tracks[nextIndex].id
             updateTrackList()
         } catch (e: Exception) {
             Log.w(TAG, "cycleAudio failed: ${e.message}")
@@ -463,10 +523,11 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
      * 遍历 getSpuTracks()，在当前轨道后选择下一个（包含 -1=禁用）。
      */
     override fun cycleSub() {
+        val mp = mediaPlayer ?: return
         try {
-            val tracks = mediaPlayer.spuTracks ?: return
+            val tracks = mp.spuTracks ?: return
             if (tracks.isEmpty()) return
-            val currentId = mediaPlayer.spuTrack
+            val currentId = mp.spuTrack
             // 构建包含"禁用"选项的列表：[-1, track1.id, track2.id, ...]
             val allIds = mutableListOf<Int>().apply {
                 add(-1)
@@ -475,7 +536,7 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
             val currentIndex = allIds.indexOf(currentId)
             val nextIndex = if (currentIndex < 0) 1 else (currentIndex + 1) % allIds.size
             val nextId = allIds[nextIndex]
-            mediaPlayer.spuTrack = nextId
+            mp.spuTrack = nextId
             if (nextId > 0) lastSpuTrack = nextId
             updateTrackList()
         } catch (e: Exception) {
@@ -484,8 +545,9 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
     }
 
     override fun setAudioTrack(id: Int) {
+        val mp = mediaPlayer ?: return
         try {
-            mediaPlayer.audioTrack = id
+            mp.audioTrack = id
             updateTrackList()
         } catch (e: Exception) {
             Log.w(TAG, "setAudioTrack($id) failed: ${e.message}")
@@ -493,8 +555,9 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
     }
 
     override fun setSubTrack(id: Int) {
+        val mp = mediaPlayer ?: return
         try {
-            mediaPlayer.spuTrack = id
+            mp.spuTrack = id
             if (id > 0) {
                 lastSpuTrack = id
                 subVisible = true
@@ -536,15 +599,16 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
      */
     override fun setSubVisibility(v: Boolean) {
         subVisible = v
+        val mp = mediaPlayer ?: return
         try {
             if (v) {
                 if (lastSpuTrack > 0) {
-                    mediaPlayer.spuTrack = lastSpuTrack
+                    mp.spuTrack = lastSpuTrack
                 }
             } else {
-                val cur = mediaPlayer.spuTrack
+                val cur = mp.spuTrack
                 if (cur > 0) lastSpuTrack = cur
-                mediaPlayer.spuTrack = -1
+                mp.spuTrack = -1
             }
             updateTrackList()
         } catch (e: Exception) {
@@ -564,7 +628,7 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
     override fun setSubDelay(delaySec: Double) {
         currentSubDelay = delaySec
         try {
-            mediaPlayer.spuDelay = (delaySec * 1_000_000).toLong()
+            mediaPlayer?.spuDelay = (delaySec * 1_000_000).toLong()
         } catch (e: Exception) {
             Log.w(TAG, "setSubDelay($delaySec) failed: ${e.message}")
         }
@@ -594,8 +658,9 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
      */
     override fun getMediaInfo(): Map<String, String?> {
         val info = mutableMapOf<String, String?>()
+        val mp = mediaPlayer ?: return info
         try {
-            val media = mediaPlayer.media ?: return info
+            val media = mp.media ?: return info
             val count = media.trackCount
             for (i in 0 until count) {
                 val track = media.getTrack(i) ?: continue
@@ -656,7 +721,7 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
     /** 从 media 解析轨道并缓存（onPlaying 时调用） */
     private fun refreshCachedTracks() {
         try {
-            val media = mediaPlayer.media ?: return
+            val media = mediaPlayer?.media ?: return
             cachedVideoTrack = null
             cachedAudioTrack = null
             cachedVideoCodec = null
@@ -732,7 +797,7 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
         "dheight" -> cachedVideoTrack?.height?.takeIf { it > 0 } ?: _videoHeight.value.takeIf { it > 0 }
         "video-bitrate" -> {
             // VLC track.bitrate 单位是 bps，与 mpv 一致
-            val media = mediaPlayer.media
+            val media = mediaPlayer?.media
             var bitrate = 0
             try {
                 for (i in 0 until (media?.trackCount ?: 0)) {
@@ -746,7 +811,7 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
             bitrate.takeIf { it > 0 }
         }
         "audio-bitrate" -> {
-            val media = mediaPlayer.media
+            val media = mediaPlayer?.media
             var bitrate = 0
             try {
                 for (i in 0 until (media?.trackCount ?: 0)) {
@@ -768,7 +833,7 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
         "demuxer-cache-duration" -> {
             // VLC 通过 mediaPlayer.time 和缓存估算（粗略）
             try {
-                val cacheMs = mediaPlayer.time
+                val cacheMs = mediaPlayer?.time ?: -1L
                 if (cacheMs > 0) cacheMs / 1000.0 else null
             } catch (e: Exception) { null }
         }
@@ -848,7 +913,7 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
                 startPolling()
                 // 应用当前速度（mediaPlayer.rate 可运行时设置）
                 if (_speed.value != 1.0) {
-                    try { mediaPlayer.rate = _speed.value.toFloat() } catch (e: Exception) { }
+                    try { mediaPlayer?.rate = _speed.value.toFloat() } catch (e: Exception) { }
                 }
                 // 处理待执行的 seek（restorePlaybackState）
                 pendingSeek?.let { seek ->
@@ -916,7 +981,7 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
             MediaPlayer.Event.Opening -> {
                 // 媒体正在打开，可更新标题
                 try {
-                    val media = mediaPlayer.media
+                    val media = mediaPlayer?.media
                     val title = media?.getMeta(IMedia.Meta.Title)
                     _mediaTitle.value = if (!title.isNullOrEmpty()) title else extractTitle(currentUrl ?: "")
                 } catch (e: Exception) { }
@@ -953,7 +1018,7 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
      */
     private fun updateVideoSize() {
         try {
-            val media = mediaPlayer.media ?: return
+            val media = mediaPlayer?.media ?: return
             val count = media.trackCount
             for (i in 0 until count) {
                 val track = media.getTrack(i) ?: continue
@@ -980,14 +1045,18 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
      */
     private fun updateTrackList() {
         val jsonArray = JSONArray()
+        val mp = mediaPlayer ?: run {
+            _trackListJson.value = "[]"
+            return
+        }
         try {
             // 当前选中的轨道 ID
-            val currentAudioId = try { mediaPlayer.audioTrack } catch (e: Exception) { -1 }
-            val currentSpuId = try { mediaPlayer.spuTrack } catch (e: Exception) { -1 }
+            val currentAudioId = try { mp.audioTrack } catch (e: Exception) { -1 }
+            val currentSpuId = try { mp.spuTrack } catch (e: Exception) { -1 }
 
             // 视频轨道（VLC 通常只有一个激活视频轨）
             try {
-                val media = mediaPlayer.media
+                val media = mp.media
                 if (media != null) {
                     val count = media.trackCount
                     for (i in 0 until count) {
@@ -1010,7 +1079,7 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
 
             // 音频轨道
             try {
-                mediaPlayer.audioTracks?.forEach { td ->
+                mp.audioTracks?.forEach { td ->
                     jsonArray.put(JSONObject().apply {
                         put("id", td.id)
                         put("type", "audio")
@@ -1023,7 +1092,7 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
 
             // 字幕轨道
             try {
-                mediaPlayer.spuTracks?.forEach { td ->
+                mp.spuTracks?.forEach { td ->
                     jsonArray.put(JSONObject().apply {
                         put("id", td.id)
                         put("type", "sub")

@@ -88,6 +88,13 @@ class MPVView @JvmOverloads constructor(
             } catch (e: Throwable) {
                 Log.w(TAG, "initialize: reuse setPropertyString failed: ${e.message}")
             }
+            // 关键：清除 filePath 并标记跳过 surfaceCreated 的 reload。
+            // 复用实例时 mpv 内部可能还保留着之前播放的 path（stop 不会清除 path 属性），
+            // 若不跳过，surfaceCreated 的 else 分支会 loadfile(旧 path)，
+            // 随后 attachView + playFile(新 url) 又 loadfile(新 url)，
+            // 双重 loadfile 会导致 pendingResumePos 的 seek 位置丢失。
+            filePath = null
+            skipReloadOnSurfaceCreated = true
             holder.setFormat(PixelFormat.RGBA_8888)
             holder.addCallback(this)
             return
@@ -247,6 +254,19 @@ class MPVView @JvmOverloads constructor(
     private var voInUse: String = DEFAULT_VO
 
     /**
+     * 标记 surfaceCreated 应跳过 reload 当前 path。
+     *
+     * 由 [initialize] 复用实例时设置为 true，[surfaceCreated] 检查并重置为 false。
+     *
+     * 用途：切回 MPV 时 initialize 复用 native 实例，mpv 内部可能还保留着之前播放的 path，
+     * 若 surfaceCreated 走 else 分支 reload 旧 path，会与随后 attachView + playFile(新 url)
+     * 形成"双重 loadfile"，导致 pendingResumePos 的 seek 位置丢失。
+     * 跳过 reload 后，由 playFile(新 url) 单独 loadfile，保留 seek 位置。
+     */
+    @Volatile
+    private var skipReloadOnSurfaceCreated: Boolean = false
+
+    /**
      * 本实例的代次（由 initialize() 分配）。
      * destroy() 时与 [activeGeneration] 比较：若不一致，说明已有更新的 MPVView 接管，
      * 本实例不应销毁 native mpv（否则会杀死新实例）。
@@ -312,6 +332,11 @@ class MPVView @JvmOverloads constructor(
             MPVLib.command(arrayOf("loadfile", filePath as String))
             MPVLib.setPropertyBoolean("pause", false)
             filePath = null
+        } else if (skipReloadOnSurfaceCreated) {
+            // 切回 MPV 复用实例：跳过 reload 旧 path，由后续 playFile(新 url) 单独 loadfile
+            // 避免双重 loadfile 导致 pendingResumePos 的 seek 位置丢失
+            skipReloadOnSurfaceCreated = false
+            Log.i(TAG, "surfaceCreated: skipped reload (instance reused, waiting for playFile)")
         } else {
             // 正常播放中 Surface 重建（如 PiP 切换、Activity 恢复）：
             // vo=gpu 在 Surface 重建后 EGL 渲染上下文可能未正确恢复，导致花屏。

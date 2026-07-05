@@ -291,7 +291,9 @@ private fun ViewportCell(
                 if (onToggleMute != null) {
                     IconButton(
                         onClick = onToggleMute,
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier
+                            .size(28.dp)
+                            .tvFocusBorder()
                     ) {
                         Icon(
                             if (viewport.isMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
@@ -305,7 +307,9 @@ private fun ViewportCell(
                 if (onClose != null) {
                     IconButton(
                         onClick = onClose,
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier
+                            .size(28.dp)
+                            .tvFocusBorder()
                     ) {
                         Icon(
                             Icons.Default.Close,
@@ -357,8 +361,8 @@ private fun SubViewportContent(
             },
             update = { /* ExoPlayerView surface 回调内部处理 */ },
             onRelease = { view ->
-                // 不在这里 detach（detach 由 ViewModel.exitMultiView 统一管理）
-                // 只清除 View 内部引用
+                // 不在这里 detach：detach 由 ViewModel 的 releaseSubPlayerDeferred 延迟执行
+                // （先更新状态触发 View 移除 → surfaceDestroyed 完成 → 延迟 300ms 后 detach）
             },
             modifier = Modifier.fillMaxSize()
         )

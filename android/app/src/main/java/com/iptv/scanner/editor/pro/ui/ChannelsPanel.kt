@@ -39,6 +39,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -73,6 +75,14 @@ fun ChannelsPanel(viewModel: AppViewModel) {
     val history by viewModel.history.collectAsState()
     val queue by viewModel.queue.collectAsState()
 
+    // TV 焦点管理：面板打开时请求焦点到关闭按钮，确保 DPAD 可操作。
+    // 用户按 DPAD_DOWN 可导航到 Tab/搜索框/列表。
+    val closeFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(50)
+        kotlin.runCatching { closeFocusRequester.requestFocus() }
+    }
+
     Surface(
         color = Color(0xF0161616),
         modifier = Modifier
@@ -86,7 +96,8 @@ fun ChannelsPanel(viewModel: AppViewModel) {
             PanelHeader(
                 title = "频道列表",
                 subtitle = "${channels.size} 个频道",
-                onClose = { viewModel.toggleChannelsPanel() }
+                onClose = { viewModel.toggleChannelsPanel() },
+                closeFocusRequester = closeFocusRequester
             )
 
             // -----------------------------------------------------------------
@@ -183,12 +194,17 @@ fun ChannelsPanel(viewModel: AppViewModel) {
 
 /**
  * 面板标题栏（统一组件）。
+ *
+ * @param closeFocusRequester 可选的 FocusRequester，绑定到关闭按钮。
+ *        TV 模式下面板打开时需要初始焦点，否则 DPAD 无法操作。
+ *        传入时关闭按钮会绑定此 requester，调用方用 LaunchedEffect 请求焦点。
  */
 @Composable
 fun PanelHeader(
     title: String,
     subtitle: String = "",
-    onClose: () -> Unit
+    onClose: () -> Unit,
+    closeFocusRequester: FocusRequester? = null
 ) {
     Surface(
         color = Color(0xFF1F1F1F),
@@ -216,7 +232,15 @@ fun PanelHeader(
                     )
                 }
             }
-            IconButton(onClick = onClose, modifier = Modifier.tvFocusBorder()) {
+            IconButton(
+                onClick = onClose,
+                modifier = Modifier
+                    .tvFocusBorder()
+                    .then(
+                        if (closeFocusRequester != null) Modifier.focusRequester(closeFocusRequester)
+                        else Modifier
+                    )
+            ) {
                 Icon(Icons.Default.Close, contentDescription = "关闭", tint = Color.White)
             }
         }

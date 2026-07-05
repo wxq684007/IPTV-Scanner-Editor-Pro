@@ -37,7 +37,7 @@ import kotlinx.coroutines.launch
  *   - initState == Idle/Initializing/Failed → SplashScreen
  *   - initState == Ready → MainPlayerScreen
  * - onUserLeaveHint → 自动进入 PiP（如果正在播放）
- * - onDestroy → MpvController.detach（移除 EventObserver）
+ * - onDestroy → 当前播放器 stop+detach + MpvController 兜底 detach（移除 EventObserver）
  *
  * TV 模式 DPAD 按键处理（onKeyDown）：
  * - DPAD_UP/DOWN → 上一/下一频道
@@ -477,12 +477,19 @@ class MainActivityCompose : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        // 停止播放并解绑 MpvController
+        // 停止并释放当前活跃播放器（可能是 MPV/EXO/VLC/IJK，不只是 MPV）
         // 注意：MPVView.destroy()（销毁 mpv 原生实例）由 AndroidView 的 onRelease 处理
-        // 这里先 stop() 停止播放，再 detach() 移除观察者，避免泄漏
+        // 这里 stop + detach 当前播放器，避免 native 资源（解码器/缓冲队列/observer）泄漏
+        try {
+            val player = viewModel.mpv
+            player.stop()
+            player.detach()
+        } catch (e: Throwable) {
+            Log.w(TAG, "Player cleanup failed: ${e.message}")
+        }
+        // 兜底：确保 MpvController 的 EventObserver 被移除（即使当前播放器不是 MPV）
         try {
             val mpv = MpvController.getInstance()
-            mpv.stop()
             mpv.detach()
         } catch (e: Throwable) {
             Log.w(TAG, "MpvController cleanup failed: ${e.message}")

@@ -2,6 +2,7 @@ package com.iptv.scanner.editor.pro.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -31,15 +32,25 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -48,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iptv.scanner.editor.pro.data.IptvEpgProgram
 import com.iptv.scanner.editor.pro.ui.theme.tvFocusBorder
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -73,6 +85,13 @@ fun EpgTimelinePanel(viewModel: AppViewModel) {
     val status by viewModel.epgTimelineStatus.collectAsState()
     val currentIdx by viewModel.currentIdx.collectAsState()
     val density = LocalDensity.current
+
+    // TV 焦点管理：面板打开时请求焦点到关闭按钮，确保 DPAD 可操作。
+    val closeFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(50)
+        kotlin.runCatching { closeFocusRequester.requestFocus() }
+    }
 
     // 选中日期（基于今天 + offset）
     val selectedDate = remember(dateOffset) {
@@ -162,7 +181,9 @@ fun EpgTimelinePanel(viewModel: AppViewModel) {
                     // 关闭
                     IconButton(
                         onClick = { viewModel.toggleEpgTimelinePanel() },
-                        modifier = Modifier.tvFocusBorder()
+                        modifier = Modifier
+                            .tvFocusBorder()
+                            .focusRequester(closeFocusRequester)
                     ) {
                         Icon(Icons.Default.Close, contentDescription = "关闭", tint = Color.White)
                     }
@@ -256,7 +277,12 @@ private val TIME_HEADER_HEIGHT_DP = 28.dp
  * - 左上角空白（频道名列与时间刻度交叉处）
  * - 顶部时间刻度（水平滚动）
  * - 左侧频道名列（垂直滚动）
- * - 主网格 Canvas（双向滚动 + 点击检测）
+ * - 主网格 Canvas（双向滚动 + 点击检测 + TV 方向键导航）
+ *
+ * TV 焦点导航：
+ * - 网格 Box 可聚焦，方向键移动选中节目（selectedRow + selectedProgramIdx）
+ * - DPAD_CENTER/ENTER 触发 onProgramClick
+ * - 触摸模式仍可用 detectTapGestures 点击
  */
 @Composable
 private fun TimelineGrid(
@@ -270,6 +296,12 @@ private fun TimelineGrid(
     val density = LocalDensity.current
     val hourWidthPx = with(density) { HOUR_WIDTH_DP.toPx() }
     val rowHeightPx = with(density) { ROW_HEIGHT_DP.toPx() }
+    val scope = rememberCoroutineScope()
+
+    // TV 焦点状态：选中的行索引和该行内的节目索引
+    var selectedRow by remember { mutableStateOf(-1) }
+    var selectedProgramIdx by remember { mutableStateOf(-1) }
+    val gridFocusRequester = remember { FocusRequester() }
 
     // 选中日期的 0:00 时间戳（毫秒）
     val dayStartMs = remember(dateOffset) {
@@ -408,12 +440,78 @@ private fun TimelineGrid(
                 }
             }
 
-            // 主网格 Canvas（双向滚动 + 点击检测）
+            // 主网格 Canvas（双向滚动 + 点击检测 + TV 方向键导航）
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .horizontalScroll(horizontalScroll)
                     .verticalScroll(verticalScroll)
+                    .focusRequester(gridFocusRequester)
+                    .focusable()
+                    .onPreviewKeyEvent { e ->
+                        if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        when (e.key) {
+                            Key.DirectionUp -> {
+                                if (selectedRow > 0) {
+                                    selectedRow--
+                                    // 选中行的节目数可能不同，clamp selectedProgramIdx
+                                    val progs = rows.getOrNull(selectedRow)?.programs ?: emptyList()
+                                    if (selectedProgramIdx >= progs.size) selectedProgramIdx = (progs.size - 1).coerceAtLeast(0)
+                                    // 滚动到选中行
+                                    val target = selectedRow * rowHeightPx.toInt()
+                                    scope.launch { kotlin.runCatching { verticalScroll.animateScrollTo(target) } }
+                                    true
+                                } else false
+                            }
+                            Key.DirectionDown -> {
+                                if (selectedRow < rows.size - 1) {
+                                    selectedRow++
+                                    val progs = rows.getOrNull(selectedRow)?.programs ?: emptyList()
+                                    if (selectedProgramIdx >= progs.size) selectedProgramIdx = (progs.size - 1).coerceAtLeast(0)
+                                    val target = selectedRow * rowHeightPx.toInt()
+                                    scope.launch { kotlin.runCatching { verticalScroll.animateScrollTo(target) } }
+                                    true
+                                } else false
+                            }
+                            Key.DirectionLeft -> {
+                                val progs = rows.getOrNull(selectedRow)?.programs ?: emptyList()
+                                if (selectedProgramIdx > 0) {
+                                    selectedProgramIdx--
+                                    // 滚动到选中节目
+                                    val prog = progs.getOrNull(selectedProgramIdx)
+                                    if (prog != null) {
+                                        val startMs = parseTimelineTimeMs(prog.start, prog.startTs)
+                                        val x = ((startMs - dayStartMs).coerceAtLeast(0) / 3600000.0).toFloat() * hourWidthPx
+                                        val target = (x - 100).toInt().coerceAtLeast(0)
+                                        scope.launch { kotlin.runCatching { horizontalScroll.animateScrollTo(target) } }
+                                    }
+                                    true
+                                } else false
+                            }
+                            Key.DirectionRight -> {
+                                val progs = rows.getOrNull(selectedRow)?.programs ?: emptyList()
+                                if (selectedProgramIdx < progs.size - 1) {
+                                    selectedProgramIdx++
+                                    val prog = progs.getOrNull(selectedProgramIdx)
+                                    if (prog != null) {
+                                        val startMs = parseTimelineTimeMs(prog.start, prog.startTs)
+                                        val x = ((startMs - dayStartMs).coerceAtLeast(0) / 3600000.0).toFloat() * hourWidthPx
+                                        val target = (x - 100).toInt().coerceAtLeast(0)
+                                        scope.launch { kotlin.runCatching { horizontalScroll.animateScrollTo(target) } }
+                                    }
+                                    true
+                                } else false
+                            }
+                            Key.DirectionCenter, Key.Enter -> {
+                                val prog = rows.getOrNull(selectedRow)?.programs?.getOrNull(selectedProgramIdx)
+                                if (prog != null) {
+                                    onProgramClick(prog)
+                                    true
+                                } else false
+                            }
+                            else -> false
+                        }
+                    }
             ) {
                 Canvas(
                     modifier = Modifier
@@ -423,6 +521,19 @@ private fun TimelineGrid(
                         )
                         .pointerInput(rows, dateOffset) {
                             detectTapGestures { offset ->
+                                // 触摸点击时也更新选中状态
+                                val rowIdx = (offset.y / rowHeightPx).toInt()
+                                if (rowIdx in rows.indices) {
+                                    selectedRow = rowIdx
+                                    val row = rows[rowIdx]
+                                    val tapMs = dayStartMs + (offset.x / hourWidthPx * 3600000L).toLong()
+                                    val progIdx = row.programs.indexOfFirst { p ->
+                                        val s = parseTimelineTimeMs(p.start, p.startTs)
+                                        val e = parseTimelineTimeMs(p.end.ifEmpty { p.stop }, p.stopTs)
+                                        s > 0 && e > s && tapMs >= s && tapMs < e
+                                    }
+                                    if (progIdx >= 0) selectedProgramIdx = progIdx
+                                }
                                 handleGridTap(
                                     offset = offset,
                                     rows = rows,
@@ -464,21 +575,23 @@ private fun TimelineGrid(
                     drawIntoCanvas { canvas ->
                         rows.forEachIndexed { rowIdx, row ->
                             val y = rowIdx * rowHeightPx
-                            row.programs.forEach { program ->
+                            row.programs.forEachIndexed { progIdx, program ->
                                 val startMs = parseTimelineTimeMs(program.start, program.startTs)
                                 val endMs = parseTimelineTimeMs(
                                     program.end.ifEmpty { program.stop }, program.stopTs
                                 )
-                                if (startMs <= 0 || endMs <= startMs) return@forEach
+                                if (startMs <= 0 || endMs <= startMs) return@forEachIndexed
 
                                 val x1 = ((startMs - dayStartMs).coerceAtLeast(0) / 3600000.0).toFloat() * hourWidthPx
                                 val x2 = ((endMs - dayStartMs).coerceAtMost(24 * 3600000L) / 3600000.0).toFloat() * hourWidthPx
                                 val blockWidth = (x2 - x1).coerceAtLeast(1f)
                                 val isCurrent = now in startMs until endMs
                                 val isPast = now >= endMs
+                                val isSelected = rowIdx == selectedRow && progIdx == selectedProgramIdx
 
                                 // 节目块背景
                                 val bgColor = when {
+                                    isSelected -> Color(0xFFFFC107)  // 选中：金色
                                     isCurrent -> Color(0xFF4A9EFF)
                                     isPast -> Color(0xFF2A2A2A)
                                     else -> Color(0xFF2A4A8A)
@@ -489,6 +602,19 @@ private fun TimelineGrid(
                                     size = Size(blockWidth - 2f, rowHeightPx - 4f),
                                     cornerRadius = CornerRadius(3f, 3f)
                                 )
+
+                                // 选中边框（白色 2dp）
+                                if (isSelected) {
+                                    drawRoundRect(
+                                        color = Color.White,
+                                        topLeft = Offset(x1 + 1f, y + 2f),
+                                        size = Size(blockWidth - 2f, rowHeightPx - 4f),
+                                        cornerRadius = CornerRadius(3f, 3f),
+                                        style = androidx.compose.ui.graphics.drawscope.Stroke(
+                                            width = 2f
+                                        )
+                                    )
+                                }
 
                                 // 节目标题（宽度 > 40px 才绘制）
                                 if (blockWidth > 40f) {

@@ -47,6 +47,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -84,6 +86,13 @@ fun EpgPanel(viewModel: AppViewModel) {
     // EPG 日期切换（±7 天，0=今天）
     var epgDateOffset by remember { mutableStateOf(0) }
 
+    // TV 焦点管理：面板打开时请求焦点到关闭按钮，确保 DPAD 可操作。
+    val closeFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(50)
+        kotlin.runCatching { closeFocusRequester.requestFocus() }
+    }
+
     Surface(
         color = Color(0xF0161616),
         modifier = Modifier
@@ -97,7 +106,8 @@ fun EpgPanel(viewModel: AppViewModel) {
             PanelHeader(
                 title = "节目单",
                 subtitle = currentChannel?.name ?: "未选择频道",
-                onClose = { viewModel.toggleEpgPanel() }
+                onClose = { viewModel.toggleEpgPanel() },
+                closeFocusRequester = closeFocusRequester
             )
 
             // -----------------------------------------------------------------

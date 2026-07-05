@@ -34,7 +34,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -160,7 +159,7 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
             playbackPanelOpen || screenshotPanelOpen || viewSettingsOpen || aboutPanelOpen ||
             mappingPanelOpen || avSyncPanelOpen || networkPanelOpen || toolsPanelOpen || scanPanelOpen ||
             reminderPanelOpen || resumePanelOpen || bookmarkPanelOpen ||
-            epgTimelineOpen || searchPanelOpen
+            epgTimelineOpen || searchPanelOpen || streamQualityPanelOpen
     // 控制层是否应该显示
     val showControls = controlsVisible && !anyPanelOpen
 
@@ -286,12 +285,6 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
                     primaryPlayer()
                 }
             }
-        }
-
-        // Activity 销毁时 detach 播放器
-        // 注：真正的 detach 在 Activity.onDestroy 里调用，这里只做占位
-        DisposableEffect(Unit) {
-            onDispose { /* 见 Activity.onDestroy */ }
         }
 
         // -----------------------------------------------------------------

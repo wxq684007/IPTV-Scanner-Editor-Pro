@@ -38,6 +38,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -69,6 +71,14 @@ fun SearchPanel(viewModel: AppViewModel) {
 
     var query by remember { mutableStateOf("") }
 
+    // TV 焦点管理：面板打开时请求焦点到关闭按钮，确保 DPAD 可操作。
+    // 不请求到搜索框，因为 OutlinedTextField 获得焦点会弹出软键盘，阻碍 DPAD 导航。
+    val closeFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(50)
+        kotlin.runCatching { closeFocusRequester.requestFocus() }
+    }
+
     // 输入防抖：query 变化时触发 ViewModel.performSearch（内部已有 250ms 防抖）
     LaunchedEffect(query) {
         viewModel.performSearch(query)
@@ -91,7 +101,9 @@ fun SearchPanel(viewModel: AppViewModel) {
                 )
                 IconButton(
                     onClick = { viewModel.toggleSearchPanel() },
-                    modifier = Modifier.tvFocusBorder()
+                    modifier = Modifier
+                        .tvFocusBorder()
+                        .focusRequester(closeFocusRequester)
                 ) {
                     Icon(Icons.Default.Close, contentDescription = "关闭", tint = Color.White)
                 }

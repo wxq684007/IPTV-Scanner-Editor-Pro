@@ -139,6 +139,65 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * 同步释放待 detach 的旧播放器实例（不等 View onRelease）。
+     *
+     * 使用场景：switchPlayer 时如果之前的 pendingOldPlayer 还未被 detach
+     * （例如连续切换 MPV→EXO→VLC，EXO 的 View onRelease 还没触发就又切到 VLC），
+     * 直接覆盖 pendingOldPlayer 会导致 EXO 实例泄漏。
+     *
+     * 此方法立即 detach 旧实例，风险是 Surface 可能仍有效 → SIGSEGV。
+     * 但比泄漏 native 资源更安全（泄漏会导致内存持续增长）。
+     * 对于非 MPV 的播放器（EXO/VLC/IJK），其 detach() 内部已有延迟 release 机制保护。
+     */
+    private fun flushPendingOldPlayer() {
+        pendingOldPlayer?.let { old ->
+            pendingOldPlayer = null
+            try {
+                old.detach()
+                Log.i(TAG, "flushPendingOldPlayer: detached previous pending player")
+            } catch (e: Throwable) {
+                Log.w(TAG, "flushPendingOldPlayer: detach failed: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * 待延迟释放的副画面 Player 列表。
+     *
+     * 用于 [exitMultiView]/[removeFromMultiView]/[switchMultiViewLayout]：
+     * 先更新 [MultiViewState] 触发 Compose 移除副画面 View（surfaceDestroyed 完成），
+     * 再延迟 detach 释放 native 资源。
+     *
+     * 与 [pendingOldPlayer] 模式一致，避免 detach 时 RenderThread 仍访问 Surface。
+     * ExoPlayerController.detach() 内部还有 200ms 延迟 release，双层保护确保安全。
+     */
+    private val pendingSubPlayersToRelease = mutableListOf<Player>()
+
+    /**
+     * 延迟释放副画面 Player：先 stop（安全），等 View 移除后再 detach。
+     *
+     * @param player 要释放的副画面 Player
+     */
+    private fun releaseSubPlayerDeferred(player: Player) {
+        try { player.stop() } catch (e: Throwable) {
+            Log.w(TAG, "releaseSubPlayerDeferred: stop failed: ${e.message}")
+        }
+        synchronized(pendingSubPlayersToRelease) {
+            pendingSubPlayersToRelease.add(player)
+        }
+        viewModelScope.launch {
+            // 300ms 等 Compose 移除 View + surfaceDestroyed 完成
+            delay(300)
+            synchronized(pendingSubPlayersToRelease) {
+                pendingSubPlayersToRelease.remove(player)
+            }
+            try { player.detach() } catch (e: Throwable) {
+                Log.w(TAG, "releaseSubPlayerDeferred: detach failed: ${e.message}")
+            }
+        }
+    }
+
+    /**
      * 持久化的播放器类型（从 UserPrefs 读取，可能在 MPV/EXO/VLC/IJK 之间切换）。
      *
      * 声明在 [_player] 之前：[_player] 初始化时需要读取此值创建对应实例，
@@ -184,7 +243,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             when (type) {
                 PlayerType.MPV -> mpvSingleton
                 PlayerType.EXO -> ExoPlayerController(getApplication())
-                PlayerType.VLC -> VlcController(getApplication())
+                PlayerType.VLC -> VlcController(getApplication()).let {
+                    if (it.nativeAvailable) it else {
+                        Log.w(TAG, "createInitialPlayer: VLC native 不可用，回退到 MPV")
+                        mpvSingleton
+                    }
+                }
                 PlayerType.IJK -> IjkController(getApplication()).let {
                     if (it.nativeAvailable) it else {
                         Log.w(TAG, "createInitialPlayer: IJK native 不可用，回退到 MPV")
@@ -234,25 +298,42 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             showOsd("播放器", "切换到 ${newType.displayName} 失败: ${e.message}，保持当前播放器")
             return
         }
-        // 3. 检测 IJK native 库是否可用（x86/x86_64 设备或 native 崩溃后不可用）
-        if (newType == PlayerType.IJK && newPlayer is IjkController && !newPlayer.nativeAvailable) {
-            // IJK native 不可用，回退到 MPV 单例
+        // 3. 检测 IJK/VLC native 库是否可用（x86/x86_64 设备或 native 崩溃后不可用）
+        //    IJK 和 VLC 都只提供 arm64/armv7a 两个 ABI 的 native 库，
+        //    在 x86/x86_64 设备（主要是模拟器）上构造时会抛 UnsatisfiedLinkError，
+        //    此时 nativeAvailable=false，回退到 MPV 单例避免后续调用崩溃。
+        val nativeUnavailable = when {
+            newType == PlayerType.IJK && newPlayer is IjkController && !newPlayer.nativeAvailable -> {
+                "IJK"
+            }
+            newType == PlayerType.VLC && newPlayer is VlcController && !newPlayer.nativeAvailable -> {
+                "VLC"
+            }
+            else -> null
+        }
+        if (nativeUnavailable != null) {
+            // 目标播放器 native 不可用，回退到 MPV 单例
             if (oldPlayer === mpvSingleton) {
                 // 旧播放器已是 MPV，无需切换
-                showOsd("播放器", "IJK 在此设备不可用（需 ARM 架构），保持 MPV")
+                showOsd("播放器", "$nativeUnavailable 在此设备不可用（需 ARM 架构），保持 MPV")
                 return
             }
             // 旧播放器不是 MPV，切换到 MPV 作为安全兜底
             // 延迟 detach：保存到 pendingOldPlayer，等旧 View onRelease 后才执行
+            // 先释放之前可能残留的 pendingOldPlayer，避免覆盖泄漏
+            flushPendingOldPlayer()
             pendingOldPlayer = oldPlayer
             _player.value = mpvSingleton
             _playerType.value = PlayerType.MPV
             userPrefs.setPlayerType(PlayerType.MPV.name)
-            userPrefs.clearIjkTesting()  // IJK 不可用，清除标志避免下次启动误判
+            // IJK 不可用时清除测试标志，避免下次启动误判为崩溃中
+            if (nativeUnavailable == "IJK") {
+                userPrefs.clearIjkTesting()
+            }
             _hardwareDecode.value = mpvSingleton.isHardwareDecodeEnabled()
             pendingRestoreState = savedState
             observePlayerError(mpvSingleton)
-            showOsd("播放器", "IJK 在此设备不可用（需 ARM 架构），已回退到 MPV")
+            showOsd("播放器", "$nativeUnavailable 在此设备不可用（需 ARM 架构），已回退到 MPV")
             return
         }
         // 4. 新实例创建成功，延迟 detach 旧实例。
@@ -261,6 +342,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         //    原因：detach() 会释放 native 资源（如 IjkPlayer.release()），但此时旧 View 仍存在、
         //    Surface 仍有效，RenderThread 可能正在渲染 → 访问已释放资源导致 SIGSEGV。
         //    延迟到 View onRelease 后 detach，Surface 已释放，安全释放 native 资源。
+        //    先释放之前可能残留的 pendingOldPlayer，避免覆盖泄漏（连续切换场景）。
+        flushPendingOldPlayer()
         pendingOldPlayer = oldPlayer
         _player.value = newPlayer
         _playerType.value = newType
@@ -1379,16 +1462,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * 退出多画面模式。释放所有副画面 Player，主画面保持播放。
+     *
+     * 时序：先 stop + 更新状态（触发 Compose 移除副画面 View）→ 延迟 detach。
+     * 与 switchPlayer 的 pendingOldPlayer 模式一致，避免 detach 时 RenderThread 仍访问 Surface。
      */
     fun exitMultiView() {
         if (!_multiViewState.value.active) return
-        subPlayers.values.forEach { player ->
-            try { player.stop(); player.detach() } catch (e: Throwable) {
-                Log.w(TAG, "release sub player failed: ${e.message}")
-            }
-        }
+        // 先停止所有副画面（stop 安全，不释放资源）并收集到待释放列表
+        val playersToRelease = subPlayers.values.toList()
         subPlayers.clear()
         _multiViewState.value = MultiViewState()
+        // 延迟 detach：等 Compose 移除所有副画面 View（surfaceDestroyed 完成）后释放 native 资源
+        playersToRelease.forEach { player -> releaseSubPlayerDeferred(player) }
         // 退出多画面后显示控制层（自动隐藏），让用户看到操作选项
         showControlsAutoHide()
         showOsd("多画面", "已退出多画面模式")
@@ -1396,14 +1481,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * 切换多画面布局。扩展布局新增空视口，缩小布局先释放被移除视口的 Player。
+     *
+     * 缩小时：先从 subPlayers 移除并收集 → 更新状态触发 View 移除 → 延迟 detach。
      */
     fun switchMultiViewLayout(layout: MultiViewLayout) {
         val current = _multiViewState.value
         if (!current.active || current.layout == layout) return
+        val playersToRelease = mutableListOf<Player>()
         if (layout.count < current.viewports.size) {
             for (i in layout.count until current.viewports.size) {
                 subPlayers.remove(i)?.let { player ->
-                    try { player.stop(); player.detach() } catch (e: Throwable) {}
+                    playersToRelease.add(player)
                 }
             }
         }
@@ -1411,6 +1499,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             current.viewports.getOrNull(i) ?: MultiViewport(index = i)
         }
         _multiViewState.value = current.copy(layout = layout, viewports = newViewports)
+        // 延迟 detach：等 Compose 移除被裁剪的副画面 View 后释放 native 资源
+        playersToRelease.forEach { player -> releaseSubPlayerDeferred(player) }
         showOsd("多画面", "已切换到${layout.displayName}")
     }
 
@@ -1528,17 +1618,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * 从多画面移除视口（清空频道）。主画面不能移除（用 [exitMultiView] 退出）。
+     *
+     * 时序：先从 subPlayers 移除 → 更新状态触发 View 移除 → 延迟 detach。
      */
     fun removeFromMultiView(viewportIndex: Int) {
         val state = _multiViewState.value
         if (!state.active || viewportIndex == 0) return
-        subPlayers.remove(viewportIndex)?.let { player ->
-            try { player.stop(); player.detach() } catch (e: Throwable) {}
-        }
+        val playerToRelease = subPlayers.remove(viewportIndex)
         val newViewports = state.viewports.map { vp ->
             if (vp.index == viewportIndex) MultiViewport(index = viewportIndex) else vp
         }
         _multiViewState.value = state.copy(viewports = newViewports)
+        // 延迟 detach：等 Compose 移除该视口 View 后释放 native 资源
+        playerToRelease?.let { releaseSubPlayerDeferred(it) }
     }
 
     /**
@@ -5352,11 +5444,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         subSyncJob?.cancel()
         reminderCheckJob?.cancel()
         resumeSaveJob?.cancel()
+        // 清理主播放器（MPV/EXO/VLC/IJK 都需要 stop + detach，避免 native 资源泄漏）
+        // Activity.onDestroy 已先调用一次，这里兜底确保释放
+        try {
+            val p = _player.value
+            p.stop()
+            p.detach()
+        } catch (_: Throwable) {}
         // 清理多画面副画面 Player（避免 ExoPlayer 实例泄漏）
         subPlayers.values.forEach { player ->
             try { player.stop(); player.detach() } catch (_: Throwable) {}
         }
         subPlayers.clear()
+        // 清理待延迟释放的副画面 Player（viewModelScope 已取消，延迟 detach 不会执行）
+        synchronized(pendingSubPlayersToRelease) {
+            pendingSubPlayersToRelease.forEach { player ->
+                try { player.stop(); player.detach() } catch (_: Throwable) {}
+            }
+            pendingSubPlayersToRelease.clear()
+        }
         // 清理 APK 下载资源（避免 receiver 泄漏）
         try {
             apkProgressJob?.cancel()

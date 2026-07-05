@@ -87,8 +87,9 @@ class VlcVideoView @JvmOverloads constructor(
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         Log.d(TAG, "surfaceChanged: ${width}x$height")
         val c = controller ?: return
+        val mp = c.mediaPlayer ?: return
         try {
-            c.mediaPlayer.vlcVout.setWindowSize(width, height)
+            mp.vlcVout.setWindowSize(width, height)
         } catch (e: Exception) {
             Log.e(TAG, "setWindowSize failed", e)
         }
@@ -113,8 +114,9 @@ class VlcVideoView @JvmOverloads constructor(
      */
     private fun attachToVlc() {
         val c = controller ?: return
+        val mp = c.mediaPlayer ?: return
         try {
-            val vout = c.mediaPlayer.vlcVout
+            val vout = mp.vlcVout
             if (!vout.areViewsAttached()) {
                 vout.setVideoView(this)
                 vout.attachViews()
@@ -130,8 +132,9 @@ class VlcVideoView @JvmOverloads constructor(
      */
     private fun detachFromVlc() {
         val c = controller ?: return
+        val mp = c.mediaPlayer ?: return
         try {
-            val vout = c.mediaPlayer.vlcVout
+            val vout = mp.vlcVout
             if (vout.areViewsAttached()) {
                 vout.detachViews()
                 Log.i(TAG, "vlcVout detached")
