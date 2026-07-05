@@ -189,6 +189,22 @@ class UserPrefs private constructor() {
         prefs.edit().putString(KEY_RTSP_TRANSPORT, transport).apply()
     }
 
+    // -----------------------------------------------------------------
+    // 反交错（deinterlace）
+    //
+    // 隔行扫描视频（如 1080i TV 流）会出现横线梳齿，开启反交错可消除。
+    // mpv 的 deinterlace 属性只支持 yes/no，UI 层提供 "no"(关闭) / "auto"(自动) 两个选项，
+    // "auto" 在下发到 mpv 时转换为 "yes"（mpv 会自动检测隔行内容并应用 yadif 滤镜）。
+    // 与 PC 端 _load_playback_settings 的 'deinterlace': 'no' 默认值对齐。
+    // -----------------------------------------------------------------
+
+    /** 获取反交错设置，默认 "no"（关闭），可选 "auto"（自动检测隔行内容） */
+    fun getDeinterlace(): String = prefs.getString(KEY_DEINTERLACE, DEFAULT_DEINTERLACE) ?: DEFAULT_DEINTERLACE
+
+    fun setDeinterlace(value: String) {
+        prefs.edit().putString(KEY_DEINTERLACE, value).apply()
+    }
+
     /** 重置播放器设置为默认值（用户换设备或想重新探测时调用） */
     fun resetPlayerSettings() {
         prefs.edit()
@@ -198,6 +214,7 @@ class UserPrefs private constructor() {
             .remove(KEY_PLAYER_TYPE)
             .remove(KEY_HDR_MODE)
             .remove(KEY_RTSP_TRANSPORT)
+            .remove(KEY_DEINTERLACE)
             .remove(KEY_IJK_TESTING)
             .apply()
     }
@@ -650,6 +667,8 @@ class UserPrefs private constructor() {
         private const val DEFAULT_HDR_MODE = "disable"
         private const val KEY_RTSP_TRANSPORT = "rtsp_transport"
         private const val DEFAULT_RTSP_TRANSPORT = "tcp"
+        private const val KEY_DEINTERLACE = "deinterlace"
+        private const val DEFAULT_DEINTERLACE = "no"
         // 频道级播放器设置（per-channel override）
         private const val KEY_PER_CHANNEL_SETTINGS = "per_channel_player_settings"
         private const val KEY_CHANNEL_SETTINGS_PREFIX = "channel_settings_"

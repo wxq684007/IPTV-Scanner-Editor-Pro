@@ -2260,6 +2260,21 @@ async function addSource(){
     reloadSubscription(url);
   } else { alert('添加失败'); }
 }
+/* 打开单个串流：直接交给 mpv 播放，不添加到频道列表 */
+function playStream(){
+  const url=$('#streamUrl').value.trim();
+  if(!url){ alert('请输入 URL'); return; }
+  const name=$('#streamName').value.trim()||url;
+  $('#streamUrl').value=''; $('#streamName').value='';
+  if(USE_MPV){
+    Mpv.play(url);
+    showOSD(name, '网络串流');
+    closeFuncPanel();
+    hideCenterIcon();
+  } else {
+    alert('当前非 MPV 内核，无法播放串流');
+  }
+}
 async function refreshSource(idx){
   const s = state.sources[idx];
   if(!s || !s.url){ showOSD('刷新','无效源'); return; }
@@ -2552,10 +2567,16 @@ registerFunc('menu', { title:'主菜单' }, body=>{
 registerFunc('url_input', { title:'打开网络流' }, body=>{
   body.innerHTML = `
     <div class="form-section">
-      <div class="form-section-title">输入订阅源 URL</div>
+      <div class="form-section-title">添加订阅源</div>
       <div class="form-row"><input type="text" id="srcUrl" placeholder="输入 M3U/M3U8 订阅源 URL"></div>
       <div class="form-row"><input type="text" id="srcName" placeholder="名称（可选）"></div>
       <div class="btn-row"><button class="btn primary sm" onclick="addSource()">添加并加载</button></div>
+    </div>
+    <div class="form-section">
+      <div class="form-section-title">打开单个串流</div>
+      <div class="form-row"><input type="text" id="streamUrl" placeholder="输入 HLS/RTSP/RTMP/HTTP 流 URL"></div>
+      <div class="form-row"><input type="text" id="streamName" placeholder="名称（可选，用于 OSD 显示）"></div>
+      <div class="btn-row"><button class="btn primary sm" onclick="playStream()">立即播放</button></div>
     </div>
   `;
 });

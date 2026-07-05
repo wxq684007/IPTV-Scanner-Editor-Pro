@@ -43,6 +43,9 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
 
         /** 位置轮询间隔（毫秒），VLC 的 TimeChanged 事件可能不频繁 */
         private const val POSITION_POLL_INTERVAL_MS = 500L
+
+        /** detach 后延迟 release 的时间（毫秒），让 RenderThread 停止渲染避免 SIGSEGV */
+        private const val RELEASE_DELAY_MS = 200L
     }
 
     // -----------------------------------------------------------------
@@ -228,17 +231,29 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
             if (mediaPlayer.vlcVout.areViewsAttached()) {
                 mediaPlayer.vlcVout.detachViews()
             }
-            mediaPlayer.release()
-            libVLC.release()
         } catch (e: Exception) {
-            Log.e(TAG, "detach failed", e)
+            Log.e(TAG, "detach stop/detachViews failed", e)
         }
+        // 关键修复：延迟 release() 到主线程 postDelayed(200ms) 后执行。
+        // 根因：SurfaceView 的 surfaceDestroyed 是异步的，onRelease 后 Surface 可能仍有效，
+        // 立即 release() 释放 native 资源后，RenderThread 仍渲染 → SIGSEGV @ 0x8。
+        // postDelayed(200ms) 让 RenderThread 有时间处理完最后一帧并停止。
+        val mpToRelease = mediaPlayer
+        val libToRelease = libVLC
         _fileLoaded.value = false
         _eofReached.value = false
         _paused.value = true
         _timePos.value = 0.0
         _duration.value = 0.0
-        Log.i(TAG, "VlcController detached")
+        Log.i(TAG, "VlcController detached, release deferred 200ms")
+        handler.postDelayed({
+            try {
+                mpToRelease.release()
+                libToRelease.release()
+            } catch (e: Exception) {
+                Log.e(TAG, "deferred release failed", e)
+            }
+        }, RELEASE_DELAY_MS)
     }
 
     // -----------------------------------------------------------------

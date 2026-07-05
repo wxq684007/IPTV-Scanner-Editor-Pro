@@ -266,11 +266,13 @@ class IjkController(private val context: Context) : Player {
             p.setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec-auto-rotate", 1L)
         }
         p.setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "rtsp-tcp", 1L)
-        // 音频输出：OpenSL ES（比 AudioTrack 在 Android TV 上更可靠）
-        // 根因：IJK 默认用 AudioTrack，但部分 Android TV（如 MTK 平台）的 AudioTrack
-        // 在某些流上无声音（音频 HAL 兼容性问题）。OpenSL ES 是 Android 原生音频 API，
-        // 兼容性更好，延迟更低。
-        p.setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "opensles", 1L)
+        // 音频输出：使用 AudioTrack（而非 OpenSL ES）。
+        // 根因：部分 Android TV（如 MTK 平台）的音频 HAL 使用 PCM_32_BIT 格式，
+        // OpenSL ES 与该格式不兼容导致静默输出（dumpsys media.audio_flinger 显示 No output streams）。
+        // AudioTrack 直接使用 Android 音频框架，兼容性更好，能自动处理格式转换。
+        // 之前用 opensles=1 在某些设备上正常，但在 PCM_32_BIT HAL 设备上无声音，
+        // 统一改为 AudioTrack 以确保最大兼容性。
+        p.setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "opensles", 0L)
         // 禁用 SoundTouch 音频变速处理：部分流上 SoundTouch 会引入音频丢失/静音问题。
         // 禁用后 IJK 用原生 sample rate 输出 PCM，避免变速处理导致的兼容性问题。
         p.setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "soundtouch", 0L)
@@ -280,11 +282,11 @@ class IjkController(private val context: Context) : Player {
         p.setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "packet-buffering", 0L)
         // OPT_CATEGORY_CODEC：解码循环过滤（8 = skip all，提升性能）
         p.setOption(IjkMediaPlayer.OPT_CATEGORY_CODEC, "skip_loop_filter", 8L)
-        // 音频解码选项：启用音频重采样，确保 PCM 输出格式被 OpenSL ES 接受
+        // 音频解码选项：启用音频重采样，确保 PCM 输出格式被 AudioTrack 接受
         // 部分流的音频 sample rate（如 22050）或 channel count 不被设备 AudioTrack 直接支持，
         // 启用 swresample 强制重采样到设备支持的格式。
         p.setOption(IjkMediaPlayer.OPT_CATEGORY_CODEC, "swresample", 1L)
-        Log.i(TAG, "applyDefaultOptions: hardwareDecode=$hardwareDecode, opensles=1, soundtouch=0, swresample=1")
+        Log.i(TAG, "applyDefaultOptions: hardwareDecode=$hardwareDecode, opensles=0(AudioTrack), soundtouch=0, swresample=1")
     }
 
     // -----------------------------------------------------------------
@@ -310,10 +312,7 @@ class IjkController(private val context: Context) : Player {
         // 若 mAudioDecoder 为空说明音频流未被识别或解码器未加载。
         try {
             val mi = (mp as? IjkMediaPlayer)?.mediaInfo
-            Log.i(TAG, "onPrepared: audioDecoder=${mi?.mAudioDecoder}, " +
-                "videoDecoder=${mi?.mVideoDecoder}, " +
-                "audioDecoderName=${mi?.mAudioDecoderName}, " +
-                "videoDecoderName=${mi?.mVideoDecoderName}")
+            Log.i(TAG, "onPrepared: audioDecoder=${mi?.mAudioDecoder}, videoDecoder=${mi?.mVideoDecoder}")
         } catch (e: Exception) {
             Log.w(TAG, "onPrepared: getMediaInfo failed: ${e.message}")
         }
@@ -365,6 +364,14 @@ class IjkController(private val context: Context) : Player {
                 // 元数据更新时刷新轨道列表
                 updateTrackInfo()
             }
+            // 音频诊断：记录音频渲染开始和错误事件，排查无声音问题
+            // 腾讯 IoT fork 扩展的 info 码：
+            // 10010 = AUDIO_RENDERING_START（音频开始渲染，若未触发说明音频输出未启动）
+            // 10012 = AUDIO_DECODE_ERROR（音频解码错误）
+            // 10013 = AUDIO_START_ERROR（音频启动错误，如 OpenSL ES 初始化失败）
+            10010 -> Log.i(TAG, "info: AUDIO_RENDERING_START (audio output started)")
+            10012 -> Log.e(TAG, "info: AUDIO_DECODE_ERROR (extra=$extra)")
+            10013 -> Log.e(TAG, "info: AUDIO_START_ERROR (extra=$extra)")
             else -> Log.d(TAG, "info: what=$what extra=$extra")
         }
     }
@@ -449,11 +456,11 @@ class IjkController(private val context: Context) : Player {
 
     override fun detach() {
         stopPolling()
-        // 切换播放器时先 stop() 确保播放完全停止，再解绑 Surface 和 release。
+        // 切换播放器时先 stop() 确保播放完全停止，再解绑 Surface。
         // 根因：IjkMediaPlayer.release() 会释放内部 native 渲染资源（如 OpenGL 纹理），
         // 但若此时仍在播放，RenderThread 下一帧渲染会访问已释放资源导致 SIGSEGV（fault addr 0x8）。
         // stop() 让 IjkMediaPlayer 进入 Stopped 状态，停止解码和渲染线程，
-        // 随后 setDisplay(null) 解绑 Surface，最后 release() 释放 native 资源。
+        // 随后 setDisplay(null) 解绑 Surface。
         try {
             ijkPlayer?.stop()
         } catch (e: Throwable) {
@@ -467,20 +474,18 @@ class IjkController(private val context: Context) : Player {
         }
         videoView = null
         currentHolder = null
-        try {
-            ijkPlayer?.release()
-        } catch (e: Throwable) {
-            // 捕获 Throwable（包括 StackOverflowError / native 崩溃前兆），
-            // 避免 detach 过程中的异常导致 App 进入无可用播放器状态
-            Log.w(TAG, "detach release failed: ${e.javaClass.simpleName}: ${e.message}")
-        }
         // 正常 detach 也清除 IJK 测试标志：说明用户主动切走（不是崩溃），
         // 下次启动不会因 isIjkTesting=true 误判为崩溃。
         UserPrefs.getInstance().clearIjkTesting()
-        // 置 null，避免后续 attachSurface 调用已释放的 native 实例导致闪退。
-        // 场景：switchPlayer 中 detach() 先于 key(playerType) 触发的 View 销毁执行，
-        // 旧 IjkVideoView 销毁时 surfaceDestroyed → attachSurface(null) → ijkPlayer?.setDisplay(null)
-        // 若 ijkPlayer 仍指向已 release 的实例，native 调用会闪退。
+        // 关键修复：延迟 release() 到主线程 postDelayed(200ms) 后执行。
+        // 根因：SurfaceView 的 surfaceDestroyed 是异步的，onRelease 后 Surface 可能仍有效，
+        // stop()/setDisplay(null) 也是异步的，native 渲染线程可能还在运行。
+        // 立即 release() 释放 native 资源后，RenderThread 仍渲染 → SIGSEGV @ 0x8。
+        // postDelayed(200ms) 让 RenderThread 有时间处理完最后一帧并停止。
+        // 将 ijkPlayer 保存到局部变量，实例字段立即置 null：
+        // - 避免 detach 后 attachSurface 访问已 release 的实例
+        // - 若用户快速切换播放器，新 IjkController 会创建新实例，不影响旧实例的延迟 release
+        val playerToRelease = ijkPlayer
         ijkPlayer = null
         currentUrl = ""
         // 重置状态（避免 Compose 用旧值）
@@ -493,7 +498,14 @@ class IjkController(private val context: Context) : Player {
         _mediaTitle.value = ""
         _videoWidth.value = 0
         _videoHeight.value = 0
-        Log.i(TAG, "IjkController detached")
+        Log.i(TAG, "IjkController detached, release deferred 200ms")
+        handler.postDelayed({
+            try {
+                playerToRelease?.release()
+            } catch (e: Throwable) {
+                Log.w(TAG, "deferred release failed: ${e.javaClass.simpleName}: ${e.message}")
+            }
+        }, RELEASE_DELAY_MS)
     }
 
     /**
@@ -893,5 +905,7 @@ class IjkController(private val context: Context) : Player {
     companion object {
         private const val TAG = "IjkController"
         private const val POLL_INTERVAL_MS = 500L
+        /** detach 后延迟 release 的时间（毫秒），让 RenderThread 停止渲染避免 SIGSEGV */
+        private const val RELEASE_DELAY_MS = 200L
     }
 }

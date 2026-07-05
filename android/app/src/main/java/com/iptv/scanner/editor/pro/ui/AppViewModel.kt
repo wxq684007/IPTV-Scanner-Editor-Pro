@@ -110,6 +110,35 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val mpvSingleton: MpvController = MpvController.getInstance()
 
     /**
+     * 待 detach 的旧播放器实例（切换播放器时保存，等旧 View onRelease 后才 detach）。
+     *
+     * 为什么需要延迟 detach：
+     * switchPlayer 在 `_playerType.value = newType` 之前调用 `oldPlayer.detach()`，
+     * detach 会释放 native 资源（如 IjkPlayer.release()），但此时旧 View 仍然存在、
+     * Surface 仍然有效，RenderThread 可能正在渲染 → 访问已释放资源导致 SIGSEGV。
+     *
+     * 修复：switchPlayer 只保存 oldPlayer 到此字段，不立即 detach。
+     * 旧 View 的 onRelease 回调（MainPlayerScreen.onReleasePlayer）触发后才调用
+     * [detachOldPlayer] 执行真正的 detach，此时 Surface 已释放，安全释放 native 资源。
+     */
+    private var pendingOldPlayer: Player? = null
+
+    /**
+     * 释放待 detach 的旧播放器实例。
+     * 由 MainPlayerScreen 的 AndroidView.onRelease 调用，确保在旧 View 销毁后才 detach。
+     */
+    fun detachOldPlayer() {
+        pendingOldPlayer?.let { old ->
+            pendingOldPlayer = null
+            try {
+                old.detach()
+            } catch (e: Throwable) {
+                Log.e(TAG, "detachOldPlayer: failed", e)
+            }
+        }
+    }
+
+    /**
      * 持久化的播放器类型（从 UserPrefs 读取，可能在 MPV/EXO/VLC/IJK 之间切换）。
      *
      * 声明在 [_player] 之前：[_player] 初始化时需要读取此值创建对应实例，
@@ -207,14 +236,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         // 3. 检测 IJK native 库是否可用（x86/x86_64 设备或 native 崩溃后不可用）
         if (newType == PlayerType.IJK && newPlayer is IjkController && !newPlayer.nativeAvailable) {
-            // IJK native 不可用，不 detach 旧播放器，回退到 MPV 单例
+            // IJK native 不可用，回退到 MPV 单例
             if (oldPlayer === mpvSingleton) {
                 // 旧播放器已是 MPV，无需切换
                 showOsd("播放器", "IJK 在此设备不可用（需 ARM 架构），保持 MPV")
                 return
             }
             // 旧播放器不是 MPV，切换到 MPV 作为安全兜底
-            oldPlayer.detach()
+            // 延迟 detach：保存到 pendingOldPlayer，等旧 View onRelease 后才执行
+            pendingOldPlayer = oldPlayer
             _player.value = mpvSingleton
             _playerType.value = PlayerType.MPV
             userPrefs.setPlayerType(PlayerType.MPV.name)
@@ -225,8 +255,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             showOsd("播放器", "IJK 在此设备不可用（需 ARM 架构），已回退到 MPV")
             return
         }
-        // 4. 新实例创建成功，detach 旧实例（释放资源）
-        oldPlayer.detach()
+        // 4. 新实例创建成功，延迟 detach 旧实例。
+        //    关键修复：不在此处调用 oldPlayer.detach()，而是保存到 pendingOldPlayer，
+        //    等旧 View 的 onRelease 回调（MainPlayerScreen.onReleasePlayer）触发后才 detach。
+        //    原因：detach() 会释放 native 资源（如 IjkPlayer.release()），但此时旧 View 仍存在、
+        //    Surface 仍有效，RenderThread 可能正在渲染 → 访问已释放资源导致 SIGSEGV。
+        //    延迟到 View onRelease 后 detach，Surface 已释放，安全释放 native 资源。
+        pendingOldPlayer = oldPlayer
         _player.value = newPlayer
         _playerType.value = newType
         userPrefs.setPlayerType(newType.name)
@@ -510,6 +545,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // RTSP 传输协议（tcp/udp），供 UI 显示和切换
     private val _currentRtspTransport = MutableStateFlow(userPrefs.getRtspTransport())
     val currentRtspTransport: StateFlow<String> = _currentRtspTransport.asStateFlow()
+
+    // 反交错（no/auto），供 UI 显示和切换
+    private val _currentDeinterlace = MutableStateFlow(userPrefs.getDeinterlace())
+    val currentDeinterlace: StateFlow<String> = _currentDeinterlace.asStateFlow()
 
     /** 当前是否使用硬件解码（所有播放器内核通用，UI 通过 collectAsState 自动响应） */
     private val _hardwareDecode = MutableStateFlow(userPrefs.getHwdec() != "no")
@@ -4357,6 +4396,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * 设置反交错（no/auto）。
+     * deinterlace 是运行时可改属性，立即生效无需重新加载文件。
+     * 仅对 MPV 模式生效。
+     */
+    fun setDeinterlace(value: String) {
+        if (_currentDeinterlace.value == value) return
+        userPrefs.setDeinterlace(value)
+        _currentDeinterlace.value = value
+        (_player.value as? MpvController)?.setDeinterlace(value)
+        showOsd("播放器设置", "反交错: ${if (value == "auto") "自动" else "关闭"}")
+    }
+
+    /**
      * 切换硬件/软件解码（通用方法，适用于所有播放器内核）。
      *
      * - MPV：通过 hwdec 属性切换（auto-copy/no），同时更新 _currentHwdec 状态
@@ -4409,6 +4461,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         userPrefs.resetPlayerSettings()
         _currentVo.value = userPrefs.getVo()
         _currentHwdec.value = userPrefs.getHwdec()
+        _currentDeinterlace.value = userPrefs.getDeinterlace()
         _hdrMode.value = HdrMode.DISABLE
         // 恢复默认应立即生效：若当前不是 MPV，切换回 MPV（MPV 是默认内核）
         // switchPlayer 内部会 detach 旧播放器 + 重建 View + 恢复播放进度
@@ -4416,6 +4469,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             switchPlayer(PlayerType.MPV)
         } else {
             (_player.value as? MpvController)?.setVoAndHwdec(_currentVo.value, _currentHwdec.value)
+            (_player.value as? MpvController)?.setDeinterlace(_currentDeinterlace.value)
             // 已加载视频时立即应用重置后的 HDR 配置（disable → SDR 默认值）
             if (mpv.fileLoaded.value) {
                 applyHdrOnFileLoaded()

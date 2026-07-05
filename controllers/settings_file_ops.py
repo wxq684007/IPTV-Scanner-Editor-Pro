@@ -443,6 +443,31 @@ class SettingsFileOperations:
                "'decoder' drops earlier (saves CPU on weak machines).")
         )
 
+        # 反交错：隔行扫描视频（有些频道有横纹）的反交错处理
+        deinterlace_combo = QComboBox()
+        deinterlace_combo.setObjectName("deinterlace_combo")
+        di_items = [
+            ('no', tr("deinterlace_no", "Off (No deinterlacing)")),
+            ('auto', tr("deinterlace_auto", "Auto (Yadif, detect interlaced frames)")),
+        ]
+        current_di = str(playback_settings.get('deinterlace', 'no')).lower()
+        if current_di == 'yes':
+            current_di = 'auto'
+        selected_di_idx = 0
+        for i, (val, label) in enumerate(di_items):
+            deinterlace_combo.addItem(label, val)
+            if val == current_di:
+                selected_di_idx = i
+        deinterlace_combo.setCurrentIndex(selected_di_idx)
+        self._add_form_row_with_desc(
+            layout,
+            tr("deinterlace_label", "Deinterlace:"),
+            deinterlace_combo,
+            tr("deinterlace_desc",
+               "Deinterlacing for interlaced video (channels with horizontal lines/comb artifacts). "
+               "'Auto' uses Yadif filter, only activates on interlaced frames.")
+        )
+
         # 缓存 override：留空或 0 表示保持播放器内部动态计算值（按流类型/HDR/分辨率自适应）
         cache_secs_edit = QLineEdit()
         cache_secs_edit.setObjectName("cache_secs_override_edit")
@@ -711,6 +736,9 @@ class SettingsFileOperations:
         combo = dialog.findChild(QComboBox, "framedrop_combo")
         if combo:
             settings['framedrop'] = combo.currentData() if combo.currentData() else 'vo'
+        combo = dialog.findChild(QComboBox, "deinterlace_combo")
+        if combo:
+            settings['deinterlace'] = combo.currentData() if combo.currentData() else 'no'
 
         def _parse_positive_int(edit_name):
             edit = dialog.findChild(QLineEdit, edit_name)
@@ -791,6 +819,7 @@ class SettingsFileOperations:
             ('framedrop', 'framedrop'),
             ('video_sync', 'video-sync'),
             ('hwdec', 'hwdec'),
+            ('deinterlace', 'deinterlace'),
         ]
         for cfg_key, mpv_prop in runtime_props:
             old_val = old_playback.get(cfg_key)
@@ -810,6 +839,13 @@ class SettingsFileOperations:
                             new_val = 'auto-copy'
                         else:
                             new_val = 'no'
+                # deinterlace: auto → yes（mpv 的 deinterlace 只支持 yes/no）
+                if cfg_key == 'deinterlace':
+                    val_str = str(new_val).lower()
+                    if val_str == 'auto':
+                        new_val = 'yes'
+                    elif val_str not in ('yes', 'no'):
+                        new_val = 'no'
                 pc.set_property_string(mpv_prop, str(new_val))
             except Exception as e:
                 from core.log_manager import global_logger

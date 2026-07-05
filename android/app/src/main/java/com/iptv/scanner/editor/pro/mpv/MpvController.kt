@@ -139,6 +139,10 @@ class MpvController : MPVLib.EventObserver, Player {
             Log.i(TAG, "vo fallback already confirmed, skip black screen detection")
         }
 
+        // 应用反交错设置（与 PC 端 _ensure_mpv_initialized 行 420-426 对齐）。
+        // deinterlace 是运行时属性，在 attach 阶段设置确保首次播放即生效。
+        setDeinterlace(UserPrefs.getInstance().getDeinterlace())
+
         Log.i(TAG, "MpvController attached to MPVView")
     }
 
@@ -252,6 +256,28 @@ class MpvController : MPVLib.EventObserver, Player {
             val hwdec = MPVLib.getPropertyString("hwdec") ?: "auto-copy"
             hwdec != "no"
         } catch (e: Throwable) { true }
+    }
+
+    /**
+     * 设置反交错（deinterlace）。
+     *
+     * 与 PC 端 _ensure_mpv_initialized 行 420-426 对齐：
+     * mpv 的 deinterlace 属性只支持 yes/no，UI 层的 "auto" 转换为 "yes"
+     * （mpv 会自动检测隔行内容并应用 yadif 滤镜）。
+     * 该属性为运行时可改属性，无需重新加载文件即可生效。
+     *
+     * @param value "no"（关闭）或 "auto"（自动检测）
+     */
+    fun setDeinterlace(value: String) {
+        val mpvValue = if (value == "auto") "yes" else "no"
+        postOnUiThread {
+            try {
+                MPVLib.setPropertyString("deinterlace", mpvValue)
+                Log.i(TAG, "setDeinterlace: value=$value → mpv=$mpvValue")
+            } catch (e: Throwable) {
+                Log.e(TAG, "setDeinterlace failed", e)
+            }
+        }
     }
 
     /**

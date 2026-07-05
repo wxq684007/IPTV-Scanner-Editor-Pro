@@ -96,6 +96,7 @@ def _load_playback_settings():
         'cache_secs_override': 0,
         'demuxer_readahead_secs_override': 0,
         'demuxer_max_bytes_mib_override': 0,
+        'deinterlace': 'no',
     }
     try:
         from core.config_manager import ConfigManager
@@ -136,6 +137,9 @@ class MpvPlayerController(QObject):
         self.event_timer = None
         self._playback_settings = _load_playback_settings()
         self._current_speed = 1.0
+        # 当前画面比例（'default'/'16:9'/'4:3'/'stretch'/'fill'/'crop'）
+        # set_aspect_ratio 写入，get_aspect_ratio 读出
+        self._current_aspect_ratio = 'default'
         self._live_info_timer = None
         self._last_volume = 80
         self._reconnect_count = 0
@@ -235,53 +239,51 @@ class MpvPlayerController(QObject):
                 self.logger.warning(f"HDR检测失败，保守使用SDR模式: {e}")
 
             self._hdr_fallback_tonemap = False
-            # vo 推导：仅在用户未指定具体 vo（'auto'）时按 HDR 模式自动推导。
-            # 用户在订阅设置中手动选择 vo 后优先使用用户值，HDR 模式仍控制
-            # target-prim/trc/colorspace-hint 等色彩参数（与 vo 解耦）。
+            # vo 推导：auto 时始终使用 gpu-next（支持 HDR 和 SDR，gpu 不支持 HDR 信号输出）。
+            # 这样无论用户启动时选什么 HDR 模式，运行时切换到 passthrough/scrgb 时，
+            # vo 已经是 gpu-next，配合 target-colorspace-hint=yes 可以动态切换 swapchain。
             user_vo = str(self._playback_settings.get('vo', 'auto')).lower()
             if user_vo not in ('auto', 'gpu', 'gpu-next', 'libmpv', 'direct3d'):
                 user_vo = 'auto'
             if user_vo == 'auto':
-                if hdr_mode == 'disable':
-                    vo = 'gpu'
-                elif hdr_mode == 'tonemap':
-                    vo = 'gpu'
-                elif hdr_mode == 'passthrough':
-                    if system_hdr_enabled:
-                        vo = 'gpu-next'
-                    else:
-                        self.logger.warning("系统未启用HDR，passthrough模式回退到tonemap")
-                        vo = 'gpu'
-                        self._hdr_fallback_tonemap = True
-                elif hdr_mode == 'scrgb':
-                    if system_hdr_enabled:
-                        vo = 'gpu-next'
-                    else:
-                        self.logger.warning("系统未启用HDR，scrgb模式回退到tonemap")
-                        vo = 'gpu'
-                        self._hdr_fallback_tonemap = True
-                else:
-                    if system_hdr_enabled:
-                        vo = 'gpu-next'
-                    else:
-                        vo = 'gpu'
+                vo = 'gpu-next'
             else:
-                # 用户手动指定 vo：HDR 模式若需 gpu-next 但用户选了其他 vo，
-                # 标记回退到 tonemap 以避免 HDR 信号被错送到 SDR 输出。
                 vo = user_vo
-                if hdr_mode in ('passthrough', 'scrgb') and system_hdr_enabled and vo != 'gpu-next':
+                if hdr_mode in ('passthrough', 'scrgb', 'auto') and vo != 'gpu-next':
                     self.logger.warning(
-                        f"HDR模式({hdr_mode})需要gpu-next，但用户选了vo={vo}，HDR信号可能异常"
+                        f"HDR模式({hdr_mode})建议使用gpu-next，但用户选了vo={vo}，HDR信号可能异常"
                     )
-                if hdr_mode == 'disable':
-                    # disable 模式原本强制 gpu，用户选其他 vo 时保留用户选择
-                    pass
 
             # gpu-api和gpu-context必须在vo之前设置
             # 否则mpv内部锁定渲染后端后，gpu-context设置会被拒绝(错误码-7)
             if is_windows():
                 _mpv_set_option_string(self.mpv_handle, 'gpu-api', 'd3d11')
                 _mpv_set_option_string(self.mpv_handle, 'd3d11-sync-interval', '1')
+                # d3d11-output-csp 控制 swapchain 的初始色彩空间和底层 DXGI 格式：
+                # - srgb → R8G8B8A8_UNORM（仅支持 sRGB，运行时无法切换到 PQ）
+                # - pq   → R10G10B10A2_UNORM（支持 PQ 和 sRGB 之间动态切换）
+                # - auto → 根据初始 target-trc 选择（默认 auto 时通常选 sRGB）
+                #
+                # 根因：d3d11-output-csp=auto 在初始化时创建了 R8G8B8A8_UNORM 格式的 swapchain，
+                # 此格式不支持 PQ 色彩空间。运行时设置 target-trc=pq 后，target-colorspace-hint=yes
+                # 会让 mpv 调用 SetColorSpace1 尝试切换到 PQ，但 R8G8B8A8_UNORM 格式不支持 PQ，
+                # 切换失败，PQ 信号在 sRGB swapchain 上显示为极暗画面（用户反馈的"HDR直通画面暗"）。
+                #
+                # 修复：对于 HDR 模式（passthrough/scrgb/auto），设置 d3d11-output-csp=pq，
+                # 让 mpv 创建 R10G10B10A2_UNORM 格式的 swapchain，运行时可通过 SetColorSpace1
+                # 在 PQ 和 sRGB 之间动态切换。reinit_for_hdr_change() 切换 HDR 模式时会重新
+                # 初始化 mpv，所以根据新的 hdr_mode 设置正确的 d3d11-output-csp。
+                # 对于 tonemap/disable 模式，使用 srgb 即可。
+                #
+                # 注意：Windows 显示合成器总是支持 HDR 交换链（即使显示器是 SDR），
+                # 所以 d3d11-output-csp=pq 能成功创建 swapchain。当系统 HDR 未启用时，
+                # _apply_hdr_on_file_loaded() 会回退到 tonemap（target-trc=srgb），
+                # target-colorspace-hint=yes 会让 mpv 将 swapchain 切换回 sRGB。
+                if hdr_mode in ('passthrough', 'scrgb', 'auto'):
+                    _mpv_set_option_string(self.mpv_handle, 'd3d11-output-csp', 'pq')
+                else:
+                    _mpv_set_option_string(self.mpv_handle, 'd3d11-output-csp', 'srgb')
+                _mpv_set_option_string(self.mpv_handle, 'target-colorspace-hint', 'yes')
             elif is_macos():
                 # macOS上mpv v0.41+的gpu-context选项不再支持wid嵌入
                 # 使用vo=libmpv + render API渲染到QOpenGLWidget（IINA等播放器的标准方案）
@@ -416,6 +418,14 @@ class MpvPlayerController(QObject):
                 video_sync_raw = 'audio'
             _mpv_set_property_string(self.mpv_handle, 'video-sync', video_sync_raw)
 
+            # 反交错：yes 时 mpv 自动检测隔行视频并添加 yadif 滤镜
+            deinterlace_raw = str(self._playback_settings.get('deinterlace', 'no')).lower()
+            if deinterlace_raw not in ('yes', 'no', 'auto'):
+                deinterlace_raw = 'no'
+            if deinterlace_raw == 'auto':
+                deinterlace_raw = 'yes'
+            _mpv_set_property_string(self.mpv_handle, 'deinterlace', deinterlace_raw)
+
             passthrough = self._playback_settings.get('audio_passthrough', 'never')
             if passthrough and passthrough != 'never':
                 passthrough_map = {
@@ -476,7 +486,9 @@ class MpvPlayerController(QObject):
                 _ga = self._get_mpv_property_string('gpu-api') or '?'
                 _gc = self._get_mpv_property_string('gpu-context') or '?'
                 _csp = self._get_mpv_property_string('d3d11-output-csp') or '?'
-                self.logger.info(f"HDR诊断: vo={_vo}, gpu-api={_ga}, gpu-context={_gc}, target-prim={_tp}, target-trc={_tt}, tone-mapping={_tm}, target-colorspace-hint={_tch}, d3d11-output-csp={_csp}, hdr_mode={hdr_mode}")
+                _tpk = self._get_mpv_property_string('target-peak') or '?'
+                _gmm = self._get_mpv_property_string('gamut-mapping-mode') or '?'
+                self.logger.info(f"HDR诊断: vo={_vo}, gpu-api={_ga}, gpu-context={_gc}, target-prim={_tp}, target-trc={_tt}, tone-mapping={_tm}, target-colorspace-hint={_tch}, d3d11-output-csp={_csp}, target-peak={_tpk}, gamut-mapping-mode={_gmm}, hdr_mode={hdr_mode}")
             except Exception as e:
                 self.logger.debug(f"HDR诊断读取失败: {e}")
 
@@ -522,58 +534,104 @@ class MpvPlayerController(QObject):
 
     def _apply_tonemap_config(self):
         # HDR→SDR 色调映射：显式指定目标色域和 gamma，避免 mpv 自动推断失败
-        # （PQ 是绝对 OETF，依赖明确的 target-trc 才能正确逆转换；HLG 有 OOTF 兼容路径不受影响）
-        # 关键：hdr-compute-peak 必须为 no，否则 mpv 会自行计算信号峰值，覆盖 HDR10+ 动态元数据
-        # （mpv 文档明确：hdr-compute-peak=yes 会 override HDR10+ dynamic metadata，导致画面偏暗）
-        # tone-mapping=auto 让 mpv 自动选择：HDR10+→st2094-40，HDR10/HLG→bt.2390
+        # 注意：d3d11-output-csp 和 target-colorspace-hint 已在初始化时设置（option），
+        # 运行时修改不会重建 swapchain，所以这里不再设置。
+        # 重置 target-peak：passthrough/scrgb 模式设置了 10000，切换到 tonemap 时必须重置，
+        # 否则 mpv 认为显示器能显示 10000 nits，不会做 HDR→SDR tone mapping，画面会过曝。
+        # 重置 gamut-mapping-mode：passthrough/scrgb 设置了 relative，tonemap 模式需要
+        # 色域压缩（BT.2020→BT.709），使用默认的 auto（perceptual）更合适。
+        # 注意：hdr10-opt 由 _apply_hdr_on_file_loaded 根据视频类型统一设置，这里不再设置。
         sdr_trc = self._get_sdr_target_trc()
-        self._set_mpv_string('tone-mapping', 'auto')         # 自动选择 HDR10+→st2094-40 / HDR10/HLG→bt.2390
+        self._set_mpv_string('tone-mapping', 'auto')
         self._set_mpv_string('tone-mapping-mode', 'auto')
-        self._set_mpv_string('tone-mapping-desat', '0.5')    # 高光去饱和，避免画面发灰
-        self._set_mpv_string('hdr-compute-peak', 'no')       # 信任 HDR10+ 动态元数据，不自行计算峰值
-        self._set_mpv_string('hdr10-opt', 'yes')             # 启用 HDR10+ 动态元数据（逐场景色调映射）
-        self._set_mpv_string('d3d11-output-csp', 'srgb')
-        self._set_mpv_string('target-prim', 'bt.709')        # SDR 显示器色域
-        self._set_mpv_string('target-trc', sdr_trc)          # SDR 显示器 gamma（Windows HDR 下用 srgb）
-        self._set_mpv_string('target-colorspace-hint', 'no')  # 避免从 passthrough 切过来残留
-        self.logger.info(f"HDR配置: tonemap → SDR (auto/bt.2390, bt.709/{sdr_trc}, hdr10-opt, 信任元数据)")
-
-    def _apply_passthrough_config(self):
-        self._set_mpv_string('tone-mapping', 'clip')
+        self._set_mpv_string('tone-mapping-desat', '0.5')
         self._set_mpv_string('hdr-compute-peak', 'no')
-        self._set_mpv_string('hdr10-opt', 'yes')             # 让 mpv 读取 HDR10+ 动态元数据
-        self._set_mpv_string('d3d11-output-csp', 'pq')
-        self._set_mpv_string('target-colorspace-hint', 'yes')
-        # 显式指定 HDR 目标色域和传递特性（PQ OETF 依赖明确 target-trc 才能正确转换）
-        # 留空时 mpv 自动推断对 HDR10 不稳定，会导致画面偏暗；HLG 因有 OOTF 兼容路径影响较小
-        self._set_mpv_string('target-prim', 'bt.2020')   # HDR 标准色域
-        self._set_mpv_string('target-trc', 'pq')           # HDR10 PQ 传递特性
-        self.logger.info("HDR配置: passthrough → PQ直通 (bt.2020/pq, hdr10-opt)")
+        self._set_mpv_string('target-prim', 'bt.709')
+        self._set_mpv_string('target-trc', sdr_trc)
+        self._set_mpv_string('target-peak', '')
+        self._set_mpv_string('gamut-mapping-mode', '')
+        self.logger.info(f"HDR配置: tonemap → SDR (bt.709/{sdr_trc})")
 
-    def _apply_scrgb_config(self):
-        self._set_mpv_string('tone-mapping', 'clip')
-        self._set_mpv_string('hdr-compute-peak', 'no')
-        self._set_mpv_string('hdr10-opt', 'yes')             # 让 mpv 读取 HDR10+ 动态元数据
-        self._set_mpv_string('d3d11-output-csp', 'pq')
-        self._set_mpv_string('target-colorspace-hint', 'yes')
-        # 显式指定 HDR 目标色域和传递特性（与 passthrough 一致）
-        # auto 模式下系统 HDR 开启时走此分支，输出 PQ HDR 信号给显示器
+    def _apply_passthrough_config(self, is_pq_video=True):
+        # d3d11-output-csp=pq + target-colorspace-hint=yes 已在初始化时设置
+        #
+        # PQ 视频（HDR10/HDR10+）：
+        #   target-peak=10000 是 HDR 直通的关键：告诉 mpv 显示器能处理 10000 nits，
+        #   mpv 不会做 tone mapping（target-peak=10000 同 hdr-compute-peak 矛盾，自动关闭），
+        #   而是直接输出 PQ 信号让显示器/Windows 合成器处理。
+        #   参考：mpv 官方 issue #7357、chiphell 论坛 mpv HDR 教程。
+        #   tone-mapping=clip：不做 tone mapping，直接输出 PQ 信号。
+        #
+        # HLG 视频：
+        #   HLG 是相对编码，亮度根据显示器自动缩放（参考：forasoft HLG 文档）。
+        #   若设置 target-peak=10000，mpv 会将 HLG 的 1.0（参考白 1000 nits）映射到
+        #   10000 nits，导致高光过度拉伸过曝，tone-mapping=clip 截断高光，形成阴阳脸
+        #   （用户反馈的"HLG人脸阴阳脸"）。
+        #   修复：不设置 target-peak，用 hdr-compute-peak=yes 让 mpv 自动计算峰值，
+        #   tone-mapping=auto（gpu-next 中选 spline）让 mpv 平滑处理 HLG→PQ 转换。
+        #
+        # gamut-mapping-mode=relative：相对色域映射，保持色彩准确性，
+        # 让显示器/Windows 合成器处理最终的色域压缩。
+        # 注意：hdr10-opt 由 _apply_hdr_on_file_loaded 根据视频类型统一设置，这里不再设置。
         self._set_mpv_string('target-prim', 'bt.2020')
         self._set_mpv_string('target-trc', 'pq')
-        self.logger.info("HDR配置: scrgb → PQ直通 (bt.2020/pq, hdr10-opt)")
+        self._set_mpv_string('gamut-mapping-mode', 'relative')
+        if is_pq_video:
+            self._set_mpv_string('tone-mapping', 'clip')
+            self._set_mpv_string('hdr-compute-peak', 'no')
+            self._set_mpv_string('target-peak', '10000')
+            self.logger.info("HDR配置: passthrough → PQ直通 (bt.2020/pq, target-peak=10000, gamut=relative)")
+        else:
+            # HLG 视频：让 mpv 自动处理 HLG→PQ 转换
+            self._set_mpv_string('tone-mapping', 'auto')
+            self._set_mpv_string('hdr-compute-peak', 'yes')
+            self._set_mpv_string('target-peak', '')
+            self.logger.info("HDR配置: passthrough → HLG自动转换 (bt.2020/pq, compute-peak=yes, gamut=relative)")
 
-    def _reset_hdr_params(self):
-        # 非 HDR 视频：显式指定 SDR 目标，确保 bt.2020 色域（WCG）视频能正确映射到 bt.709
+    def _apply_scrgb_config(self, is_pq_video=True):
+        # d3d11-output-csp=pq + target-colorspace-hint=yes 已在初始化时设置
+        # scrgb 模式与 passthrough 模式的 HDR 处理逻辑相同，
+        # 都是将 HDR 内容以 PQ 信号输出到 swapchain，由 Windows DWM 合成。
+        # 区别在于 scrgb 模式主要用于 auto 模式回退，passthrough 用于显式直通。
+        # 参数选择同 passthrough，根据视频类型（PQ/HLG）区分处理。
+        # 注意：hdr10-opt 由 _apply_hdr_on_file_loaded 根据视频类型统一设置，这里不再设置。
+        self._apply_passthrough_config(is_pq_video)
+        self.logger.info(f"HDR配置: scrgb → {'PQ直通' if is_pq_video else 'HLG自动转换'} (复用 passthrough 配置)")
+
+    def _apply_wcg_config(self):
+        """WCG 视频（宽色域 SDR）配置：保持 bt.2020 色域，SDR 亮度。
+
+        WCG 视频是 BT.2020 色域但 SDR 亮度（gamma=srgb/bt.1886），
+        需要保持 bt.2020 色域，避免被压缩到 bt.709 导致偏色。
+        使用 gamut-mapping-mode=relative 让显示器/Windows 合成器处理色域映射。
+        """
         sdr_trc = self._get_sdr_target_trc()
         self._set_mpv_string('tone-mapping', '')
         self._set_mpv_string('tone-mapping-mode', '')
         self._set_mpv_string('tone-mapping-desat', '')
         self._set_mpv_string('hdr-compute-peak', '')
-        self._set_mpv_string('hdr10-opt', 'no')              # 非 HDR 视频关闭 HDR10+ 优化
-        self._set_mpv_string('d3d11-output-csp', 'srgb')
-        self._set_mpv_string('target-prim', 'bt.709')        # SDR 显示器色域
-        self._set_mpv_string('target-trc', sdr_trc)          # SDR 显示器 gamma（Windows HDR 下用 srgb）
-        self._set_mpv_string('target-colorspace-hint', 'no')
+        self._set_mpv_string('hdr10-opt', 'no')
+        self._set_mpv_string('target-prim', 'bt.2020')
+        self._set_mpv_string('target-trc', sdr_trc)
+        self._set_mpv_string('target-peak', '')
+        self._set_mpv_string('gamut-mapping-mode', 'relative')
+        self.logger.info(f"HDR配置: WCG → 保持bt.2020色域 (bt.2020/{sdr_trc}, gamut=relative)")
+
+    def _reset_hdr_params(self):
+        # 非 HDR 视频：显式指定 SDR 目标，确保 bt.2020 色域（WCG）视频能正确映射到 bt.709
+        # d3d11-output-csp 和 target-colorspace-hint 已在初始化时设置
+        # 重置 target-peak：passthrough/scrgb 模式设置了 10000，切换到非 HDR 视频时必须重置。
+        # 重置 gamut-mapping-mode：passthrough/scrgb 设置了 relative，非 HDR 视频不需要。
+        sdr_trc = self._get_sdr_target_trc()
+        self._set_mpv_string('tone-mapping', '')
+        self._set_mpv_string('tone-mapping-mode', '')
+        self._set_mpv_string('tone-mapping-desat', '')
+        self._set_mpv_string('hdr-compute-peak', '')
+        self._set_mpv_string('hdr10-opt', 'no')
+        self._set_mpv_string('target-prim', 'bt.709')
+        self._set_mpv_string('target-trc', sdr_trc)
+        self._set_mpv_string('target-peak', '')
+        self._set_mpv_string('gamut-mapping-mode', '')
         self.logger.info(f"HDR配置: 已重置为SDR默认值 (bt.709/{sdr_trc})")
 
 
@@ -772,10 +830,35 @@ class MpvPlayerController(QObject):
                            'hlg' in vp_gamma or 'arib-std-b67' in vp_gamma or
                            vp_peak > 100)
 
+            # WCG 视频（宽色域 SDR）：BT.2020 色域但 SDR 亮度（gamma=srgb/bt.1886）
+            # 这类视频需要保持 bt.2020 色域，避免被压缩到 bt.709 导致偏色
+            is_wcg_video = (not is_hdr_video and
+                           ('bt.2020' in vp_prim or 'bt2020' in vp_prim))
+
+            if is_wcg_video:
+                self.logger.info("WCG视频（宽色域SDR），保持bt.2020色域")
+                self._apply_wcg_config()
+                return
+
             if not is_hdr_video:
                 self.logger.info("非HDR视频，重置HDR参数为默认值")
                 self._reset_hdr_params()
                 return
+
+            # 根据 HDR 视频类型动态设置 hdr10-opt（HDR10+ 动态元数据传递）：
+            # - PQ 视频（HDR10/HDR10+）：启用 hdr10-opt=yes，传递 HDR10+ 动态元数据到显示器，
+            #   显示器可使用动态元数据进行更准确的 tone mapping。
+            # - HLG 视频：禁用 hdr10-opt=no，HLG 与 HDR10+ 是不同标准，
+            #   启用可能让 libplacebo 尝试处理不存在的 HDR10+ 元数据，干扰 HLG→PQ 转换。
+            # 修复问题：HDR10+ 视频移除 hdr10-opt 后亮度暗（动态元数据未传递到显示器）；
+            # HLG 视频启用 hdr10-opt 后偏色（处理不存在的 HDR10+ 元数据）。
+            is_pq_video = ('pq' in vp_gamma or 'smpte2084' in vp_gamma)
+            if is_pq_video:
+                self._set_mpv_string('hdr10-opt', 'yes')
+                self.logger.info("PQ视频，启用hdr10-opt传递HDR10+动态元数据")
+            else:
+                self._set_mpv_string('hdr10-opt', 'no')
+                self.logger.info("非PQ视频（HLG），禁用hdr10-opt")
 
             def _check_system_hdr():
                 """运行时检测系统 HDR 状态（比初始化时更准确，Qt 应用已完全就绪）。"""
@@ -805,7 +888,7 @@ class MpvPlayerController(QObject):
                         self.logger.warning("运行时检测系统未启用HDR，passthrough模式回退到tonemap")
                     self._apply_tonemap_config()
                 else:
-                    self._apply_passthrough_config()
+                    self._apply_passthrough_config(is_pq_video)
                 return
 
             if hdr_mode == 'scrgb':
@@ -816,13 +899,13 @@ class MpvPlayerController(QObject):
                         self.logger.warning("运行时检测系统未启用HDR，scrgb模式回退到tonemap")
                     self._apply_tonemap_config()
                 else:
-                    self._apply_scrgb_config()
+                    self._apply_scrgb_config(is_pq_video)
                 return
 
             if hdr_mode == 'auto':
                 system_hdr_enabled = _check_system_hdr()
                 if system_hdr_enabled:
-                    self._apply_scrgb_config()
+                    self._apply_scrgb_config(is_pq_video)
                 else:
                     self._apply_tonemap_config()
                 return
@@ -933,7 +1016,10 @@ class MpvPlayerController(QObject):
             self._set_mpv_string('demuxer-lavf-format', '')
             self._set_mpv_string('demuxer-lavf-probesize', '50000000')
             self._set_mpv_string('demuxer-lavf-analyzeduration', '10')
-            self._set_mpv_string('demuxer-lavf-buffersize', '50000000')
+            # mpv 规定 demuxer-lavf-buffersize 最大值为 10485760（10MiB），
+            # 超出会被拒绝并导致整个网络挂载盘配置失败（参考 app.log 错误：
+            # "The demuxer-lavf-buffersize option must be <= 10485760"）
+            self._set_mpv_string('demuxer-lavf-buffersize', '10485760')
             self._set_mpv_string('cache', 'yes')
             self._set_cache_param('cache-secs', '60')
             self._set_cache_param('demuxer-max-bytes', '512MiB')
@@ -1620,9 +1706,16 @@ class MpvPlayerController(QObject):
                 self._set_mpv_string('video-aspect-mode', 'container')
                 self._set_mpv_string('keepaspect', 'yes')
                 self._set_mpv_string('panscan', '0.0')
+            # 缓存当前比例，供 get_aspect_ratio 读出
+            # 用于 PlaybackSettingsController 在切换频道前持久化播放设置
+            self._current_aspect_ratio = ratio_lower
             self.logger.debug(f"设置画面比例: {ratio}")
         except Exception as e:
             self.logger.error(f"设置画面比例失败: {str(e)}")
+
+    def get_aspect_ratio(self) -> str:
+        """读取当前画面比例（与 set_aspect_ratio 配对，用于播放设置持久化）"""
+        return self._current_aspect_ratio
 
     def set_mute(self, muted):
         try:

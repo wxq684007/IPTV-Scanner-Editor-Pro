@@ -235,6 +235,10 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
         val onReleasePlayer: (android.view.View) -> Unit = { view ->
             Log.i("MainPlayerScreen", "onRelease: destroying player view")
             if (view is MPVView) view.destroy()
+            // 通知 ViewModel 旧 View 已销毁，可以安全 detach 旧播放器（释放 native 资源）。
+            // 必须在 View 销毁后 detach，否则 Surface 仍有效时释放 native 资源会导致
+            // RenderThread SIGSEGV（IjkPlayer.release / ExoPlayer.release 时崩溃）。
+            viewModel.detachOldPlayer()
         }
 
         // 用 key(playerType) 包裹整个播放器子树，确保切换播放器类型时：

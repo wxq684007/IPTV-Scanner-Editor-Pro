@@ -63,6 +63,7 @@ fun PlayerSettingsPanel(viewModel: AppViewModel) {
     val currentVo by viewModel.currentVo.collectAsState()
     val currentHwdec by viewModel.currentHwdec.collectAsState()
     val currentRtspTransport by viewModel.currentRtspTransport.collectAsState()
+    val currentDeinterlace by viewModel.currentDeinterlace.collectAsState()
     val hdrMode by viewModel.hdrMode.collectAsState()
     val hardwareDecode by viewModel.hardwareDecode.collectAsState()
     val isMpvMode = playerType == PlayerType.MPV
@@ -330,6 +331,49 @@ fun PlayerSettingsPanel(viewModel: AppViewModel) {
                 }
                 Text(
                     text = hwdecDesc,
+                    color = Color(0xFFB0BEC5),
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                // -----------------------------------------------------------------
+                // 反交错（Deinterlace）
+                // -----------------------------------------------------------------
+                SectionTitle("反交错（Deinterlace）")
+                Spacer(modifier = Modifier.height(4.dp))
+                SectionDesc("消除隔行扫描视频（如 1080i TV 流）的横线梳齿。自动模式由 mpv 检测隔行内容")
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = currentDeinterlace == "no",
+                        onClick = { viewModel.setDeinterlace("no") },
+                        label = { Text("关闭") },
+                        modifier = Modifier.tvFocusBorder()
+                    )
+                    FilterChip(
+                        selected = currentDeinterlace == "auto",
+                        onClick = { viewModel.setDeinterlace("auto") },
+                        label = { Text("自动") },
+                        modifier = Modifier.tvFocusBorder()
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                val deinterlaceDesc = when (currentDeinterlace) {
+                    "no" -> "关闭反交错：逐行视频不受影响，隔行视频可能出现梳齿。" +
+                        "适合所有逐行视频源（大部分网络流均为逐行）"
+                    "auto" -> "自动反交错：mpv 自动检测隔行内容并应用 yadif 滤镜。" +
+                        "逐行视频不受影响，隔行视频（1080i TV）消除梳齿。" +
+                        "与 hwdec=auto（直接输出）模式可能不兼容，需用 auto-copy 或 no"
+                    else -> "未知设置: $currentDeinterlace"
+                }
+                Text(
+                    text = deinterlaceDesc,
                     color = Color(0xFFB0BEC5),
                     fontSize = 12.sp,
                     modifier = Modifier.padding(horizontal = 4.dp)

@@ -300,18 +300,23 @@ class ExoPlayerController(private val context: Context) : Player {
 
     override fun detach() {
         mainHandler.removeCallbacks(progressRunnable)
-        exoPlayer.removeListener(listener)
-        // 先解绑 Surface 再 release：避免 release() 释放解码器资源后
+        _exoPlayer.removeListener(listener)
+        // 先解绑 Surface：避免 release() 释放解码器资源后
         // RenderThread 仍访问已释放的 Surface 导致 SIGSEGV（与 IJK 切 MPV 崩溃同类问题）。
         // ExoPlayerView.surfaceDestroyed 也会调用 clearVideoSurface，但 View 销毁是异步的，
         // detach 时主动解绑确保 release 前 Surface 已断开。
         try {
-            exoPlayer.clearVideoSurface()
+            _exoPlayer.clearVideoSurface()
         } catch (e: Throwable) {
             Log.w(TAG, "detach: clearVideoSurface failed: ${e.message}")
         }
-        exoPlayer.release()
         exoPlayerView = null
+        // 关键修复：延迟 release() 到主线程 postDelayed(200ms) 后执行。
+        // 根因：SurfaceView 的 surfaceDestroyed 是异步的，onRelease 后 Surface 可能仍有效，
+        // clearVideoSurface 也是异步的，native 渲染线程可能还在运行。
+        // 立即 release() 释放 native 资源后，RenderThread 仍渲染 → SIGSEGV @ 0x8。
+        // postDelayed(200ms) 让 RenderThread 有时间处理完最后一帧并停止。
+        val playerToRelease = _exoPlayer
         // 重置状态（避免 Compose 用旧值）
         _fileLoaded.value = false
         _eofReached.value = false
@@ -321,7 +326,14 @@ class ExoPlayerController(private val context: Context) : Player {
         _trackListJson.value = ""
         _videoWidth.value = 0
         _videoHeight.value = 0
-        Log.i(TAG, "ExoPlayerController detached and released")
+        Log.i(TAG, "ExoPlayerController detached, release deferred 200ms")
+        mainHandler.postDelayed({
+            try {
+                playerToRelease.release()
+            } catch (e: Throwable) {
+                Log.w(TAG, "deferred release failed: ${e.message}")
+            }
+        }, RELEASE_DELAY_MS)
     }
 
     // -----------------------------------------------------------------
@@ -810,6 +822,9 @@ class ExoPlayerController(private val context: Context) : Player {
 
         /** 位置轮询间隔（毫秒） */
         private const val PROGRESS_INTERVAL_MS = 500L
+
+        /** detach 后延迟 release 的时间（毫秒），让 RenderThread 停止渲染避免 SIGSEGV */
+        private const val RELEASE_DELAY_MS = 200L
 
         /**
          * 创建 ExoPlayer 实例。

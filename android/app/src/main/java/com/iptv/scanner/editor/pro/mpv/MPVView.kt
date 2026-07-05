@@ -57,28 +57,43 @@ class MPVView @JvmOverloads constructor(
         voInUse = vo
         // 代际计数器：本次 initialize 分配的代次，destroy() 时检查是否仍是当前活动代次。
         // 用于解决"旧 MPVView.destroy() 在新 MPVView.initialize() 之后执行"的竞态条件：
-        // 1. MPVView #2.initialize() → generation=2 → MPVLib.destroy() → MPVLib.create() → nativeInstanceAlive=true
+        // 1. MPVView #2.initialize() → generation=2 → 复用实例
         // 2. MPVView #1.destroy() → myGeneration=1 != activeGeneration=2 → 跳过 destroy，避免杀死新实例
         myGeneration = ++activeGeneration
         Log.i(TAG, "initialize: generation=$myGeneration")
 
-        // 切换播放器（MPV → EXO/IJK/VLC → MPV）时，Compose 的 onRelease 是异步的，
-        // 上次 MPVView.destroy() 可能还未执行，native mpv 实例仍存活。
-        // 此时 MPVLib.create() 会在已存在的实例上调用，导致 native 崩溃（SIGSEGV）。
-        // 用 nativeInstanceAlive 标志位检测残留实例，先 destroy 再 create。
+        // 切换播放器（MPV → EXO/IJK/VLC → MPV）时，destroy() 不再调用 MPVLib.destroy()，
+        // native mpv 实例永远存活。切回 MPV 时直接复用实例，避免 destroy + create 崩溃。
         //
         // 重要：nativeInstanceAlive 必须是 companion object（静态字段），不能是实例字段。
         // 因为从 IJK 切回 MPV 时会创建新的 MPVView 实例，新实例的实例字段初始值是 false,
         // 无法检测到之前 MPVView 残留的 native mpv 实例，导致 double-create 崩溃。
         if (nativeInstanceAlive) {
-            Log.w(TAG, "initialize: native mpv instance still alive (generation=$myGeneration), destroying first")
+            // 复用现有 native mpv 实例，不 destroy + create。
+            //
+            // 根因：MPVLib.destroy() 会释放 native 资源，但 RenderThread 可能仍在渲染，
+            // 访问已释放资源导致 SIGSEGV @ 0x8。而且 destroy 后再 create 会导致
+            // "pthread_mutex_lock called on a destroyed mutex"。
+            //
+            // 修复方案：destroy() 只 stop + vo=null + detachSurface，保持实例存活。
+            // initialize() 检测到实例存活时直接复用，用 setPropertyString 更新运行时属性。
+            // - vo 由 surfaceCreated 时设置（此时 surface 已就绪，vo=gpu 可以正常渲染）
+            // - hwdec 用 setPropertyString 运行时更新
+            // - 不重复 observeProperties：mpv 实例仍然存活，之前的观察仍然有效
+            Log.i(TAG, "initialize: reusing existing native mpv instance (generation=$myGeneration)")
             try {
-                MPVLib.destroy()
+                MPVLib.setPropertyString("hwdec", hwdec)
+                // vo 保持 null，等 surfaceCreated 时设置为 voInUse
+                // force-window 保持 no，等 surfaceCreated 时设置为 yes
             } catch (e: Throwable) {
-                Log.w(TAG, "initialize: destroy previous instance failed: ${e.message}")
+                Log.w(TAG, "initialize: reuse setPropertyString failed: ${e.message}")
             }
-            nativeInstanceAlive = false
+            holder.setFormat(PixelFormat.RGBA_8888)
+            holder.addCallback(this)
+            return
         }
+
+        // 首次创建或实例已被 destroy：正常 create + init
         MPVLib.create(context)
 
         MPVLib.setOptionString("config", "yes")
@@ -186,25 +201,34 @@ class MPVView @JvmOverloads constructor(
     }
 
     fun destroy() {
-        // 先移除回调，防止 surfaceDestroyed 在 MPVLib.destroy() 之后触发
-        // 导致 use-after-destroy（MPVLib.setPropertyString/detachSurface）
+        // 先移除回调，防止 surfaceDestroyed 在 MPVLib 操作之后触发
         holder.removeCallback(this)
-        // 代际检查：只有当前活动代次的 MPVView 才允许销毁 native mpv 实例。
-        // 解决竞态：切回 MPV 时新 MPVView #2.initialize() 先执行，
-        // 旧 MPVView #1.destroy() 后执行。若不检查代次，旧 destroy 会杀死新 native mpv 实例。
+        // 代际检查：只有当前活动代次的 MPVView 才允许操作 native mpv 实例。
         if (myGeneration != activeGeneration) {
             Log.i(TAG, "destroy: skipped (myGen=$myGeneration, activeGen=$activeGeneration), newer MPVView is active")
             return
         }
-        // 防止 double-destroy：onRelease 可能与 MpvController.detach 或
-        // Activity.onDestroy 多次调用 destroy，double-destroy 会导致 native 崩溃
+        // 关键修复：永远不调用 MPVLib.destroy()，只停止渲染和断开 Surface。
+        //
+        // 根因：MPVLib.destroy() 会释放 native mpv 资源，但 RenderThread 可能仍在渲染，
+        // 访问已释放资源导致 SIGSEGV @ 0x8。而且 destroy 后再 create 会导致
+        // "pthread_mutex_lock called on a destroyed mutex"——新实例与残留的
+        // RenderThread 冲突。
+        //
+        // 修复方案：切换播放器时只 stop() + vo=null + detachSurface，保持实例存活。
+        // 下次切回 MPV 时 initialize() 检测到 nativeInstanceAlive=true，直接复用实例，
+        // 从根本上避免 destroy + create 的崩溃。
+        // Activity 退出时进程自动回收 MPV 实例，不会内存泄漏（应用只有一个 Activity）。
         if (nativeInstanceAlive) {
             try {
-                MPVLib.destroy()
+                MPVLib.command(arrayOf("stop"))
+                MPVLib.setPropertyString("vo", "null")
+                MPVLib.setPropertyString("force-window", "no")
+                MPVLib.detachSurface()
             } catch (e: Throwable) {
-                Log.w(TAG, "destroy: MPVLib.destroy failed: ${e.message}")
+                Log.w(TAG, "destroy: stop/vo=null/detachSurface failed: ${e.message}")
             }
-            nativeInstanceAlive = false
+            Log.i(TAG, "destroy: instance kept alive (gen=$myGeneration), ready for reuse")
         }
     }
 
@@ -343,10 +367,9 @@ class MPVView @JvmOverloads constructor(
         /**
          * 跟踪 native mpv 实例是否存活（MPVLib 是全局单例，create/destroy 管理同一个 native 实例）。
          *
-         * 用途：切换播放器（MPV → EXO/IJK → MPV）时，Compose 的 onRelease 是异步的，
-         * 上次 MPVView.destroy() 可能还未执行。切回 MPV 时 MPVView.initialize() 调用
-         * MPVLib.create()，如果 native 实例仍存活会导致 native 崩溃（double-create）。
-         * 此标志位让 initialize 检测残留实例并先 destroy，destroy 防止 double-destroy。
+         * 用途：切换播放器（MPV → EXO/IJK → MPV）时，destroy() 不再调用 MPVLib.destroy()，
+         * 只 stop + vo=null + detachSurface。nativeInstanceAlive 一旦首次 create 后永远为 true，
+         * 让 initialize() 检测到实例存活时直接复用，避免 destroy + create 导致的 RenderThread 崩溃。
          */
         @Volatile
         private var nativeInstanceAlive = false

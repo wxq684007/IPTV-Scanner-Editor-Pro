@@ -311,7 +311,14 @@ def _ensure_prog_id(prog_id, app_name=None):
         winreg.CloseKey(key)
 
         key = winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, f"Software\\Classes\\{prog_id}\\DefaultIcon", 0, winreg.KEY_WRITE)
-        icon_path = get_icon_path()
+        if getattr(sys, 'frozen', False):
+            # 打包模式：直接指向 exe 本体，Windows 会从 exe 中提取嵌入的图标
+            # 不能用 sys._MEIPASS（PyInstaller onefile 模式运行时解压的临时目录），
+            # 因为程序退出后 _MEIPASS 会被自动清理，注册表里的图标路径会变成死链
+            icon_path = sys.executable
+        else:
+            # 开发模式：用源码目录中的 logo.ico 文件
+            icon_path = get_icon_path()
         if os.path.exists(icon_path):
             winreg.SetValueEx(key, "", 0, winreg.REG_SZ, icon_path)
         winreg.CloseKey(key)

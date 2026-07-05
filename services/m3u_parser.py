@@ -215,7 +215,15 @@ def is_valid_channel_url(url: str) -> tuple:
         return False, 'http://0占位地址'
     if u.startswith('rtp://0.') or u.startswith('udp://0.'):
         return False, '组播0.x占位地址'
+    # 允许本地文件 URL（file:// 协议不需要 hostname）
+    # 修复：之前 file:// URL 因 hostname 为空被拒绝，导致本地 M3U 中的本地条目被静默丢弃
+    if u.startswith('file://'):
+        return True, ''
     if '://' not in u:
+        # 无协议的可能是本地绝对路径（如 /sdcard/Movies/test.mp4 或 D:\Videos\test.mp4）
+        # Unix 绝对路径以 / 开头，Windows 绝对路径以盘符开头（如 D:）
+        if u.startswith('/') or (len(u) >= 2 and u[1] == ':' and u[0].isalpha()):
+            return True, ''
         return False, '缺少协议scheme'
     try:
         parsed = urlparse(u)

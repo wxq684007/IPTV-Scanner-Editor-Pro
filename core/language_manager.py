@@ -844,6 +844,11 @@ BUILTIN_TRANSLATIONS = {
         'framedrop_never': 'never（none 的别名）',
         'framedrop_desc': '视频输出落后时的丢帧策略。"vo" 仅在输出阶段丢帧（保持解码质量）。'
                           '"decoder" 在更早阶段丢帧（弱机器省 CPU）。',
+        'deinterlace_label': '反交错:',
+        'deinterlace_no': '关闭（不反交错）',
+        'deinterlace_auto': '自动（Yadif，检测隔行帧）',
+        'deinterlace_desc': '对隔行扫描视频（有些频道画面有横纹/梳齿）进行反交错处理。'
+                           '"自动" 使用 Yadif 滤镜，仅在检测到隔行帧时生效。',
         'cache_secs_override_label': '缓存秒数 (cache-secs):',
         'cache_secs_override_placeholder': '0 = 自动（按流类型推导）',
         'cache_secs_override_desc': '覆盖 demuxer 缓存时长（秒）。留 0 保持自动值'
@@ -2005,6 +2010,11 @@ BUILTIN_TRANSLATIONS = {
         'framedrop_desc': 'Frame dropping strategy when video output falls behind. '
                           '"vo" drops only at output stage (keeps decode quality). '
                           '"decoder" drops earlier (saves CPU on weak machines).',
+        'deinterlace_label': 'Deinterlace:',
+        'deinterlace_no': 'Off (No deinterlacing)',
+        'deinterlace_auto': 'Auto (Yadif, detect interlaced frames)',
+        'deinterlace_desc': 'Deinterlacing for interlaced video (channels with horizontal lines/comb artifacts). '
+                           "'Auto' uses Yadif filter, only activates on interlaced frames.",
         'cache_secs_override_label': 'Cache Seconds (cache-secs):',
         'cache_secs_override_placeholder': '0 = auto (derived from stream type)',
         'cache_secs_override_desc': 'Overrides the demuxer cache duration in seconds. Leave 0 to keep '

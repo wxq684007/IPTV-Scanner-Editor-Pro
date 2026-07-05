@@ -1,7 +1,7 @@
 name: Build libmpv with CAVS support (macOS/Linux)
 
 # 构建 macOS 和 Linux 版 libmpv（带 CAVS Guangdian profile + AVS2/libdavs2 支持）
-# 使用官方 FFmpeg + llawsxx/FFmpeg 的 6 个 CAVS patch + pkuvcl/davs2 (libdavs2)
+# 使用官方 FFmpeg + llawsxx/FFmpeg 的 6 个 CAVS patch + saindriches/davs2 (libdavs2, 10-bit)
 # 产物上传到 GitHub Release，供 build.yml 下载使用
 #
 # CAVS (AVS1-P16, 广电 profile) 通过 patch 修改内置 cavs 解码器实现
@@ -56,7 +56,11 @@ jobs:
           ls -la build/patches/
 
       - name: Build libdavs2 (AVS2 decoder)
-        # 构建 AVS2 外部解码器库 (pkuvcl/davs2 1.7)
+        # 构建 AVS2 外部解码器库 (saindriches/davs2 fork)
+        # 使用 saindriches/davs2 而非 pkuvcl/davs2，因为：
+        # 1. saindriches fork 有 21 个额外 commits，包含 10-bit 改进
+        # 2. mpv-winbuild-cmake 官方也使用这个 fork
+        # 3. --bit-depth=10 启用 10-bit 支持（pkuvcl/davs2 1.7 不支持 10-bit）
         # 修复 4 个问题：
         # 1. config.guess (2017) 不识别 macOS ARM64 → 更新到最新版本
         # 2. ARM64 上 aarch64 汇编源文件缺失 → --disable-asm
@@ -64,9 +68,9 @@ jobs:
         # 4. git.savannah.gnu.org 经常 502 → 优先用 GitHub raw 镜像（GCC 镜像）
         run: |
           cd build/davs2
-          git clone --depth 1 --branch 1.7 https://github.com/pkuvcl/davs2.git .
+          git clone --depth 1 https://github.com/saindriches/davs2.git .
           # 根因修复：version.sh 用 `git rev-list --count origin/master` 获取构建号(VER_R)，
-          # 浅克隆 --branch 1.7 只拉取 1.7 tag，缺少 origin/master 引用，
+          # 浅克隆只拉取 master HEAD，缺少 origin/master 引用，
           # 导致 git 命令失败、VER_R 变空、POINTVER 变成 "1.6."（末尾是点），
           # davs2.pc 的 Version 字段不完整，FFmpeg 的 "davs2 >= 1.6.0" 检查失败。
           # 注意：`git fetch origin master` 只更新 FETCH_HEAD，不创建 refs/remotes/origin/master，
@@ -74,7 +78,7 @@ jobs:
           # 否则 `git rev-list --count origin/master` 仍然失败。
           git fetch origin --depth 1 master:refs/remotes/origin/master
           cd build/linux
-          # 更新 config.guess/config.sub 到最新版本（davs2 1.7 自带的是 2017 版本，不识别 macOS ARM64）
+          # 更新 config.guess/config.sub 到最新版本（davs2 自带的是 2017 版本，不识别 macOS ARM64）
           # 优先从 GCC 镜像（GitHub raw，稳定）下载，备用从 GNU Savannah 下载
           curl -fsSL --retry 3 "https://raw.githubusercontent.com/gcc-mirror/gcc/master/config.guess" -o config.guess || \
             curl -fsSL --retry 3 "https://git.savannah.gnu.org/cgit/config.git/plain/config.guess" -o config.guess
@@ -87,7 +91,8 @@ jobs:
             --enable-shared \
             --disable-static \
             --disable-asm \
-            --enable-pic
+            --enable-pic \
+            --bit-depth=10
           make -j$(sysctl -n hw.ncpu)
           make install
           export PKG_CONFIG_PATH="$HOME/davs2-install/lib/pkgconfig:$PKG_CONFIG_PATH"
@@ -212,11 +217,35 @@ jobs:
           collect_deps() {
               local target="$1"
               local dest_dir="$2"
+              # 获取 target 的所有 rpath（LC_RPATH 命令中的 path 值）
+              # mpv 的 meson 构建系统将依赖路径设为 @rpath/<name>，
+              # 必须解析 rpath 才能找到实际的 dylib 文件
+              local rpaths=()
+              while IFS= read -r rp; do
+                  rpaths+=("$rp")
+              done < <(otool -l "$target" 2>/dev/null | grep -A2 "LC_RPATH" | grep "path " | sed 's/.*path \(.*\) (offset.*/\1/')
               # otool -L 第一行是 target 自身路径，跳过；后续每行格式为 "  <path> (compat ...)"
               otool -L "$target" 2>/dev/null | tail -n +2 | sed -n 's/^[[:space:]]*\([^ ]*\).*/\1/p' | while read -r dep; do
-                  # 跳过 @rpath/@executable_path/@loader_path 引用（已经是相对引用）
                   case "$dep" in
-                      @rpath/*|@executable_path/*|@loader_path/*) continue ;;
+                      @rpath/*)
+                          # 解析 @rpath/<name> 引用：遍历 target 的所有 rpath，
+                          # 以及 brew 库目录（fallback），查找 <name> 文件
+                          dep_name="${dep#@rpath/}"
+                          found=""
+                          for rp in "${rpaths[@]}" /opt/homebrew/lib /usr/local/lib; do
+                              case "$rp" in
+                                  @loader_path/*) rp="$(dirname "$target")/${rp#@loader_path/}" ;;
+                                  @executable_path/*) continue ;;
+                              esac
+                              if [ -e "$rp/$dep_name" ]; then
+                                  found="$rp/$dep_name"
+                                  break
+                              fi
+                          done
+                          [ -n "$found" ] || continue
+                          dep="$found"
+                          ;;
+                      @executable_path/*|@loader_path/*) continue ;;
                   esac
                   # 跳过系统库
                   case "$dep" in
@@ -362,6 +391,11 @@ jobs:
           ls -la build/patches/
 
       - name: Build libdavs2 (AVS2 decoder)
+        # 构建 AVS2 外部解码器库 (saindriches/davs2 fork)
+        # 使用 saindriches/davs2 而非 pkuvcl/davs2，因为：
+        # 1. saindriches fork 有 21 个额外 commits，包含 10-bit 改进
+        # 2. mpv-winbuild-cmake 官方也使用这个 fork
+        # 3. --bit-depth=10 启用 10-bit 支持（pkuvcl/davs2 1.7 不支持 10-bit）
         # 修复 4 个问题：
         # 1. config.guess (2017) 不识别 macOS ARM64 → 更新到最新版本
         # 2. ARM64 上 aarch64 汇编源文件缺失 → --disable-asm
@@ -369,9 +403,9 @@ jobs:
         # 4. git.savannah.gnu.org 经常 502 → 优先用 GitHub raw 镜像（GCC 镜像）
         run: |
           cd build/davs2
-          git clone --depth 1 --branch 1.7 https://github.com/pkuvcl/davs2.git .
+          git clone --depth 1 https://github.com/saindriches/davs2.git .
           # 根因修复：version.sh 用 `git rev-list --count origin/master` 获取构建号(VER_R)，
-          # 浅克隆 --branch 1.7 只拉取 1.7 tag，缺少 origin/master 引用，
+          # 浅克隆只拉取 master HEAD，缺少 origin/master 引用，
           # 导致 git 命令失败、VER_R 变空、POINTVER 变成 "1.6."（末尾是点），
           # davs2.pc 的 Version 字段不完整，FFmpeg 的 "davs2 >= 1.6.0" 检查失败。
           # 注意：`git fetch origin master` 只更新 FETCH_HEAD，不创建 refs/remotes/origin/master，
@@ -379,7 +413,7 @@ jobs:
           # 否则 `git rev-list --count origin/master` 仍然失败。
           git fetch origin --depth 1 master:refs/remotes/origin/master
           cd build/linux
-          # 更新 config.guess/config.sub 到最新版本（davs2 1.7 自带的是 2017 版本，不识别 macOS ARM64）
+          # 更新 config.guess/config.sub 到最新版本（davs2 自带的是 2017 版本，不识别 macOS ARM64）
           # 优先从 GCC 镜像（GitHub raw，稳定）下载，备用从 GNU Savannah 下载
           curl -fsSL --retry 3 "https://raw.githubusercontent.com/gcc-mirror/gcc/master/config.guess" -o config.guess || \
             curl -fsSL --retry 3 "https://git.savannah.gnu.org/cgit/config.git/plain/config.guess" -o config.guess
@@ -392,7 +426,8 @@ jobs:
             --enable-shared \
             --disable-static \
             --disable-asm \
-            --enable-pic
+            --enable-pic \
+            --bit-depth=10
           make -j$(nproc)
           make install
           sudo ldconfig
@@ -586,6 +621,11 @@ jobs:
           ls -la build/patches/
 
       - name: Build libdavs2 (AVS2 decoder)
+        # 构建 AVS2 外部解码器库 (saindriches/davs2 fork)
+        # 使用 saindriches/davs2 而非 pkuvcl/davs2，因为：
+        # 1. saindriches fork 有 21 个额外 commits，包含 10-bit 改进
+        # 2. mpv-winbuild-cmake 官方也使用这个 fork
+        # 3. --bit-depth=10 启用 10-bit 支持（pkuvcl/davs2 1.7 不支持 10-bit）
         # 修复 4 个问题：
         # 1. config.guess (2017) 不识别 macOS ARM64 → 更新到最新版本
         # 2. ARM64 上 aarch64 汇编源文件缺失 → --disable-asm
@@ -593,9 +633,9 @@ jobs:
         # 4. git.savannah.gnu.org 经常 502 → 优先用 GitHub raw 镜像（GCC 镜像）
         run: |
           cd build/davs2
-          git clone --depth 1 --branch 1.7 https://github.com/pkuvcl/davs2.git .
+          git clone --depth 1 https://github.com/saindriches/davs2.git .
           # 根因修复：version.sh 用 `git rev-list --count origin/master` 获取构建号(VER_R)，
-          # 浅克隆 --branch 1.7 只拉取 1.7 tag，缺少 origin/master 引用，
+          # 浅克隆只拉取 master HEAD，缺少 origin/master 引用，
           # 导致 git 命令失败、VER_R 变空、POINTVER 变成 "1.6."（末尾是点），
           # davs2.pc 的 Version 字段不完整，FFmpeg 的 "davs2 >= 1.6.0" 检查失败。
           # 注意：`git fetch origin master` 只更新 FETCH_HEAD，不创建 refs/remotes/origin/master，
@@ -603,7 +643,7 @@ jobs:
           # 否则 `git rev-list --count origin/master` 仍然失败。
           git fetch origin --depth 1 master:refs/remotes/origin/master
           cd build/linux
-          # 更新 config.guess/config.sub 到最新版本（davs2 1.7 自带的是 2017 版本，不识别 macOS ARM64）
+          # 更新 config.guess/config.sub 到最新版本（davs2 自带的是 2017 版本，不识别 macOS ARM64）
           # 优先从 GCC 镜像（GitHub raw，稳定）下载，备用从 GNU Savannah 下载
           curl -fsSL --retry 3 "https://raw.githubusercontent.com/gcc-mirror/gcc/master/config.guess" -o config.guess || \
             curl -fsSL --retry 3 "https://git.savannah.gnu.org/cgit/config.git/plain/config.guess" -o config.guess
@@ -616,7 +656,8 @@ jobs:
             --enable-shared \
             --disable-static \
             --disable-asm \
-            --enable-pic
+            --enable-pic \
+            --bit-depth=10
           make -j$(nproc)
           make install
           sudo ldconfig

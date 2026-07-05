@@ -77,23 +77,30 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iptv.scanner.editor.pro.data.IptvChannel
 import com.iptv.scanner.editor.pro.data.IptvEpgProgram
+import com.iptv.scanner.editor.pro.player.ProgressHelper
+import com.iptv.scanner.editor.pro.ui.AppViewModel.ChannelTab
 import com.iptv.scanner.editor.pro.ui.theme.tvFocusBorder
 import java.util.Locale
 
 /**
- * TV 端统一面板：三列布局（模式切换 + 主内容 + EPG 节目单）。
+ * TV 端统一面板：五列布局（控制层 + 分组 + 频道列表 + 节目单 + 节目描述）。
  *
  * 设计目的：
  * - 解决 TV 端遥控器上下键被切频道占用、无法快速打开列表的问题
  * - MENU 键打开统一面板，默认焦点在频道列表，快速切换频道
  *
- * 三列布局：
- * - 第一列（72dp）：模式切换图标（频道列表 / 主菜单），垂直排列
- * - 第二列（360dp）：频道列表 或 主菜单项（根据第一列选中图标）
- * - 第三列（剩余空间）：当前频道的节目单 + 选中节目描述（仅频道列表模式）
+ * 五列布局（频道列表模式）：
+ * - 第一列（72dp）：控制层（订阅 / 本地 / 菜单 / OSD）
+ * - 第二列（200dp）：分组列表（纵向）
+ * - 第三列（300dp）：频道列表
+ * - 第四列（weight 1f）：当前频道的节目单
+ * - 第五列（300dp）：选中节目描述
+ *
+ * 菜单模式：
+ * - 第一列（菜单高亮）+ 第二列（MenuColumn）+ 第三~五列占位
  *
  * 焦点导航：
- * - 默认焦点在第二列（频道列表）
+ * - 默认焦点在第三列（频道列表）
  * - DPAD LEFT/RIGHT：在列之间切换焦点（Compose 焦点系统自动处理）
  * - DPAD UP/DOWN：在当前列内导航
  * - BACK：关闭面板
@@ -117,6 +124,27 @@ fun TvUnifiedPanel(viewModel: AppViewModel) {
     // 多画面状态（多画面模式下点击频道添加到副画面，而非切换主画面）
     val multiViewState by viewModel.multiViewState.collectAsState()
 
+    // 频道列表 tab 与分组（第一列控制层使用）
+    val channelsTab by viewModel.channelsTab.collectAsState()
+    val allGroups by viewModel.groups.collectAsState()
+    // 根据 channelsTab 过滤分组：
+    // - SUB tab：显示所有频道的分组（订阅频道 + 本地频道，但本地频道通常无分组或分组独立）
+    // - LOCAL tab：只显示本地文件频道的分组，避免显示订阅分组误导用户
+    // 根因：viewModel.groups 是从所有频道提取的，未根据 tab 过滤，
+    // 导致 LOCAL tab 下仍显示订阅分组。
+    val groups = remember(allGroups, channels, channelsTab) {
+        if (channelsTab == ChannelTab.LOCAL) {
+            channels
+                .filter { ProgressHelper.isLocalFile(it.url) }
+                .map { it.group }
+                .filter { it.isNotEmpty() }
+                .distinct()
+        } else {
+            allGroups
+        }
+    }
+    val selectedGroup by viewModel.selectedGroup.collectAsState()
+
     // 统一面板状态
     var unifiedMode by remember { mutableStateOf(UnifiedMode.CHANNELS) }
     var selectedProgram by remember { mutableStateOf<IptvEpgProgram?>(null) }
@@ -127,10 +155,10 @@ fun TvUnifiedPanel(viewModel: AppViewModel) {
         channels.getOrNull(focusedChannelIdx)
     }
 
-    // 焦点管理：初始焦点在第二列（频道列表）
-    val column2Focus = remember { FocusRequester() }
+    // 焦点管理：初始焦点在第三列（频道列表）
+    val channelListFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) {
-        kotlin.runCatching { column2Focus.requestFocus() }
+        kotlin.runCatching { channelListFocus.requestFocus() }
     }
 
     // 焦点频道变化时刷新 EPG
@@ -181,11 +209,22 @@ fun TvUnifiedPanel(viewModel: AppViewModel) {
     ) {
         Row(modifier = Modifier.fillMaxSize()) {
             // -----------------------------------------------------------------
-            // 第一列：模式切换图标 + OSD 按钮
+            // 第一列：控制层（订阅 / 本地 / 菜单 / OSD）
             // -----------------------------------------------------------------
             ModeColumn(
                 mode = unifiedMode,
+                channelsTab = channelsTab,
                 controlsPinned = controlsPinned,
+                onTabChange = { tab ->
+                    // 切换 tab 并强制回到频道列表模式
+                    viewModel.setChannelsTab(tab)
+                    unifiedMode = UnifiedMode.CHANNELS
+                    selectedProgram = null
+                    // 重置焦点频道：切换 tab 后旧 focusedChannelIdx 可能指向新 tab 中不存在的频道，
+                    // 导致节目单/节目描述仍显示旧频道数据。重置为 -1，由 ChannelsColumn 的
+                    // LaunchedEffect 在新 tab 中重新请求焦点到 currentIdx（若存在）。
+                    focusedChannelIdx = -1
+                },
                 onModeChange = { newMode ->
                     unifiedMode = newMode
                     selectedProgram = null
@@ -198,133 +237,173 @@ fun TvUnifiedPanel(viewModel: AppViewModel) {
                 modifier = Modifier.width(72.dp)
             )
 
-            // -----------------------------------------------------------------
-            // 第二列：主内容（频道列表 或 主菜单）
-            // -----------------------------------------------------------------
             when (unifiedMode) {
-                UnifiedMode.CHANNELS -> ChannelsColumn(
-                    viewModel = viewModel,
-                    channels = channels,
-                    currentIdx = currentIdx,
-                    favorites = favorites,
-                    onChannelClick = { idx ->
-                        // 多画面模式：点击频道添加到焦点/空闲副画面；非多画面：切换主画面
-                        if (multiViewState.active) {
-                            viewModel.addChannelToMultiView(idx)
-                        } else {
-                            viewModel.playChannel(idx)
-                        }
-                    },
-                    onFocusedChannelChange = { idx -> focusedChannelIdx = idx },
-                    modifier = Modifier.width(360.dp).focusRequester(column2Focus)
-                )
-                UnifiedMode.MENU -> MenuColumn(
-                    viewModel = viewModel,
-                    currentIdx = currentIdx,
-                    isFavorite = isFavorite,
-                    multiViewActive = multiViewState.active,
-                    currentMultiViewLayout = if (multiViewState.active) multiViewState.layout else null,
-                    onEnterMultiView = { layout ->
-                        // 进入多画面：关闭统一面板，让多画面网格可见
-                        viewModel.toggleTvUnifiedPanel()
-                        viewModel.enterMultiView(layout)
-                    },
-                    onExitMultiView = {
-                        viewModel.exitMultiView()
-                        viewModel.toggleTvUnifiedPanel()
-                    },
-                    onOpenPlaylist = {
-                        // SAF launcher 注册在 TvUnifiedPanel 内，必须在结果返回时保持面板存活。
-                        // 之前用 openOverlay 先关面板再 launch，导致 launcher 被反注册、SAF 结果被丢弃。
-                        // 修复：SAF 是系统级浮层会覆盖面板，保持面板打开让 launcher 存活；
-                        //       FileBrowser 路径才需要关闭统一面板（FileBrowser 在统一面板之后渲染会被遮挡）。
-                        if (!viewModel.isSafAvailable()) {
-                            viewModel.toggleTvUnifiedPanel()
-                            viewModel.showFileBrowser()
-                        } else {
-                            playlistLauncher.launch(arrayOf(
-                                "application/x-mpegurl", "application/vnd.apple.mpegurl",
-                                "audio/x-mpegurl", "video/x-mpegurl",
-                                "text/plain", "application/octet-stream"
-                            ))
-                        }
-                    },
-                    onOpenUrl = { openOverlay { viewModel.toggleOpenUrlDialog() } },
-                    onOpenLocalVideo = {
-                        // 同 onOpenPlaylist：SAF 路径保持面板打开，FileBrowser 路径关闭面板
-                        if (!viewModel.isSafAvailable()) {
-                            viewModel.toggleTvUnifiedPanel()
-                            viewModel.showMediaFileBrowser()
-                        } else {
-                            videoLauncher.launch(arrayOf("video/*", "audio/*", "application/x-matroska", "application/octet-stream"))
-                        }
-                    },
-                    onSources = {
-                        openOverlay {
-                            viewModel.setSourceTab(AppViewModel.SourceTab.PLAYLIST)
-                            viewModel.toggleSourceManager()
-                        }
-                    },
-                    onEpgSources = {
-                        openOverlay {
-                            viewModel.setSourceTab(AppViewModel.SourceTab.EPG)
-                            viewModel.toggleSourceManager()
-                        }
-                    },
-                    onMapping = { openOverlay { viewModel.toggleMappingPanel() } },
-                    // ChannelsPanel/EpgPanel 在统一面板之前渲染，会被统一面板遮挡，必须先关闭统一面板
-                    onChannels = { closeAndRun { viewModel.showChannelsPanel() } },
-                    onEpg = { closeAndRun { viewModel.showEpgPanel() } },
-                    onSubtitle = { openOverlay { viewModel.toggleSubtitleSettings() } },
-                    onVideo = { openOverlay { viewModel.toggleVideoSettings() } },
-                    onAudio = { openOverlay { viewModel.toggleAudioSettings() } },
-                    onPlayback = { openOverlay { viewModel.togglePlaybackPanel() } },
-                    onScreenshot = { openOverlay { viewModel.toggleScreenshotPanel() } },
-                    onAvsync = { openOverlay { viewModel.toggleAvSyncPanel() } },
-                    onNetwork = { openOverlay { viewModel.toggleNetworkPanel() } },
-                    onTools = { openOverlay { viewModel.toggleToolsPanel() } },
-                    onView = { openOverlay { viewModel.toggleViewSettings() } },
-                    onSettings = { openOverlay { viewModel.togglePlayerSettings() } },
-                    onAbout = { openOverlay { viewModel.toggleAboutPanel() } },
-                    onToggleFavorite = { viewModel.toggleFavorite() },
-                    onClearChannelSettings = {
-                        val idx = viewModel.currentIdx.value
-                        if (idx >= 0) viewModel.clearChannelSettings(idx)
-                    },
-                    onQuit = { viewModel.showOsd("退出", "请使用系统返回键退出") },
-                    modifier = Modifier.width(360.dp).focusRequester(column2Focus)
-                )
-            }
+                UnifiedMode.CHANNELS -> {
+                    // 是否显示分组列和节目单/描述列：
+                    // - groups 为空时不显示分组列（如本地频道无分组）
+                    // - focusedChannel 为 null 时不显示节目单/描述列（如列表为空或切换 tab 后未选中频道）
+                    // 用户需求："本地列表如果为空，就默认不应该显示节目单和节目描述和分组，
+                    //           只有一个列表才对。有对应数据的时候再显示出来。"
+                    val showGroups = groups.isNotEmpty()
+                    val showEpg = focusedChannel != null
 
-            // -----------------------------------------------------------------
-            // 第三列：EPG 节目单 + 描述（仅频道列表模式，跟随焦点频道）
-            // -----------------------------------------------------------------
-            if (unifiedMode == UnifiedMode.CHANNELS && focusedChannel != null) {
-                EpgColumn(
-                    channel = focusedChannel,
-                    epg = focusedEpg,
-                    loading = focusedEpgLoading,
-                    currentIdx = currentIdx,
-                    selectedProgram = selectedProgram,
-                    onProgramSelect = { program -> selectedProgram = program },
-                    onProgramClick = { program ->
-                        val now = System.currentTimeMillis()
-                        val isPast = program.stopTs * 1000L < now
-                        if (isPast) {
-                            // 过去节目：触发回看（先切换到焦点频道再回看）
-                            viewModel.playChannel(focusedChannelIdx)
-                            closeAndRun { viewModel.startCatchup(program) }
-                        } else {
-                            // 当前/未来节目：设置提醒
-                            viewModel.toggleReminder(program, focusedChannel)
-                        }
-                    },
-                    isReminderSet = { program -> viewModel.isReminderSet(program) },
-                    modifier = Modifier.weight(1f)
-                )
-            } else {
-                // 主菜单模式或无频道：第三列占位
-                Spacer(modifier = Modifier.weight(1f))
+                    // -----------------------------------------------------------------
+                    // 第二列：分组列表（仅有分组数据时显示）
+                    // -----------------------------------------------------------------
+                    if (showGroups) {
+                        GroupColumn(
+                            groups = groups,
+                            selectedGroup = selectedGroup,
+                            onGroupSelected = { viewModel.setSelectedGroup(it) },
+                            modifier = Modifier.width(160.dp)
+                        )
+                    }
+
+                    // -----------------------------------------------------------------
+                    // 第三列：频道列表（始终固定宽度，不因无节目单而全屏）
+                    // 用户需求："列表无数据的时候非得要全屏显示吗？就不能跟菜单似的只是一列？"
+                    // -----------------------------------------------------------------
+                    ChannelsColumn(
+                        channels = channels,
+                        currentIdx = currentIdx,
+                        favorites = favorites,
+                        channelsTab = channelsTab,
+                        selectedGroup = selectedGroup,
+                        onChannelClick = { idx ->
+                            // 多画面模式：点击频道添加到焦点/空闲副画面；非多画面：切换主画面
+                            if (multiViewState.active) {
+                                viewModel.addChannelToMultiView(idx)
+                            } else {
+                                viewModel.playChannel(idx)
+                            }
+                        },
+                        onFocusedChannelChange = { idx -> focusedChannelIdx = idx },
+                        modifier = Modifier.width(240.dp).focusRequester(channelListFocus)
+                    )
+
+                    // -----------------------------------------------------------------
+                    // 第四列：节目单（仅有焦点频道时显示）
+                    // -----------------------------------------------------------------
+                    if (showEpg && focusedChannel != null) {
+                        EpgListColumn(
+                            channel = focusedChannel,
+                            epg = focusedEpg,
+                            loading = focusedEpgLoading,
+                            selectedProgram = selectedProgram,
+                            onProgramSelect = { program -> selectedProgram = program },
+                            onProgramClick = { program ->
+                                val now = System.currentTimeMillis()
+                                val isPast = program.stopTs * 1000L < now
+                                if (isPast) {
+                                    // 过去节目：触发回看（先切换到焦点频道再回看）
+                                    viewModel.playChannel(focusedChannelIdx)
+                                    closeAndRun { viewModel.startCatchup(program) }
+                                } else {
+                                    // 当前/未来节目：设置提醒
+                                    viewModel.toggleReminder(program, focusedChannel)
+                                }
+                            },
+                            isReminderSet = { program -> viewModel.isReminderSet(program) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    // -----------------------------------------------------------------
+                    // 第五列：节目描述（仅有焦点频道时显示）
+                    // -----------------------------------------------------------------
+                    if (showEpg && focusedChannel != null) {
+                        EpgDescColumn(
+                            epg = focusedEpg,
+                            selectedProgram = selectedProgram,
+                            modifier = Modifier.width(260.dp)
+                        )
+                    }
+                }
+                UnifiedMode.MENU -> {
+                    // -----------------------------------------------------------------
+                    // 菜单模式：第二列显示 MenuColumn，第三~五列占位
+                    // -----------------------------------------------------------------
+                    MenuColumn(
+                        viewModel = viewModel,
+                        currentIdx = currentIdx,
+                        isFavorite = isFavorite,
+                        multiViewActive = multiViewState.active,
+                        currentMultiViewLayout = if (multiViewState.active) multiViewState.layout else null,
+                        onEnterMultiView = { layout ->
+                            // 进入多画面：关闭统一面板，让多画面网格可见
+                            viewModel.toggleTvUnifiedPanel()
+                            viewModel.enterMultiView(layout)
+                        },
+                        onExitMultiView = {
+                            viewModel.exitMultiView()
+                            viewModel.toggleTvUnifiedPanel()
+                        },
+                        onOpenPlaylist = {
+                            // SAF launcher 注册在 TvUnifiedPanel 内，必须在结果返回时保持面板存活。
+                            // 之前用 openOverlay 先关面板再 launch，导致 launcher 被反注册、SAF 结果被丢弃。
+                            // 修复：SAF 是系统级浮层会覆盖面板，保持面板打开让 launcher 存活；
+                            //       FileBrowser 路径才需要关闭统一面板（FileBrowser 在统一面板之后渲染会被遮挡）。
+                            if (!viewModel.isSafAvailable()) {
+                                viewModel.toggleTvUnifiedPanel()
+                                viewModel.showFileBrowser()
+                            } else {
+                                playlistLauncher.launch(arrayOf(
+                                    "application/x-mpegurl", "application/vnd.apple.mpegurl",
+                                    "audio/x-mpegurl", "video/x-mpegurl",
+                                    "text/plain", "application/octet-stream"
+                                ))
+                            }
+                        },
+                        onOpenUrl = { openOverlay { viewModel.toggleOpenUrlDialog() } },
+                        onOpenLocalVideo = {
+                            // 同 onOpenPlaylist：SAF 路径保持面板打开，FileBrowser 路径关闭面板
+                            if (!viewModel.isSafAvailable()) {
+                                viewModel.toggleTvUnifiedPanel()
+                                viewModel.showMediaFileBrowser()
+                            } else {
+                                videoLauncher.launch(arrayOf("video/*", "audio/*", "application/x-matroska", "application/octet-stream"))
+                            }
+                        },
+                        onSources = {
+                            openOverlay {
+                                viewModel.setSourceTab(AppViewModel.SourceTab.PLAYLIST)
+                                viewModel.toggleSourceManager()
+                            }
+                        },
+                        onEpgSources = {
+                            openOverlay {
+                                viewModel.setSourceTab(AppViewModel.SourceTab.EPG)
+                                viewModel.toggleSourceManager()
+                            }
+                        },
+                        onMapping = { openOverlay { viewModel.toggleMappingPanel() } },
+                        // ChannelsPanel/EpgPanel 在统一面板之前渲染，会被统一面板遮挡，必须先关闭统一面板
+                        onChannels = { closeAndRun { viewModel.showChannelsPanel() } },
+                        onEpg = { closeAndRun { viewModel.showEpgPanel() } },
+                        onSubtitle = { openOverlay { viewModel.toggleSubtitleSettings() } },
+                        onVideo = { openOverlay { viewModel.toggleVideoSettings() } },
+                        onAudio = { openOverlay { viewModel.toggleAudioSettings() } },
+                        onPlayback = { openOverlay { viewModel.togglePlaybackPanel() } },
+                        onScreenshot = { openOverlay { viewModel.toggleScreenshotPanel() } },
+                        onAvsync = { openOverlay { viewModel.toggleAvSyncPanel() } },
+                        onNetwork = { openOverlay { viewModel.toggleNetworkPanel() } },
+                        onTools = { openOverlay { viewModel.toggleToolsPanel() } },
+                        onView = { openOverlay { viewModel.toggleViewSettings() } },
+                        onSettings = { openOverlay { viewModel.togglePlayerSettings() } },
+                        onAbout = { openOverlay { viewModel.toggleAboutPanel() } },
+                        onToggleFavorite = { viewModel.toggleFavorite() },
+                        onClearChannelSettings = {
+                            val idx = viewModel.currentIdx.value
+                            if (idx >= 0) viewModel.clearChannelSettings(idx)
+                        },
+                        onQuit = { viewModel.showOsd("退出", "请使用系统返回键退出") },
+                        modifier = Modifier.width(360.dp).focusRequester(channelListFocus)
+                    )
+                    // 第三~五列占位
+                    Spacer(modifier = Modifier.width(300.dp))
+                    Spacer(modifier = Modifier.weight(1f))
+                    Spacer(modifier = Modifier.width(300.dp))
+                }
             }
         }
     }
@@ -337,13 +416,15 @@ fun TvUnifiedPanel(viewModel: AppViewModel) {
 enum class UnifiedMode { CHANNELS, MENU }
 
 // =====================================================================
-// 第一列：模式切换图标
+// 第一列：控制层（订阅 / 本地 / 菜单 / OSD）
 // =====================================================================
 
 @Composable
 private fun ModeColumn(
     mode: UnifiedMode,
+    channelsTab: ChannelTab,
     controlsPinned: Boolean,
+    onTabChange: (ChannelTab) -> Unit,
     onModeChange: (UnifiedMode) -> Unit,
     onOsd: () -> Unit,
     modifier: Modifier = Modifier
@@ -357,13 +438,23 @@ private fun ModeColumn(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically)
         ) {
+            // 订阅按钮：切换到 SUB tab 并回到频道列表模式
             ModeIconButton(
-                icon = Icons.AutoMirrored.Filled.ListAlt,
-                label = "频道",
-                isSelected = mode == UnifiedMode.CHANNELS,
-                onClick = { onModeChange(UnifiedMode.CHANNELS) },
+                icon = Icons.Default.Web,
+                label = "订阅",
+                isSelected = mode == UnifiedMode.CHANNELS && channelsTab == ChannelTab.SUB,
+                onClick = { onTabChange(ChannelTab.SUB) },
                 autoSelectOnFocus = true
             )
+            // 本地按钮：切换到 LOCAL tab 并回到频道列表模式
+            ModeIconButton(
+                icon = Icons.Default.VideoLibrary,
+                label = "本地",
+                isSelected = mode == UnifiedMode.CHANNELS && channelsTab == ChannelTab.LOCAL,
+                onClick = { onTabChange(ChannelTab.LOCAL) },
+                autoSelectOnFocus = true
+            )
+            // 菜单按钮：切换到 MENU 模式
             ModeIconButton(
                 icon = Icons.Default.Menu,
                 label = "菜单",
@@ -422,27 +513,131 @@ private fun ModeIconButton(
 }
 
 // =====================================================================
-// 第二列：频道列表
+// 第二列：分组列表（纵向）
+// =====================================================================
+
+@Composable
+private fun GroupColumn(
+    groups: List<String>,
+    selectedGroup: String,
+    onGroupSelected: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = Color(0xF0161616),
+        modifier = modifier.fillMaxHeight()
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // 标题
+            Text(
+                text = "分组",
+                color = Color.White,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+            )
+            Divider(color = Color(0xFF2A2A2A))
+
+            if (groups.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "暂无分组",
+                        color = Color(0xFF888888),
+                        fontSize = 13.sp,
+                        lineHeight = 20.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 4.dp)
+                ) {
+                    // "全部" 项
+                    item(key = "__all__") {
+                        GroupItemRow(
+                            label = "全部",
+                            selected = selectedGroup.isEmpty(),
+                            onClick = { onGroupSelected("") }
+                        )
+                    }
+                    // 各分组
+                    items(items = groups, key = { it }) { group ->
+                        GroupItemRow(
+                            label = group,
+                            selected = selectedGroup == group,
+                            onClick = { onGroupSelected(group) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GroupItemRow(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(if (selected) Color(0x304A9EFF) else Color.Transparent)
+            .tvFocusBorder()
+            .clickable { onClick() }
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // 选中指示点
+        Box(
+            modifier = Modifier
+                .size(6.dp)
+                .clip(CircleShape)
+                .background(if (selected) Color(0xFF4A9EFF) else Color(0xFF444444))
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = label,
+            color = if (selected) Color(0xFF6A9EFF) else Color.White,
+            fontSize = 13.sp,
+            fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+// =====================================================================
+// 第三列：频道列表
 // =====================================================================
 
 @Composable
 private fun ChannelsColumn(
-    viewModel: AppViewModel,
     channels: List<IptvChannel>,
     currentIdx: Int,
     favorites: Set<Int>,
+    channelsTab: ChannelTab,
+    selectedGroup: String,
     onChannelClick: (Int) -> Unit,
     onFocusedChannelChange: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // 分组过滤器状态（与 ChannelsPanel 共享 ViewModel 状态）
-    val selectedGroup by viewModel.selectedGroup.collectAsState()
-    val groups by viewModel.groups.collectAsState()
-
-    // 根据分组过滤频道
-    val filteredChannels = remember(channels, selectedGroup) {
+    // 根据 tab 和分组过滤频道
+    // - SUB：全部频道
+    // - LOCAL：仅本地文件协议频道
+    val filteredChannels = remember(channels, selectedGroup, channelsTab) {
         val all = channels.mapIndexed { idx, c -> c to idx }
-        if (selectedGroup.isEmpty()) all else all.filter { it.first.group == selectedGroup }
+        val tabbed = if (channelsTab == ChannelTab.LOCAL) {
+            all.filter { (c, _) -> ProgressHelper.isLocalFile(c.url) }
+        } else {
+            all
+        }
+        if (selectedGroup.isEmpty()) tabbed else tabbed.filter { it.first.group == selectedGroup }
     }
 
     // 滚动状态：用于面板打开时自动滚动到当前频道
@@ -486,15 +681,6 @@ private fun ChannelsColumn(
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
             )
 
-            // 分组过滤器（横向滚动 chip 行，仅当有分组时显示）
-            if (groups.isNotEmpty()) {
-                TvGroupFilterRow(
-                    groups = groups,
-                    selectedGroup = selectedGroup,
-                    onGroupSelected = { viewModel.setSelectedGroup(it) }
-                )
-            }
-
             Divider(color = Color(0xFF2A2A2A))
 
             // 频道列表
@@ -504,7 +690,11 @@ private fun ChannelsColumn(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = if (channels.isEmpty()) "暂无频道\n请通过菜单添加订阅源" else "未找到匹配频道",
+                        text = when (channelsTab) {
+                            ChannelTab.SUB -> "暂无频道\n请通过菜单添加订阅源"
+                            ChannelTab.LOCAL -> "暂无本地频道"
+                            else -> "未找到匹配频道"
+                        },
                         color = Color(0xFF888888),
                         fontSize = 13.sp,
                         lineHeight = 20.sp,
@@ -542,6 +732,8 @@ private fun ChannelsColumn(
  * TV 端分组过滤器（横向滚动 chip 行）。
  * DPAD 左右切换分组，OK 选择分组。
  * "全部" chip 在最前，后面跟各分组名。
+ *
+ * 注意：此组件保留用于其他面板（如 ChannelsPanel），TvUnifiedPanel 已改用 GroupColumn 纵向显示分组。
  */
 @Composable
 private fun TvGroupFilterRow(
@@ -671,7 +863,7 @@ private fun TvChannelItem(
 }
 
 // =====================================================================
-// 第二列：主菜单
+// 第二列（菜单模式）：主菜单
 // =====================================================================
 
 @Composable
@@ -855,15 +1047,14 @@ private fun TvMenuItemRow(item: TvMenuItem) {
 }
 
 // =====================================================================
-// 第三列：EPG 节目单 + 描述
+// 第四列：EPG 节目单
 // =====================================================================
 
 @Composable
-private fun EpgColumn(
+private fun EpgListColumn(
     channel: IptvChannel,
     epg: List<IptvEpgProgram>,
     loading: Boolean,
-    currentIdx: Int,
     selectedProgram: IptvEpgProgram?,
     onProgramSelect: (IptvEpgProgram) -> Unit,
     onProgramClick: (IptvEpgProgram) -> Unit,
@@ -950,10 +1141,9 @@ private fun EpgColumn(
                     }
                 }
                 else -> {
-                    // 上半部分：节目列表（占 60%）
                     LazyColumn(
                         state = listState,
-                        modifier = Modifier.weight(0.6f),
+                        modifier = Modifier.fillMaxSize(),
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 4.dp)
                     ) {
                         items(
@@ -968,66 +1158,6 @@ private fun EpgColumn(
                                 hasReminder = isReminderSet(program),
                                 onClick = { onProgramClick(program) },
                                 onSelect = { onProgramSelect(program) }
-                            )
-                        }
-                    }
-
-                    Divider(color = Color(0xFF2A2A2A))
-
-                    // 下半部分：节目描述（优先显示用户选中节目，无选中时自动显示当前播出节目）
-                    Box(
-                        modifier = Modifier.weight(0.4f).fillMaxWidth().padding(12.dp)
-                    ) {
-                        // 优先使用用户选中的节目，否则自动查找当前正在播出的节目
-                        val now = System.currentTimeMillis()
-                        val currentProg = selectedProgram ?: epg.find { p ->
-                            p.startTs * 1000L <= now && now <= p.stopTs * 1000L
-                        }
-                        if (currentProg != null) {
-                            val isAuto = selectedProgram == null
-                            Column {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = currentProg.title,
-                                        color = Color.White,
-                                        fontSize = 15.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    if (isAuto) {
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = "LIVE",
-                                            color = Color(0xFFFF5252),
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-                                }
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "${formatTime(currentProg.start)} - ${formatTime(currentProg.stop)}",
-                                    color = Color(0xFF4A9EFF),
-                                    fontSize = 12.sp
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text = currentProg.desc.ifEmpty { "暂无节目描述" },
-                                    color = Color(0xFFCCCCCC),
-                                    fontSize = 12.sp,
-                                    lineHeight = 18.sp,
-                                    maxLines = 4,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        } else {
-                            Text(
-                                text = "暂无节目信息",
-                                color = Color(0xFF666666),
-                                fontSize = 12.sp,
-                                lineHeight = 18.sp
                             )
                         }
                     }
@@ -1109,6 +1239,103 @@ private fun TvEpgItem(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+        }
+    }
+}
+
+// =====================================================================
+// 第五列：节目描述
+// =====================================================================
+
+@Composable
+private fun EpgDescColumn(
+    epg: List<IptvEpgProgram>,
+    selectedProgram: IptvEpgProgram?,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = Color(0xF0161616),
+        modifier = modifier.fillMaxHeight()
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // 标题
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Info,
+                    contentDescription = null,
+                    tint = Color(0xFF4A9EFF),
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "节目描述",
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+
+            Divider(color = Color(0xFF2A2A2A))
+
+            Box(
+                modifier = Modifier.fillMaxSize().padding(12.dp)
+            ) {
+                // 优先使用用户选中的节目，否则自动查找当前正在播出的节目
+                val now = System.currentTimeMillis()
+                val currentProg = selectedProgram ?: epg.find { p ->
+                    p.startTs * 1000L <= now && now <= p.stopTs * 1000L
+                }
+                if (currentProg != null) {
+                    val isAuto = selectedProgram == null
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = currentProg.title,
+                                color = Color.White,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            if (isAuto) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "LIVE",
+                                    color = Color(0xFFFF5252),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "${formatTime(currentProg.start)} - ${formatTime(currentProg.stop)}",
+                            color = Color(0xFF4A9EFF),
+                            fontSize = 12.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = currentProg.desc.ifEmpty { "暂无节目描述" },
+                            color = Color(0xFFCCCCCC),
+                            fontSize = 12.sp,
+                            lineHeight = 18.sp,
+                            maxLines = 4,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                } else {
+                    Text(
+                        text = "暂无节目信息",
+                        color = Color(0xFF666666),
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp
+                    )
+                }
+            }
         }
     }
 }
