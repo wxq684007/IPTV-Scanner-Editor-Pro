@@ -222,6 +222,7 @@ pyi_rth_vlc.py
 
 # 构建输出
 build/
+build-tmp/
 dist/
 
 # Android 构建产物和缓存
