@@ -298,13 +298,16 @@ jobs:
           cp -L "$MPV_SO" "$ARTIFACT_DIR/"
 
           # 收集 libmpv.so 依赖的所有动态库
-          # mpv-android buildscripts 的 ffmpeg.sh 使用 --enable-shared 构建 FFmpeg，安装到 prefix/lib/；
-          # libdav1d/libdavs2 等外部库也安装在 prefix/lib/。
+          # mpv-android buildscripts 的 ffmpeg.sh 使用 --enable-shared 构建 FFmpeg，安装到 prefix/<arch>/lib/；
+          # libdav1d/libdavs2 等外部库也安装在 prefix/<arch>/lib/。
+          # buildall.sh 的 setup_prefix() 创建符号链接 prefix/<arch>/usr -> . 和 prefix/<arch>/local -> .，
+          # 使 /usr/local/lib/ 解析到 prefix/<arch>/lib/，所以 FFmpeg 的 .so 物理上在 prefix/<arch>/lib/ 下。
           # FFmpeg 的库包括 libavcodec/libavformat/libavutil/libswscale/libswresample/libavfilter/
           # libavdevice/libpostproc 等，libmpv.so 动态依赖它们。
-          # 之前逐个列举库名会遗漏（如 libavfilter），导致 libmpv.so 加载失败（UnsatisfiedLinkError）。
-          # 直接收集 prefix/lib/ 下的所有 lib*.so，确保不遗漏任何依赖库。
-          find . -name "lib*.so" -path "*/prefix/lib/*" -exec cp -L {} "$ARTIFACT_DIR/" \; 2>/dev/null || true
+          # 之前用 -path "*/prefix/lib/*" 无法匹配 prefix/<arch>/lib/ 路径（prefix 后是 /<arch>/ 不是 /lib/），
+          # 导致所有 FFmpeg .so 都被遗漏，libmpv.so 加载失败（UnsatisfiedLinkError: libavfilter.so not found）。
+          # 修复：直接在 prefix/ 目录下搜索所有 lib*.so，确保不遗漏任何依赖库。
+          find ./prefix -name "lib*.so" -type f -exec cp -L {} "$ARTIFACT_DIR/" \; 2>/dev/null || true
 
           echo "=== Collected artifacts ==="
           ls -la "$ARTIFACT_DIR/"
