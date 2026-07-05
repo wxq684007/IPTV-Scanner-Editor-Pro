@@ -107,6 +107,40 @@ def _check_windows_hdr_registry():
     return False
 
 
+def _check_windows_hdr_qt():
+    """通过 Qt 检测 Windows HDR 状态（作为注册表检测的补充）。
+
+    Qt 6.4+ 提供了 QWindow::isHDR() 等接口；
+    旧版本通过屏幕深度和格式间接判断。
+    """
+    try:
+        from PySide6.QtGui import QGuiApplication, QWindow
+        if not QGuiApplication.instance():
+            return None
+
+        screen = QGuiApplication.primaryScreen()
+        if not screen:
+            return None
+
+        if hasattr(QWindow, 'isHDR'):
+            window = QWindow()
+            window.setScreen(screen)
+            try:
+                hdr = window.isHDR()
+                logger.info(f"Qt HDR检测: isHDR()={hdr}")
+                return hdr
+            finally:
+                window.deleteLater()
+
+        depth = screen.depth()
+        geometry = screen.geometry()
+        logger.debug(f"Qt屏幕信息: depth={depth}, size={geometry.width()}x{geometry.height()}")
+        return None
+    except Exception as e:
+        logger.debug(f"Qt HDR检测失败: {e}")
+        return None
+
+
 def is_windows_hdr_enabled():
     global _hdr_cache, _hdr_cache_time
     import time
@@ -114,8 +148,16 @@ def is_windows_hdr_enabled():
     if _hdr_cache is not None and (now - _hdr_cache_time) < _HDR_CACHE_TTL:
         return _hdr_cache
 
-    result = _check_windows_hdr_registry()
+    reg_result = _check_windows_hdr_registry()
+    qt_result = _check_windows_hdr_qt()
+
+    if qt_result is not None:
+        result = reg_result or qt_result
+        logger.info(f"Windows HDR检测: 注册表={reg_result}, Qt={qt_result}, 最终={'已启用' if result else '未启用'}")
+    else:
+        result = reg_result
+        logger.info(f"Windows HDR检测(注册表): {'已启用' if result else '未启用'}")
+
     _hdr_cache = result
     _hdr_cache_time = now
-    logger.info(f"Windows HDR检测(注册表): {'已启用' if result else '未启用'}")
     return result

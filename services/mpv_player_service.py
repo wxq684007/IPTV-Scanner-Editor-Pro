@@ -504,12 +504,29 @@ class MpvPlayerController(QObject):
         except RuntimeError:
             pass
 
+    def _get_sdr_target_trc(self):
+        """获取当前系统下 SDR 输出的正确 target-trc。
+
+        Windows HDR 模式下桌面运行在 sRGB 线性空间，
+        SDR 内容（包括 tonemap 后的 HDR 内容）需用 srgb gamma
+        才能正确显示，否则会偏灰偏暗。
+        """
+        try:
+            if is_windows():
+                from utils.hdr_detect import is_windows_hdr_enabled
+                if is_windows_hdr_enabled():
+                    return 'srgb'
+        except Exception:
+            pass
+        return 'bt.1886'
+
     def _apply_tonemap_config(self):
         # HDR→SDR 色调映射：显式指定目标色域和 gamma，避免 mpv 自动推断失败
         # （PQ 是绝对 OETF，依赖明确的 target-trc 才能正确逆转换；HLG 有 OOTF 兼容路径不受影响）
         # 关键：hdr-compute-peak 必须为 no，否则 mpv 会自行计算信号峰值，覆盖 HDR10+ 动态元数据
         # （mpv 文档明确：hdr-compute-peak=yes 会 override HDR10+ dynamic metadata，导致画面偏暗）
         # tone-mapping=auto 让 mpv 自动选择：HDR10+→st2094-40，HDR10/HLG→bt.2390
+        sdr_trc = self._get_sdr_target_trc()
         self._set_mpv_string('tone-mapping', 'auto')         # 自动选择 HDR10+→st2094-40 / HDR10/HLG→bt.2390
         self._set_mpv_string('tone-mapping-mode', 'auto')
         self._set_mpv_string('tone-mapping-desat', '0.5')    # 高光去饱和，避免画面发灰
@@ -517,9 +534,9 @@ class MpvPlayerController(QObject):
         self._set_mpv_string('hdr10-opt', 'yes')             # 启用 HDR10+ 动态元数据（逐场景色调映射）
         self._set_mpv_string('d3d11-output-csp', 'srgb')
         self._set_mpv_string('target-prim', 'bt.709')        # SDR 显示器色域
-        self._set_mpv_string('target-trc', 'bt.1886')        # SDR 显示器 gamma
+        self._set_mpv_string('target-trc', sdr_trc)          # SDR 显示器 gamma（Windows HDR 下用 srgb）
         self._set_mpv_string('target-colorspace-hint', 'no')  # 避免从 passthrough 切过来残留
-        self.logger.info("HDR配置: tonemap → SDR (auto/bt.2390, bt.709/bt.1886, hdr10-opt, 信任元数据)")
+        self.logger.info(f"HDR配置: tonemap → SDR (auto/bt.2390, bt.709/{sdr_trc}, hdr10-opt, 信任元数据)")
 
     def _apply_passthrough_config(self):
         self._set_mpv_string('tone-mapping', 'clip')
@@ -547,6 +564,7 @@ class MpvPlayerController(QObject):
 
     def _reset_hdr_params(self):
         # 非 HDR 视频：显式指定 SDR 目标，确保 bt.2020 色域（WCG）视频能正确映射到 bt.709
+        sdr_trc = self._get_sdr_target_trc()
         self._set_mpv_string('tone-mapping', '')
         self._set_mpv_string('tone-mapping-mode', '')
         self._set_mpv_string('tone-mapping-desat', '')
@@ -554,9 +572,9 @@ class MpvPlayerController(QObject):
         self._set_mpv_string('hdr10-opt', 'no')              # 非 HDR 视频关闭 HDR10+ 优化
         self._set_mpv_string('d3d11-output-csp', 'srgb')
         self._set_mpv_string('target-prim', 'bt.709')        # SDR 显示器色域
-        self._set_mpv_string('target-trc', 'bt.1886')        # SDR 显示器 gamma
+        self._set_mpv_string('target-trc', sdr_trc)          # SDR 显示器 gamma（Windows HDR 下用 srgb）
         self._set_mpv_string('target-colorspace-hint', 'no')
-        self.logger.info("HDR配置: 已重置为SDR默认值 (bt.709/bt.1886)")
+        self.logger.info(f"HDR配置: 已重置为SDR默认值 (bt.709/{sdr_trc})")
 
 
     def _set_mpv_string(self, name, value):
@@ -759,39 +777,50 @@ class MpvPlayerController(QObject):
                 self._reset_hdr_params()
                 return
 
+            def _check_system_hdr():
+                """运行时检测系统 HDR 状态（比初始化时更准确，Qt 应用已完全就绪）。"""
+                try:
+                    if is_windows():
+                        from utils.hdr_detect import is_windows_hdr_enabled
+                        return is_windows_hdr_enabled()
+                    elif is_macos():
+                        from utils.hdr_detect import is_macos_hdr_enabled
+                        return is_macos_hdr_enabled()
+                    elif is_android():
+                        from utils.hdr_detect import is_android_hdr_enabled
+                        return is_android_hdr_enabled()
+                except Exception:
+                    pass
+                return False
+
             if hdr_mode == 'tonemap':
                 self._apply_tonemap_config()
                 return
 
             if hdr_mode == 'passthrough':
-                if getattr(self, '_hdr_fallback_tonemap', False):
+                system_hdr = _check_system_hdr()
+                fallback = getattr(self, '_hdr_fallback_tonemap', False) or not system_hdr
+                if fallback:
+                    if not system_hdr:
+                        self.logger.warning("运行时检测系统未启用HDR，passthrough模式回退到tonemap")
                     self._apply_tonemap_config()
                 else:
                     self._apply_passthrough_config()
                 return
 
             if hdr_mode == 'scrgb':
-                if getattr(self, '_hdr_fallback_tonemap', False):
+                system_hdr = _check_system_hdr()
+                fallback = getattr(self, '_hdr_fallback_tonemap', False) or not system_hdr
+                if fallback:
+                    if not system_hdr:
+                        self.logger.warning("运行时检测系统未启用HDR，scrgb模式回退到tonemap")
                     self._apply_tonemap_config()
                 else:
                     self._apply_scrgb_config()
                 return
 
             if hdr_mode == 'auto':
-                system_hdr_enabled = False
-                try:
-                    if is_windows():
-                        from utils.hdr_detect import is_windows_hdr_enabled
-                        system_hdr_enabled = is_windows_hdr_enabled()
-                    elif is_macos():
-                        from utils.hdr_detect import is_macos_hdr_enabled
-                        system_hdr_enabled = is_macos_hdr_enabled()
-                    elif is_android():
-                        from utils.hdr_detect import is_android_hdr_enabled
-                        system_hdr_enabled = is_android_hdr_enabled()
-                except Exception:
-                    pass
-
+                system_hdr_enabled = _check_system_hdr()
                 if system_hdr_enabled:
                     self._apply_scrgb_config()
                 else:

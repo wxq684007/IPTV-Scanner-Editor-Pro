@@ -55,16 +55,23 @@ class MPVView @JvmOverloads constructor(
         hwdec: String = DEFAULT_HWDEC
     ) {
         voInUse = vo
+        // 代际计数器：本次 initialize 分配的代次，destroy() 时检查是否仍是当前活动代次。
+        // 用于解决"旧 MPVView.destroy() 在新 MPVView.initialize() 之后执行"的竞态条件：
+        // 1. MPVView #2.initialize() → generation=2 → MPVLib.destroy() → MPVLib.create() → nativeInstanceAlive=true
+        // 2. MPVView #1.destroy() → myGeneration=1 != activeGeneration=2 → 跳过 destroy，避免杀死新实例
+        myGeneration = ++activeGeneration
+        Log.i(TAG, "initialize: generation=$myGeneration")
+
         // 切换播放器（MPV → EXO/IJK/VLC → MPV）时，Compose 的 onRelease 是异步的，
         // 上次 MPVView.destroy() 可能还未执行，native mpv 实例仍存活。
         // 此时 MPVLib.create() 会在已存在的实例上调用，导致 native 崩溃（SIGSEGV）。
         // 用 nativeInstanceAlive 标志位检测残留实例，先 destroy 再 create。
         //
         // 重要：nativeInstanceAlive 必须是 companion object（静态字段），不能是实例字段。
-        // 因为从 IJK 切回 MPV 时会创建新的 MPVView 实例，新实例的实例字段初始值是 false，
+        // 因为从 IJK 切回 MPV 时会创建新的 MPVView 实例，新实例的实例字段初始值是 false,
         // 无法检测到之前 MPVView 残留的 native mpv 实例，导致 double-create 崩溃。
         if (nativeInstanceAlive) {
-            Log.w(TAG, "initialize: native mpv instance still alive, destroying first")
+            Log.w(TAG, "initialize: native mpv instance still alive (generation=$myGeneration), destroying first")
             try {
                 MPVLib.destroy()
             } catch (e: Throwable) {
@@ -182,6 +189,13 @@ class MPVView @JvmOverloads constructor(
         // 先移除回调，防止 surfaceDestroyed 在 MPVLib.destroy() 之后触发
         // 导致 use-after-destroy（MPVLib.setPropertyString/detachSurface）
         holder.removeCallback(this)
+        // 代际检查：只有当前活动代次的 MPVView 才允许销毁 native mpv 实例。
+        // 解决竞态：切回 MPV 时新 MPVView #2.initialize() 先执行，
+        // 旧 MPVView #1.destroy() 后执行。若不检查代次，旧 destroy 会杀死新 native mpv 实例。
+        if (myGeneration != activeGeneration) {
+            Log.i(TAG, "destroy: skipped (myGen=$myGeneration, activeGen=$activeGeneration), newer MPVView is active")
+            return
+        }
         // 防止 double-destroy：onRelease 可能与 MpvController.detach 或
         // Activity.onDestroy 多次调用 destroy，double-destroy 会导致 native 崩溃
         if (nativeInstanceAlive) {
@@ -207,6 +221,13 @@ class MPVView @JvmOverloads constructor(
 
     private var filePath: String? = null
     private var voInUse: String = DEFAULT_VO
+
+    /**
+     * 本实例的代次（由 initialize() 分配）。
+     * destroy() 时与 [activeGeneration] 比较：若不一致，说明已有更新的 MPVView 接管，
+     * 本实例不应销毁 native mpv（否则会杀死新实例）。
+     */
+    private var myGeneration: Int = 0
 
     /**
      * Surface 重建后重新 loadfile 时需恢复的播放位置（秒）。
@@ -329,5 +350,16 @@ class MPVView @JvmOverloads constructor(
          */
         @Volatile
         private var nativeInstanceAlive = false
+
+        /**
+         * 当前活动 MPVView 的代次（每次 initialize 递增）。
+         *
+         * 用途：解决"旧 MPVView.destroy() 在新 MPVView.initialize() 之后执行"的竞态。
+         * 切回 MPV 时，Compose 可能先创建新 MPVView #2 调用 initialize()（generation=2），
+         * 后销毁旧 MPVView #1 调用 destroy()。若 #1.destroy 不检查代次，会杀死新 native mpv 实例。
+         * destroy 时比较 myGeneration 与 activeGeneration，不一致则跳过销毁。
+         */
+        @Volatile
+        private var activeGeneration: Int = 0
     }
 }

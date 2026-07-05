@@ -237,38 +237,50 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
             if (view is MPVView) view.destroy()
         }
 
-        // 用 movableContentOf 包装主画面 AndroidView，确保 multiViewState.active 变化时
-        // AndroidView 在 Compose 树中移动而不销毁重建（避免 MPV 实例销毁导致播放中断）。
-        // remember(playerType) 确保切换播放器类型时重建 View（不同播放器需要不同 View 类型）。
-        val primaryPlayer = remember(playerType) {
-            movableContentOf {
-                AndroidView(
-                    factory = createPlayerView,
-                    update = { /* 各 View 的 surfaceChanged 等回调内部已处理 */ },
-                    onRelease = onReleasePlayer,
-                    modifier = Modifier.fillMaxSize()
-                )
+        // 用 key(playerType) 包裹整个播放器子树，确保切换播放器类型时：
+        // 1. 旧 View 子树先完全销毁（触发 onRelease → MPVView.destroy / ExoPlayerView detach）
+        // 2. 新 View 子树再创建（触发 factory → MPVView.initialize）
+        //
+        // 之前用 remember(playerType) { movableContentOf { } } 不保证销毁先于创建，
+        // 导致切回 MPV 时新 MPVView.initialize() 与旧 MPVView.destroy() 竞态：
+        //   - 旧 destroy 杀死新 native mpv 实例（MPVLib 是全局单例）
+        //   - 旧 IjkPlayer.release() 触发 RenderThread SIGSEGV（Surface 仍引用已释放资源）
+        //
+        // key() 保证 Compose 在 key 变化时先调用旧子树的 onRelease，再创建新子树。
+        // multiViewState.active 变化时 key 不变，movableContentOf 仍可在子树内移动而不销毁。
+        key(playerType) {
+            // 用 movableContentOf 包装主画面 AndroidView，确保 multiViewState.active 变化时
+            // AndroidView 在 Compose 树中移动而不销毁重建（避免 MPV 实例销毁导致播放中断）。
+            val primaryPlayer = remember {
+                movableContentOf {
+                    AndroidView(
+                        factory = createPlayerView,
+                        update = { /* 各 View 的 surfaceChanged 等回调内部已处理 */ },
+                        onRelease = onReleasePlayer,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             }
-        }
 
-        if (multiViewState.active) {
-            // 多画面模式：MultiViewOverlay 渲染网格，主画面用 primaryPlayer 填满 cell
-            MultiViewOverlay(
-                state = multiViewState,
-                primaryContent = { primaryPlayer() },
-                getSubPlayer = { idx -> viewModel.getSubPlayerForMultiView(idx) },
-                onViewportClick = { idx -> viewModel.setFocusedViewport(idx) },
-                onViewportClose = { idx -> viewModel.removeFromMultiView(idx) },
-                onToggleMute = { idx -> viewModel.toggleMultiViewMute(idx) }
-            )
-        } else {
-            // 单画面模式：Box + aspectRatio 控制主画面大小和位置（居中保持比例）
-            Box(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .aspectRatio(aspectRatio)
-            ) {
-                primaryPlayer()
+            if (multiViewState.active) {
+                // 多画面模式：MultiViewOverlay 渲染网格，主画面用 primaryPlayer 填满 cell
+                MultiViewOverlay(
+                    state = multiViewState,
+                    primaryContent = { primaryPlayer() },
+                    getSubPlayer = { idx -> viewModel.getSubPlayerForMultiView(idx) },
+                    onViewportClick = { idx -> viewModel.setFocusedViewport(idx) },
+                    onViewportClose = { idx -> viewModel.removeFromMultiView(idx) },
+                    onToggleMute = { idx -> viewModel.toggleMultiViewMute(idx) }
+                )
+            } else {
+                // 单画面模式：Box + aspectRatio 控制主画面大小和位置（居中保持比例）
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .aspectRatio(aspectRatio)
+                ) {
+                    primaryPlayer()
+                }
             }
         }
 

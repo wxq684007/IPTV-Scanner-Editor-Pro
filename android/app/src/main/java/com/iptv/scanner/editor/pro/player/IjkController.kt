@@ -271,12 +271,20 @@ class IjkController(private val context: Context) : Player {
         // 在某些流上无声音（音频 HAL 兼容性问题）。OpenSL ES 是 Android 原生音频 API，
         // 兼容性更好，延迟更低。
         p.setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "opensles", 1L)
+        // 禁用 SoundTouch 音频变速处理：部分流上 SoundTouch 会引入音频丢失/静音问题。
+        // 禁用后 IJK 用原生 sample rate 输出 PCM，避免变速处理导致的兼容性问题。
+        p.setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "soundtouch", 0L)
         // OPT_CATEGORY_FORMAT：缓冲与封包
         p.setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "buffer_size", 1521024L)
         p.setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "infbuf", 1L)
         p.setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "packet-buffering", 0L)
         // OPT_CATEGORY_CODEC：解码循环过滤（8 = skip all，提升性能）
         p.setOption(IjkMediaPlayer.OPT_CATEGORY_CODEC, "skip_loop_filter", 8L)
+        // 音频解码选项：启用音频重采样，确保 PCM 输出格式被 OpenSL ES 接受
+        // 部分流的音频 sample rate（如 22050）或 channel count 不被设备 AudioTrack 直接支持，
+        // 启用 swresample 强制重采样到设备支持的格式。
+        p.setOption(IjkMediaPlayer.OPT_CATEGORY_CODEC, "swresample", 1L)
+        Log.i(TAG, "applyDefaultOptions: hardwareDecode=$hardwareDecode, opensles=1, soundtouch=0, swresample=1")
     }
 
     // -----------------------------------------------------------------
@@ -297,6 +305,22 @@ class IjkController(private val context: Context) : Player {
         } catch (e: Exception) {
             Log.w(TAG, "onPrepared getDuration failed: ${e.message}")
         }
+        // 音频诊断：IJK 无声音问题排查。
+        // getMediaInfo 返回 IjkMediaInfo 包含 mAudioDecoder（音频解码器名称），
+        // 若 mAudioDecoder 为空说明音频流未被识别或解码器未加载。
+        try {
+            val mi = (mp as? IjkMediaPlayer)?.mediaInfo
+            Log.i(TAG, "onPrepared: audioDecoder=${mi?.mAudioDecoder}, " +
+                "videoDecoder=${mi?.mVideoDecoder}, " +
+                "audioDecoderName=${mi?.mAudioDecoderName}, " +
+                "videoDecoderName=${mi?.mVideoDecoderName}")
+        } catch (e: Exception) {
+            Log.w(TAG, "onPrepared: getMediaInfo failed: ${e.message}")
+        }
+        // 视频尺寸（用于判断流是否被正确解析）
+        try {
+            Log.i(TAG, "onPrepared: videoWidth=${mp.videoWidth}, videoHeight=${mp.videoHeight}")
+        } catch (e: Exception) { }
         // 解析轨道信息（音轨/字幕轨）
         updateTrackInfo()
         // 执行挂起的 seek（restorePlaybackState 设置的恢复位置）
@@ -425,11 +449,16 @@ class IjkController(private val context: Context) : Player {
 
     override fun detach() {
         stopPolling()
-        // 先解绑 Surface 和 View，避免 release() 释放 native 资源后
-        // RenderThread 仍然访问 IjkMediaPlayer 的渲染资源导致 SIGSEGV。
+        // 切换播放器时先 stop() 确保播放完全停止，再解绑 Surface 和 release。
         // 根因：IjkMediaPlayer.release() 会释放内部 native 渲染资源（如 OpenGL 纹理），
-        // 但 IjkVideoView 的 Surface 仍然引用这些资源，RenderThread 在下一帧渲染时
-        // 访问已释放的资源导致 SIGSEGV（fault addr 0x8，访问 null 对象成员偏移）。
+        // 但若此时仍在播放，RenderThread 下一帧渲染会访问已释放资源导致 SIGSEGV（fault addr 0x8）。
+        // stop() 让 IjkMediaPlayer 进入 Stopped 状态，停止解码和渲染线程，
+        // 随后 setDisplay(null) 解绑 Surface，最后 release() 释放 native 资源。
+        try {
+            ijkPlayer?.stop()
+        } catch (e: Throwable) {
+            Log.w(TAG, "detach stop failed: ${e.javaClass.simpleName}: ${e.message}")
+        }
         // setDisplay(null) 让 IjkMediaPlayer 停止渲染到 Surface，RenderThread 不再访问。
         try {
             ijkPlayer?.setDisplay(null)

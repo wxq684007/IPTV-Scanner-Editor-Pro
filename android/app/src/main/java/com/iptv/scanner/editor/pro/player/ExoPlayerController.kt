@@ -301,6 +301,15 @@ class ExoPlayerController(private val context: Context) : Player {
     override fun detach() {
         mainHandler.removeCallbacks(progressRunnable)
         exoPlayer.removeListener(listener)
+        // 先解绑 Surface 再 release：避免 release() 释放解码器资源后
+        // RenderThread 仍访问已释放的 Surface 导致 SIGSEGV（与 IJK 切 MPV 崩溃同类问题）。
+        // ExoPlayerView.surfaceDestroyed 也会调用 clearVideoSurface，但 View 销毁是异步的，
+        // detach 时主动解绑确保 release 前 Surface 已断开。
+        try {
+            exoPlayer.clearVideoSurface()
+        } catch (e: Throwable) {
+            Log.w(TAG, "detach: clearVideoSurface failed: ${e.message}")
+        }
         exoPlayer.release()
         exoPlayerView = null
         // 重置状态（避免 Compose 用旧值）
