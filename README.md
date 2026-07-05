@@ -7,7 +7,6 @@
 
 一款功能全面的 IPTV 频道扫描、验证、播放和管理工具，跨平台支持 Windows / macOS / Linux 桌面端与 Android 移动端。集成 MPV 播放引擎与 FFprobe 流探测，支持 EPG 电子节目单、频道台标自动匹配、HDR 显示、在线字幕下载、音频可视化、断点续播、片段导出等高级功能，多主题界面、中英双语，从扫描到观看一站式完成。
 
-> **当前版本**：v48.0.29.0（构建日期 2026-07-02）
 
 ## 📸 程序截图
 
@@ -23,7 +22,7 @@
 
 | 功能类别 | 核心功能 |
 |---------|---------|
-| 播放器 | MPV 引擎驱动、FCC 快速换台、完整播放控制、倍速、画面比例、全屏、硬件解码、HDR 显示（5种模式）、画中画、多屏预览(4/9屏)、截图、连拍截图、音轨/字幕切换、3D/360°视频、视频旋转翻转、自动裁剪黑边、视频图像调整 |
+| 播放器 | MPV 引擎驱动、FCC 快速换台、完整播放控制、倍速、画面比例、全屏、硬件解码、HDR 显示（5种模式）、WCG 广色域、画中画、多屏预览(4/9屏)、截图、连拍截图、音轨/字幕切换、3D/360°视频、视频旋转翻转、自动裁剪黑边、视频图像调整、流质量检测 |
 | 字幕系统 | 字幕样式调整、在线字幕下载（OpenSubtitles/SubHD/SubtitleCat 三源聚合）、IMDB 中转中文搜索、字幕自动同步、字幕延迟/缩放/位置调整 |
 | 音频 | 10段均衡器、声道布局、音调补偿、音频延迟、A/V 同步监控（实时波形图）、音频可视化（7种3D样式）、歌词显示 |
 | 播放增强 | 断点续播、每文件播放设置持久化、跳过片头/片尾、播放队列（循环/AB循环/逐帧）、书签管理、切片导出/GIF制作、网络流增强（Referer/代理/Headers） |
@@ -36,7 +35,7 @@
 | 界面 | 21种主题组合、中英双语、三栏布局、悬浮面板、系统托盘、文件关联、拖放打开、丰富快捷键 |
 | 订阅 | 多源管理、独立缓存、智能更新(增量)、编辑功能、缓存回退、过期策略 |
 | Web 服务器 | 内置 aiohttp 服务器、频道列表和播放接口 |
-| Android 端 | Kotlin Compose 原生 UI、MPV Native 渲染、Chaquopy Python 后端、TV/手机双模式、遥控器适配（焦点高亮+台标显示+自动隐藏）、画中画（PiP 增强）、HDR 模式切换（设备能力检测+target-colorspace-hint）、3D/360°视频、随机播放、书签管理、EPG 时间轴/日期切换、全局搜索、流质量检测、字幕样式、连拍截图、LAN 管理后台（虚拟遥控器+自动关闭开关）、多内核软硬解切换、数据持久化（覆盖安装不丢失）、版本检查更新（GitHub API + 自动提示新版本） |
+| Android 端 | Kotlin Compose 原生 UI、MPV Native 渲染、Chaquopy Python 后端、TV/手机双模式、遥控器适配（焦点高亮+台标显示+自动隐藏）、画中画（PiP 增强）、HDR 模式切换（设备能力检测+target-colorspace-hint）、WCG 广色域、PQ/HLG 差异化处理、3D/360°视频、多画面预览（DUAL/QUAD）、随机播放、书签管理、EPG 时间轴/日期切换、全局搜索、流质量检测、字幕样式、连拍截图、LAN 管理后台（虚拟遥控器+自动关闭开关）、多内核软硬解切换、数据持久化（覆盖安装不丢失）、版本检查更新（GitHub API + 自动提示新版本） |
 
 ## ✨ 核心功能
 
@@ -64,6 +63,10 @@
   - `passthrough`：HDR 直通（清空 target-prim/target-trc 让 mpv 直通视频原生色彩空间，启用 `target-colorspace-hint=yes` 让 Android 系统自动切换 HDR 显示模式，需 HDR 屏幕）
   - `scrgb`：scRGB 模式（auto 模式下系统 HDR 开启时走此分支）
   - `auto`：根据系统 HDR 状态自动选择 passthrough / scrgb（Android 端通过 `Display.getHdrCapabilities()` 检测设备 HDR 能力）
+  - **PQ/HLG 差异化处理**：根据视频 gamma 自动区分 PQ（HDR10/HDR10+）与 HLG 视频
+    - PQ 视频：`target-peak=10000` + `tone-mapping=clip` + `hdr10-opt=yes` 传递 HDR10+ 动态元数据
+    - HLG 视频：自动 `target-peak`（不固定 10000）+ `hdr-compute-peak=yes` 自动计算峰值 + `tone-mapping=spline`（gpu-next），避免"阴阳脸"
+  - **WCG 广色域处理**：检测到 BT.2020 色域但 SDR 亮度的视频时，自动设置 `target-prim=bt.2020` + `gamut-mapping-mode=relative`，正确显示广色域而不误判为 HDR
 - **视频图像调整**：亮度、对比度、饱和度、色调、Gamma、锐度滑块实时调整，支持切换文件时自动重置
 - **视频旋转翻转**：支持 0/90/180/270 度旋转，水平/垂直/双向镜像翻转（使用 `@iptv_flip` 命名 lavfi 滤镜，需 copy-back 硬解）
 - **自动裁剪黑边**：基于帧分析自动检测并裁剪视频黑边（PIL 灰度 + numpy 边缘分析，`@iptv_autocrop` 命名滤镜），可一键移除
@@ -77,6 +80,7 @@
 - **音轨/字幕切换**：播放菜单和右键菜单支持切换音轨和字幕轨道
 - **最近打开文件**：文件菜单记录最近访问的播放列表，快速重开
 - **视频文件打开**：支持直接打开本地视频文件播放（Ctrl+Shift+O）
+- **流质量检测**：独立对话框实时显示 mpv 流信息（每秒刷新），分组展示视频（codec/分辨率/显示分辨率/帧率/码率/像素格式/色彩空间/HDR/位深/宽高比）、音频（codec/声道/采样率/码率/位深）、网络与缓存（协议/缓存时长/缓存速度/缓冲状态/解复用码率）、丢帧统计（VO 丢帧/解码器丢帧/误时帧/VO 延迟帧）、硬件与渲染（硬解/视频输出/GPU API/GPU 上下文），与 Android 端 StreamQualityPanel 和 Web 端 stream_quality 面板对齐
 - **频道切换遮罩**：换台时显示频道信息过渡动画，提升视觉体验
 
 ### 📺 EPG 电子节目单
@@ -255,9 +259,12 @@ Android 端采用 **Kotlin Compose + Chaquopy Python 两层架构**，与 PC 端
 #### 核心功能
 - **视频播放**：MPV Native 渲染，支持播放/暂停/停止、音量、倍速、画面比例、音轨/字幕切换、hwdec 切换、**FCC 快速换台**（组播场景自动向 FCC 代理发送 LEAVE/JOIN 通知）
 - **HDR 模式切换**：禁用/自动/色调映射/直通 4 种模式，文件加载时自动检测 HDR（gamma=pq/hlg 或 sig-peak>1.0）并应用
-  - `PASSTHROUGH`：清空 target-prim/target-trc + 启用 `target-colorspace-hint=yes`，让 Android 系统自动切换 HDR 显示模式
+  - `PASSTHROUGH`：清空 target-prim/target-trc + 启用 `target-colorspace-hint=yes`，让 Android 系统自动切换 HDR 显示模式；PQ 视频设置 `target-peak=10000` + `tone-mapping=clip`，HLG 视频使用自动 target-peak + `hdr-compute-peak=yes` 避免阴阳脸
   - `TONEMAP`：保留 `target-prim=bt.2020` 广色域 + `target-trc=bt.1886` SDR 伽马，`tone-mapping=auto`（HDR10+→st2094-40，HDR10/HLG→bt.2390）
   - `AUTO`：通过 `Display.getHdrCapabilities()` 检测设备 HDR 能力，支持则走直通，否则走色调映射
+  - **PQ/HLG 差异化处理**：PQ 视频启用 `hdr10-opt=yes` 传递 HDR10+ 动态元数据；HLG 视频禁用 `hdr10-opt=no` 避免处理不存在的元数据导致偏色
+  - **WCG 广色域**：检测 BT.2020 色域 + SDR 亮度的视频时，设置 `target-prim=bt.2020` + `gamut-mapping-mode=relative` 正确显示广色域
+- **多画面预览**：DUAL（左右分屏）与 QUAD（2×2 网格）多画面同时预览，主画面复用现有播放器，副画面使用 ExoPlayer 渲染
 - **3D / 360° 视频**：5 种 3D 立体模式（mono/sbs/sbs2/ab/ab2）+ 360° 视角控制（panorama 滤镜，flat/equirect/cubemap 投影 + yaw/pitch/roll）
 - **控制面板**：3 行布局对齐 PC 端——媒体信息徽章、节目信息行、控制行（上一/下一频道、播放/暂停/停止、进度条、音量、倍速、画面比例、音轨、字幕）
 - **频道列表**：5 个 Tab（订阅 / 本地 / 收藏 / 历史 / 队列），搜索框、分组筛选
@@ -556,6 +563,7 @@ IPTV-Scanner-Editor-Pro/
 │   │   ├── reminder_popup.py  # 节目提醒弹窗
 │   │   ├── resume_position_dialog.py # 断点续播列表对话框
 │   │   ├── scan_channel_dialog.py # 扫描频道对话框
+│   │   ├── stream_quality_dialog.py # 流质量检测对话框（实时显示 mpv 流信息，对齐 Android/Web 端）
 │   │   ├── subtitle_style_dialog.py # 字幕样式+在线下载对话框
 │   │   ├── unified_search_dialog.py # 统一搜索对话框
 │   │   ├── video_3d_dialog.py # 3D/360°视频对话框
@@ -620,6 +628,7 @@ IPTV-Scanner-Editor-Pro/
     │   │   │   │   ├── IjkVideoView.kt     # IJK 视图
     │   │   │   │   ├── PlaybackState.kt    # 播放状态枚举
     │   │   │   │   ├── CatchupHelper.kt    # 回看/时移辅助
+    │   │   │   │   ├── FccHelper.kt       # FCC 快速换台辅助（UDP 通知 FCC 代理，对齐 PC 端 fcc_service.py）
     │   │   │   │   └── ProgressHelper.kt   # 进度条逻辑（对齐 PC 端）
     │   │   │   └── ui/                     # Compose UI 层
     │   │   │       ├── AppViewModel.kt     # 核心 ViewModel（所有功能入口）
@@ -628,12 +637,15 @@ IPTV-Scanner-Editor-Pro/
     │   │   │       ├── ChannelsPanel.kt    # 频道列表（5 Tab）
     │   │   │       ├── EpgPanel.kt         # EPG 节目单（±7 天日期切换）
     │   │   │       ├── EpgTimelinePanel.kt # EPG 时间线视图
+    │   │   │       ├── FileBrowserPanel.kt # SAF 文件浏览器（本地播放列表/视频选择，TV 焦点适配）
     │   │   │       ├── SearchPanel.kt      # 全局搜索
     │   │   │       ├── StreamQualityPanel.kt # 流质量检测
     │   │   │       ├── SourceManagerPanel.kt # 订阅源管理 + LAN 管理（自动关闭开关）
     │   │   │       ├── MainMenuPanel.kt    # 主菜单
     │   │   │       ├── PlayerSettingsPanel.kt # 播放器设置（内核切换/VO/HWDEC/HDR/软硬解切换）
     │   │   │       ├── MorePanels.kt       # 视频/音频/字幕/播放/截图/关于面板集合
+    │   │   │       ├── MultiViewOverlay.kt # 多画面网格容器（DUAL 左右分屏 / QUAD 2×2 网格）
+    │   │   │       ├── MultiViewModels.kt  # 多画面视图模型（状态/布局切换）
     │   │   │       ├── QrCodeUtil.kt       # 二维码生成
     │   │   │       ├── SplashScreen.kt    # 启动画面（ViewModel 初始化）
     │   │   │       ├── UiMode.kt          # UI 模式枚举（TV/手机）
