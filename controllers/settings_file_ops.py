@@ -172,6 +172,12 @@ class SettingsFileOperations:
                 epg_widget=epg_section['list_widget']
             )
 
+        # 强制布局重新计算，修复首次显示时文字重叠的问题
+        # （加载订阅源后 QListWidget 尺寸提示变化，但布局未及时重新计算）
+        dialog.layout().activate()
+        dialog.adjustSize()
+        dialog.resize(800, 520)
+
         if self.window._center_dialog_on_screen:
             self.window._center_dialog_on_screen(dialog)
 

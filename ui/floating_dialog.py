@@ -419,6 +419,9 @@ class FloatingDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
+        # 修复首次显示时文字重叠的问题（无边框透明窗口常见问题）
+        # 延迟触发重绘，确保子控件在布局计算完成后正确绘制
+        QtCore.QTimer.singleShot(0, self.update)
         if is_linux() and self.parent():
             try:
                 from PySide6.QtGui import QWindow
