@@ -127,7 +127,10 @@ jobs:
           python3 << 'PYEOF'
           with open('packages/davs2.cmake', 'r') as f:
               content = f.read()
-          patch_line = "    PATCH_COMMAND bash -c \"sed -i '/Error in intra_chroma_pred_mode/{n;s/return 4;/p_aec->b_bit_error = 1; return 4;/}' <SOURCE_DIR>/source/common/aec.cc\""
+          # 注意：sed 命令中的分号必须用 \; 转义，否则 CMake 会将分号视为
+          # 列表分隔符，导致 bash -c "..." 中的命令字符串被拆分成多个参数
+          # \\; 在 Python 字符串中生成 \;，CMake 将 \; 解释为字面分号
+          patch_line = "    PATCH_COMMAND bash -c \"sed -i '/Error in intra_chroma_pred_mode/{n\\;s/return 4\\;/p_aec->b_bit_error = 1\\; return 4\\;/}' <SOURCE_DIR>/source/common/aec.cc\""
           content = content.replace('UPDATE_COMMAND ""', 'UPDATE_COMMAND ""\n' + patch_line)
           with open('packages/davs2.cmake', 'w') as f:
               f.write(content)
