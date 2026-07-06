@@ -276,8 +276,27 @@ class IjkController(private val context: Context) : Player {
         // 禁用 SoundTouch 音频变速处理：部分流上 SoundTouch 会引入音频丢失/静音问题。
         // 禁用后 IJK 用原生 sample rate 输出 PCM，避免变速处理导致的兼容性问题。
         p.setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "soundtouch", 0L)
+
+        /* 低延迟/快速切台选项（与 FCC 配合）：
+         *
+         * IJK 默认 min-frames=50000（需解码 5 万帧才开始播放），导致切台极慢。
+         * 以下选项让 IJK 在收到少量帧后立即开始渲染，与 VLC/MPV 的快速起播对齐：
+         *
+         * - start-on-prepared=1：prepared 后立即开始播放（不等待额外缓冲）
+         * - min-frames=5：仅需 5 帧解码即可开始渲染（默认 50000，差距巨大）
+         * - first-packet-timeout=3000：首个包超时 3 秒（避免无效源长时间等待）
+         * - rendered-trigger=1：渲染触发条件设为 1（最早可能的渲染时机）
+         *
+         * 配合 FCC JOIN 通知（在 playFile 之前发送），IJK 可在 FCC 代理转发新流后
+         * 快速接收并渲染首帧，大幅减少切台等待时间。
+         */
+        p.setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "start-on-prepared", 1L)
+        p.setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "min-frames", 5L)
+        p.setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "first-packet-timeout", 3000L)
+        p.setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "rendered-trigger", 1L)
+
         // OPT_CATEGORY_FORMAT：缓冲与封包
-        p.setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "buffer_size", 1521024L)
+        p.setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "buffer_size", 5121024L)
         p.setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "infbuf", 1L)
         p.setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "packet-buffering", 0L)
         // OPT_CATEGORY_CODEC：解码循环过滤（8 = skip all，提升性能）
@@ -286,7 +305,7 @@ class IjkController(private val context: Context) : Player {
         // 部分流的音频 sample rate（如 22050）或 channel count 不被设备 AudioTrack 直接支持，
         // 启用 swresample 强制重采样到设备支持的格式。
         p.setOption(IjkMediaPlayer.OPT_CATEGORY_CODEC, "swresample", 1L)
-        Log.i(TAG, "applyDefaultOptions: hardwareDecode=$hardwareDecode, opensles=0(AudioTrack), soundtouch=0, swresample=1")
+        Log.i(TAG, "applyDefaultOptions: hardwareDecode=$hardwareDecode, opensles=0(AudioTrack), soundtouch=0, swresample=1, min-frames=5, start-on-prepared=1")
     }
 
     // -----------------------------------------------------------------

@@ -1538,7 +1538,7 @@ val logLevel: StateFlow<String> = _logLevel.asStateFlow()
             return 0
         }
 
-        // 副画面：协议兼容性检查（ExoPlayer 不支持 RTP/UDP/RTSP）
+        // 副画面：协议兼容性检查（ExoPlayer 不支持 RTP/UDP）
         val playUrl = channel.url
         if (!isUrlSupportedByPlayer(playUrl, PlayerType.EXO)) {
             val errorViewport = targetViewport.copy(
@@ -1718,29 +1718,29 @@ val logLevel: StateFlow<String> = _logLevel.asStateFlow()
         }
     }
 
-    /**
-     * 检查 URL 协议是否被指定播放器类型支持。
-     *
-     * 各播放器协议支持范围：
-     * - MPV：全部协议（rtp/udp/rtsp/rtmp/http/https/file/content）
-     * - VLC：全部协议（rtp/udp/rtsp/rtmp/http/https/file）
-     * - IJK：http/https/rtsp/rtmp/file/content（FFmpeg fork 不含 RTP/UDP 协议）
-     * - ExoPlayer：仅 http/https/file/content（不支持 rtp/udp/rtsp/rtmp）
-     *
-     * 遇到不支持的协议时调用方应自动切换到 MPV。
-     */
-    private fun isUrlSupportedByPlayer(url: String, type: PlayerType): Boolean {
-        // content:// 和 file:// 协议所有播放器都支持
-        if (url.startsWith("content://") || url.startsWith("file://") || url.startsWith("/")) {
-            return true
-        }
-        val scheme = url.substringBefore("://", "").lowercase()
-        return when (type) {
-            PlayerType.MPV, PlayerType.VLC -> true  // 全协议支持
-            PlayerType.IJK -> scheme in setOf("http", "https", "rtsp", "rtmp")
-            PlayerType.EXO -> scheme in setOf("http", "https")
-        }
-    }
+/**
+* 检查 URL 协议是否被指定播放器类型支持。
+*
+* 各播放器协议支持范围：
+* - MPV：全部协议（rtp/udp/rtsp/rtmp/http/https/file/content）
+* - VLC：全部协议（rtp/udp/rtsp/rtmp/http/https/file）
+* - IJK：http/https/rtsp/rtmp/file/content（FFmpeg fork 不含 RTP/UDP 协议）
+* - ExoPlayer：http/https/rtsp/file/content（已集成 media3-exoplayer-rtsp 扩展）
+*
+* 遇到不支持的协议时调用方应自动切换到 MPV。
+*/
+private fun isUrlSupportedByPlayer(url: String, type: PlayerType): Boolean {
+// content:// 和 file:// 协议所有播放器都支持
+if (url.startsWith("content://") || url.startsWith("file://") || url.startsWith("/")) {
+return true
+}
+val scheme = url.substringBefore("://", "").lowercase()
+return when (type) {
+PlayerType.MPV, PlayerType.VLC -> true  // 全协议支持
+PlayerType.IJK -> scheme in setOf("http", "https", "rtsp", "rtmp")
+PlayerType.EXO -> scheme in setOf("http", "https", "rtsp")
+}
+}
 
     /**
      * 切换 shuffle 模式（与 PC 端 toggle_shuffle 对齐）。
@@ -4506,16 +4506,19 @@ showOsd("播放器设置", "反交错: ${if (value == "auto") "自动" else "关
 
 /**
 * 设置日志等级（debug/info/warn/error）。
-* 与 PC 端 core/log_manager.py 对齐，通过 mpv 的 msg-level 选项控制日志输出量。
-* 注意：日志等级在 MPVView.initialize 时通过 setOptionString("msg-level", ...) 设置，
-* 是启动时选项，运行时修改需要重新创建 mpv 实例才能生效。
-* 当前实现仅持久化设置，下次启动 mpv 实例时生效。
+* 与 PC 端 core/log_manager.py 对齐，通过 mpv 的 msg-level 属性控制日志输出量。
+*
+* 运行时切换：mpv 的 msg-level 既是启动选项也是运行时属性，
+* 通过 MPVLib.setPropertyString("msg-level", ...) 可实时切换，无需重建 mpv 实例。
+* 首次创建 mpv 实例时由 MPVView.initialize 通过 setOptionString 设置初始值。
 * Android Log 输出不受影响（始终全量输出到 logcat）。
 */
 fun setLogLevel(level: String) {
 if (_logLevel.value == level) return
 userPrefs.setLogLevel(level)
 _logLevel.value = level
+// 运行时切换 MPV 日志等级（立即生效，无需重启）
+mpvSingleton.setMpvLogLevel(level)
 val levelName = when (level) {
 "debug" -> "调试"
 "info" -> "信息"
@@ -4523,7 +4526,7 @@ val levelName = when (level) {
 "error" -> "错误"
 else -> level
 }
-showOsd("播放器设置", "日志等级: $levelName（重启后生效）")
+showOsd("播放器设置", "日志等级: $levelName")
 }
 
     /**

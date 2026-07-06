@@ -111,7 +111,13 @@ class VlcController(context: Context) : Player, MediaPlayer.EventListener {
                     "--codec=mediacodec_ndk",   // 硬件解码（MediaCodec NDK 接口）
                     "--fullscreen",             // 全屏渲染
                     "--no-drop-late-frames",    // 不丢弃迟到帧（减少画面跳跃）
-                    "--no-skip-frames"          // 不跳帧（保证画面连续性）
+                    "--no-skip-frames",          // 不跳帧（保证画面连续性）
+                    /* TLS 兼容性修复：
+                     * 部分 HTTPS IPTV 源使用自签名证书或过期证书，VLC 默认验证 TLS 会导致连接失败。
+                     * MPV 端已通过 tls-verify=no + stream-lavf-o=verify=0 禁用验证，
+                     * 这里对齐 MPV 的行为，禁用 VLC 的 TLS 证书验证。
+                     * 风险：中间人攻击可替换流内容。对 IPTV 直播流可接受，敏感内容不适用。 */
+                    "--no-tls-verify"
                 )
             )
             val mp = MediaPlayer(lib).apply {

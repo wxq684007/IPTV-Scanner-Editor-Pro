@@ -494,6 +494,12 @@ class MainActivityCompose : ComponentActivity() {
         } catch (e: Throwable) {
             Log.w(TAG, "MpvController cleanup failed: ${e.message}")
         }
+        // 标记正常退出（NativeCrashLogger 据此判断下次启动是否需要保存崩溃日志）
+        try {
+            NativeCrashLogger.markCleanExit(application)
+        } catch (e: Throwable) {
+            Log.w(TAG, "NativeCrashLogger markCleanExit failed: ${e.message}")
+        }
         Log.i(TAG, "onDestroy")
     }
 }

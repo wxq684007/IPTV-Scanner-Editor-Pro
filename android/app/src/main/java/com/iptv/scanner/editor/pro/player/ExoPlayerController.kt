@@ -14,6 +14,7 @@ import androidx.media3.common.Timeline
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -134,10 +135,9 @@ override val capabilities: PlayerCapabilities = PlayerCapabilities(
     supportsTrackList = true,
     supportsAddSubtitleFile = false,
     supportsChapters = true,
-    // ExoPlayer 软解切换需要 media3-decoder-ffmpeg 扩展库（含 native FFmpeg .so），
-    // 当前未集成该扩展，两种模式都只用 MediaCodec，切换无实际效果。
-    // 设为 false 让 UI 隐藏硬解/软解切换按钮，避免误导用户。
-    supportsHardwareDecodeSwitch = false
+    // 已集成 Jellyfin media3-ffmpeg-decoder 扩展（含 native FFmpeg .so），
+    // 软解模式通过 EXTENSION_RENDERER_MODE_PREFER 优先使用 FFmpeg 渲染器。
+    supportsHardwareDecodeSwitch = true
 )
 
     override val playerType: PlayerType = PlayerType.EXO
@@ -702,14 +702,9 @@ override val capabilities: PlayerCapabilities = PlayerCapabilities(
      * 注意：软解模式需要 FFmpeg 扩展依赖，未安装时自动回退到 MediaCodec 硬解。
      */
 override fun setHardwareDecode(enabled: Boolean): Boolean {
-// ExoPlayer 软解需要 media3-decoder-ffmpeg 扩展（含 native FFmpeg .so），
-// 当前未集成该扩展，两种模式都只用 MediaCodec，切换无实际效果。
-// capabilities.supportsHardwareDecodeSwitch = false，UI 不会调用此方法，
-// 但保留实现以防未来集成 FFmpeg 扩展后启用。
-if (!enabled) {
-Log.w(TAG, "setHardwareDecode: 软解不可用（缺少 FFmpeg 扩展库），当前仅支持 MediaCodec 硬解")
-return false
-}
+// 已集成 Jellyfin media3-ffmpeg-decoder 扩展，软解通过 FFmpeg 扩展渲染器实现。
+// 硬解：EXTENSION_RENDERER_MODE_OFF（仅 MediaCodec）
+// 软解：EXTENSION_RENDERER_MODE_PREFER（优先 FFmpeg 扩展渲染器）
 if (hardwareDecode == enabled) return true
 Log.i(TAG, "setHardwareDecode: enabled=$enabled, rebuilding ExoPlayer")
 
@@ -854,10 +849,34 @@ Log.i(TAG, "setHardwareDecode: enabled=$enabled, rebuilding ExoPlayer")
                 // 此选项让 ExoPlayer 在硬解失败时回退到软解，避免直接报错"已暂停"。
                 setEnableDecoderFallback(true)
             }
+            /* 低延迟 LoadControl（关键：IPTV 直播场景需要快速起播）
+             *
+             * ExoPlayer 默认 LoadControl 缓冲极大（minBuffer=50s, maxBuffer=50s）,
+             * 导致切台后需等 50 秒缓冲才能开始播放，FCC 完全无效。
+             *
+             * 低延迟配置（与 MPV 的 demuxer-readahead-secs=1 对齐）：
+             * - minBufferMs=1000：最小缓冲 1 秒（够解码器启动即可）
+             * - maxBufferMs=3000：最大缓冲 3 秒（避免占用过多内存）
+             * - bufferForPlaybackMs=500：缓冲 500ms 即开始播放（快速起播）
+             * - bufferForPlaybackAfterRebufferMs=1000：rebuffer 后 1 秒恢复播放
+             *
+             * 这样 FCC 发送 JOIN 后，ExoPlayer 只需 500ms 就能开始渲染画面，
+             * 与 VLC 的 1 秒网络缓存体验接近。
+             */
+            val loadControl = DefaultLoadControl.Builder()
+                .setBufferDurationsMs(
+                    1000,   // minBufferMs
+                    3000,   // maxBufferMs
+                    500,    // bufferForPlaybackMs
+                    1000    // bufferForPlaybackAfterRebufferMs
+                )
+                .setPrioritizeTimeOverSizeThresholds(true)
+                .build()
             return ExoPlayer.Builder(context, renderersFactory)
                 // 保持屏幕唤醒（播放时不息屏，TV 端重要）
                 .setWakeMode(C.WAKE_MODE_LOCAL)
-                // 延迟一帧渲染，减少丢帧（与 mpv framedrop=all 理念一致）
+                // 低延迟缓冲配置（IPTV 直播场景必须）
+                .setLoadControl(loadControl)
                 .build()
         }
     }

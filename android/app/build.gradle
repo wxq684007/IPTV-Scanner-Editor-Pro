@@ -130,6 +130,8 @@ android {
      * 编译 Compose 代码，不再需要 composeOptions { kotlinCompilerExtensionVersion } */
     buildFeatures {
         compose true
+        // ACRA 需要 BuildConfig 类（AGP 8.x 默认不生成，需显式启用）
+        buildConfig true
     }
 
     sourceSets {
@@ -211,11 +213,36 @@ dependencies {
      * - media3-exoplayer: 核心播放引擎
      * - media3-ui: PlayerView（Compose AndroidView 包裹用）
      * - media3-common: 通用接口
-     * - media3-datasource-cronet: Cronet 网络栈（可选，提升 HLS 低延迟表现）
+     * - media3-exoplayer-rtsp: RTSP 协议支持（ExoPlayer 原生不含 RTSP）
+     * - media3-ffmpeg-decoder: Jellyfin 预编译的 FFmpeg 软解扩展（含 native .so）
+     *
+     * 版本 1.7.1：Google media3 最新稳定版（2026 年发布）。
+     * 与 Jellyfin media3-ffmpeg-decoder 1.6.1+1 的依赖版本完全对齐。
+     *
+     * FFmpeg 软解扩展（org.jellyfin.media3:media3-ffmpeg-decoder）：
+     * - 由 Jellyfin 团队维护，在 Maven Central 发布预编译 AAR（含 arm64/armv7a native 库）
+     * - 仓库：https://github.com/jellyfin/jellyfin-androidx-media
+     * - GPL 许可（FFmpeg 本身是 GPL），与本项目兼容
+     * - 启用后 ExoPlayer 可软解所有 FFmpeg 支持的编码格式
+     *
+     * RTSP 支持（media3-exoplayer-rtsp）：
+     * - Google 官方 RTSP 扩展，支持 RTSP over TCP/UDP
+     * - 之前 ExoPlayer 只支持 HTTP/HTTPS，遇到 RTSP 源会自动切换到 MPV
+     * - 添加后 ExoPlayer 也能播放 RTSP 源
+     *
      * 与 MPV 互为补充：HLS/DASH/SmoothStreaming 支持更好，API 更现代 */
-    implementation 'androidx.media3:media3-exoplayer:1.4.1'
-    implementation 'androidx.media3:media3-ui:1.4.1'
-    implementation 'androidx.media3:media3-common:1.4.1'
+    implementation 'androidx.media3:media3-exoplayer:1.7.1'
+    implementation 'androidx.media3:media3-ui:1.7.1'
+    implementation 'androidx.media3:media3-common:1.7.1'
+    implementation 'androidx.media3:media3-exoplayer-rtsp:1.7.1'
+
+    /* FFmpeg 软解扩展（Jellyfin 预编译，含 native FFmpeg .so 库）
+     * - 依赖 media3 1.7.1，版本号 1.6.1+1
+     * - 提供 FfmpegAudioRenderer / FfmpegVideoRenderer，支持所有 FFmpeg 支持的编码
+     * - 通过 DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER 启用软解
+     * - native 库包含 arm64-v8a 和 armeabi-v7a（与 splits.abi 一致）
+     * - native 库包含 libc++_shared.so，已在 packaging 中用 pickFirst 处理 */
+    implementation 'org.jellyfin.media3:media3-ffmpeg-decoder:1.6.1+1'
 
     /* libVLC (VLC for Android) - 协议支持最广
      * - libvlc-all: 包含所有 native 库 + Java 绑定
@@ -247,4 +274,19 @@ dependencies {
 
     debugImplementation 'androidx.compose.ui:ui-tooling'
     debugImplementation 'androidx.compose.ui:ui-test-manifest'
+
+    /* ACRA (Application Crash Reports for Android) - 崩溃日志收集
+     *
+     * - acra-core: 核心崩溃捕获引擎（Java 异常 UncaughtExceptionHandler）
+     * - acra-toast: 崩溃时显示 Toast 提示用户
+     *
+     * 配置在 IptvApplication 中通过 @Acra 注解完成。
+     * 崩溃报告保存到应用私有目录（getFilesDir()/acra-reports/），
+     * 用户可在 设置 > 崩溃日志 中查看和导出。
+     *
+     * 原生崩溃（SIGSEGV）由 NativeCrashLogger 辅助捕获：
+     * - 每次启动时开启后台 logcat 进程记录日志
+     * - 下次启动检测上次是否异常退出，若是则保存 logcat 为崩溃报告 */
+    implementation 'ch.acra:acra-core:5.9.7'
+    implementation 'ch.acra:acra-toast:5.9.7'
 }

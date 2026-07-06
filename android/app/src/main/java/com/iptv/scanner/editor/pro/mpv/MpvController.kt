@@ -281,6 +281,36 @@ class MpvController : MPVLib.EventObserver, Player {
     }
 
     /**
+     * 运行时切换 MPV 日志等级。
+     *
+     * mpv 的 msg-level 既是启动选项（setOptionString）也是运行时属性（setPropertyString），
+     * 因此无需重建 mpv 实例即可实时切换日志输出量。
+     *
+     * 与 MPVView.initialize 中的 setOptionString("msg-level", ...) 配合：
+     * - 首次创建 mpv 实例时通过 setOptionString 设置初始值
+     * - 运行时用户切换日志等级时通过此方法用 setPropertyString 更新
+     *
+     * @param level 日志等级：debug/info/warn/error
+     */
+    fun setMpvLogLevel(level: String) {
+        val mpvMsgLevel = when (level) {
+            "debug" -> "all=trace"
+            "info" -> "all=info"
+            "warn" -> "all=warn"
+            "error" -> "all=error"
+            else -> "all=info"
+        }
+        postOnUiThread {
+            try {
+                MPVLib.setPropertyString("msg-level", mpvMsgLevel)
+                Log.i(TAG, "setMpvLogLevel: level=$level → msg-level=$mpvMsgLevel")
+            } catch (e: Throwable) {
+                Log.e(TAG, "setMpvLogLevel failed", e)
+            }
+        }
+    }
+
+    /**
      * 获取视频宽高比（用于 PiP 窗口比例设置，消除黑边）。
      * @return Rational(w, h) 或 null（无视频信息时）
      */

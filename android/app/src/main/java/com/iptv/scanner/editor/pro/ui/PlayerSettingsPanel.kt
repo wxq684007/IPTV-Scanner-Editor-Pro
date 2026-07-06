@@ -494,7 +494,7 @@ fun PlayerSettingsPanel(viewModel: AppViewModel) {
                 if (isMpvMode) {
                     SectionTitle("日志等级")
                     Spacer(modifier = Modifier.height(4.dp))
-                    SectionDesc("控制 mpv 日志输出量（logcat）。修改后重启 App 生效")
+                    SectionDesc("控制 mpv 日志输出量（logcat）。立即生效，无需重启")
 
                     Spacer(modifier = Modifier.height(8.dp))
 
