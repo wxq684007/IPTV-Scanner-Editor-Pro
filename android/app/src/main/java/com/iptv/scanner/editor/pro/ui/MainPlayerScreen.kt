@@ -54,7 +54,7 @@ import com.iptv.scanner.editor.pro.mpv.MPVView
  * 主播放屏：MPVView + 透明控制层 + 面板抽屉 + OSD 浮层。
  *
  * 层次结构（从底到顶）：
- * 1. MPVView（全屏视频渲染，SurfaceView，setZOrderOnTop=true）
+ * 1. MPVView（全屏视频渲染，SurfaceView，默认 Z-order：渲染在普通 View 下方，通过透明 "打孔" 显示视频）
  * 2. 透明点击层（点击切换控制层显示/隐藏，仅当无面板打开时启用）
  * 3. 控制层（顶部侧边栏按钮 + 底部 ControlPanel，仅当 controlsVisible=true 且无面板打开时显示）
  * 4. 面板层（ChannelsPanel 右抽屉 / EpgPanel 左抽屉 / MainMenuPanel 全屏覆盖）

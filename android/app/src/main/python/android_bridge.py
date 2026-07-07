@@ -1341,6 +1341,24 @@ _admin_loop = None
 _admin_server_task = None
 
 
+def set_admin_token(token=''):
+    """设置局域网管理服务器的认证 token。
+
+    传入空字符串则清除自定义 token，下次启动时自动生成随机 token。
+    传入非空字符串则使用该字符串作为 token（方便用户记忆）。
+    注意：仅在服务器未运行时生效。
+    """
+    global _admin_auth_token
+    if _admin_server_running:
+        return _err('服务器运行中，请先停止后再修改令牌')
+    _admin_auth_token = token.strip()
+    if _admin_auth_token:
+        _log(f'Admin server token set to custom: {_admin_auth_token[:8]}...')
+    else:
+        _log('Admin server token cleared, will auto-generate on start')
+    return _ok({'ok': True, 'token': _admin_auth_token})
+
+
 def start_admin_server(port=8080):
     """在后台线程启动 HTTP 管理服务器，返回局域网 URL。
 
@@ -1351,7 +1369,8 @@ def start_admin_server(port=8080):
     global _admin_server_running, _admin_loop, _admin_server_error, _admin_server_task
 
     if _admin_server_running:
-        return _ok({'url': _admin_server_url, 'port': _admin_server_port, 'already_running': True})
+        return _ok({'url': _admin_server_url, 'port': _admin_server_port,
+                    'already_running': True, 'running': True, 'token': _admin_auth_token})
 
     # 如果旧 server 线程还在运行（_admin_server_running=False 但线程活着），
     # 说明上一次启动的 import 还在进行中（Chaquopy 首次 import 慢）。
@@ -1359,7 +1378,7 @@ def start_admin_server(port=8080):
     # 这样避免用户重复点击导致重启 import（浪费之前的进度）。
     if _admin_server_thread is not None and _admin_server_thread.is_alive():
         _log('Admin server thread still running (importing), returning starting status')
-        return _ok({'url': _admin_server_url, 'port': _admin_server_port, 'running': False})
+        return _ok({'url': _admin_server_url, 'port': _admin_server_port, 'running': False, 'token': _admin_auth_token})
 
     # 如果旧线程已结束但有错误（_admin_server_error 非空），需要先清理
     # （旧线程已死，不需要 cancel/join，直接重置状态）
@@ -1402,12 +1421,17 @@ def start_admin_server(port=8080):
             app = create_app()
 
             # 注册认证中间件：所有 /api/ 路由需要携带有效 token
-            # 静态文件路由（/mobile/ /admin/）也需要 token（通过 query 参数 ?token=xxx）
+            # 静态文件路由（/mobile/ /admin/ /）免认证，页面加载后由前端 JS 在 API 请求中携带 token
 
             @web.middleware
             async def _auth_middleware(request, handler):
+                path = request.path
                 # 健康检查端点不需要认证
-                if request.path == '/api/status':
+                if path == '/api/status':
+                    return await handler(request)
+                # 静态文件路由（/mobile/ /admin/ /）免认证，让页面可以加载
+                # 前端 JS 从 URL ?token=xxx 提取令牌后在 API 请求中携带
+                if path == '/' or path.startswith('/mobile') or path.startswith('/admin'):
                     return await handler(request)
                 # 从 Header 或 query 参数获取 token
                 token = request.headers.get('X-Auth-Token', '') or request.query.get('token', '')
@@ -1525,7 +1549,8 @@ def start_admin_server(port=8080):
     if _admin_server_error:
         return _err(f'服务器启动失败: {_admin_server_error}')
     # 返回 running=False 表示"正在后台启动中"，Kotlin 端会启动轮询
-    return _ok({'url': _admin_server_url, 'port': _admin_server_port, 'running': _admin_server_running})
+    return _ok({'url': _admin_server_url, 'port': _admin_server_port,
+                'running': _admin_server_running, 'token': _admin_auth_token})
 
 
 def stop_admin_server():

@@ -372,6 +372,10 @@ class IptvRepository private constructor() {
     suspend fun startAdminServer(port: Int = 8080): Result<AdminServerInfo> =
         callPyTyped("start_admin_server", port)
 
+    /** 设置自定义访问令牌（空字符串清除自定义令牌，改为自动生成） */
+    suspend fun setAdminToken(token: String): Result<TokenResponse> =
+        callPyTyped("set_admin_token", token)
+
     /** 停止 HTTP 管理服务器 */
     suspend fun stopAdminServer(): Result<OkResponse> =
         callPyTyped("stop_admin_server")

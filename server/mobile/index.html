@@ -172,6 +172,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:transparent;color:#e
 .btn.icon{flex:0 0 auto;min-width:38px;padding:8px 10px}
 .btn.active{background:var(--accent-soft);border-color:var(--accent);color:#6a9eff}
 .btn.sm{padding:5px 10px;font-size:12px;min-width:60px}
+.btn{white-space:nowrap}
 
 .color-swatch{width:32px;height:24px;border-radius:4px;border:2px solid var(--border-strong);cursor:pointer;flex-shrink:0}
 
@@ -230,6 +231,26 @@ html,body{width:100%;height:100%;overflow:hidden;background:transparent;color:#e
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.15);border-radius:3px}
 ::-webkit-scrollbar-thumb:active{background:rgba(255,255,255,.3)}
+
+/* 窄屏适配（竖屏手机） */
+@media(max-width:380px){
+  .form-row .label{flex:0 0 64px;font-size:12px}
+  .btn.sm{min-width:52px;padding:5px 6px;font-size:11px;flex:0 1 auto}
+  .btn-row{gap:6px}
+}
+
+/* Token 登录覆盖层 */
+.token-login-overlay{position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.88);display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .3s}
+.token-login-overlay.show{opacity:1;pointer-events:auto}
+.token-login-card{background:#1e1e1e;border:1px solid rgba(255,255,255,.16);border-radius:16px;padding:32px 28px;width:88%;max-width:360px;text-align:center}
+.token-login-icon{font-size:36px;margin-bottom:10px}
+.token-login-card h2{font-size:18px;font-weight:700;color:#fff;margin-bottom:8px}
+.token-login-card p{font-size:13px;color:rgba(255,255,255,.5);margin-bottom:20px;line-height:1.5}
+.token-login-card input{width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);border-radius:8px;padding:12px 14px;color:#fff;font-size:14px;outline:none;text-align:center;letter-spacing:1px}
+.token-login-card input:focus{border-color:var(--accent)}
+.token-login-btn{width:100%;margin-top:16px;background:var(--accent);border:none;border-radius:8px;padding:12px;color:#fff;font-size:14px;font-weight:600;cursor:pointer}
+.token-login-btn:active{opacity:.8}
+.token-login-error{color:var(--danger);font-size:12px;margin-top:10px;min-height:16px}
 </style>
 </head>
 <body>
@@ -498,21 +519,43 @@ const storage = {
 
 /* ============== 5. HTTP API ============== */
 const API = ''; /* 同源 */
+/* 访问令牌：优先 URL 参数，其次 localStorage（PC 浏览器手动输入后保存） */
+const _AUTH_TOKEN = new URLSearchParams(location.search).get('token') || localStorage.getItem('isep_auth_token') || '';
+if (_AUTH_TOKEN) localStorage.setItem('isep_auth_token', _AUTH_TOKEN);
+let _AUTH_HEADERS = _AUTH_TOKEN ? {'X-Auth-Token':_AUTH_TOKEN} : {};
+let _authLoginShown = false;
+function _onAuthError(){
+  if(_authLoginShown) return;
+  _authLoginShown = true;
+  const ov = document.getElementById('tokenLoginOverlay');
+  if(ov) ov.classList.add('show');
+}
+function _submitTokenLogin(){
+  const input = document.getElementById('tokenInput');
+  const errEl = document.getElementById('tokenLoginError');
+  const token = (input.value||'').trim();
+  if(!token){ errEl.textContent='请输入令牌'; return; }
+  errEl.textContent='验证中...';
+  fetch(API+'/api/sources',{headers:{'X-Auth-Token':token}})
+    .then(r=>{ if(r.status===401) throw new Error('401'); return r.json(); })
+    .then(()=>{ localStorage.setItem('isep_auth_token', token); location.reload(); })
+    .catch(()=>{ errEl.textContent='令牌无效，请检查后重试'; });
+}
 const api = {
   async get(path){
-    try{ const r=await fetch(API+path); if(!r.ok) return null; const ct=r.headers.get('content-type')||''; return ct.includes('json')?await r.json():await r.text(); }
+    try{ const r=await fetch(API+path,{headers:_AUTH_HEADERS}); if(r.status===401){_onAuthError();return null;} if(!r.ok) return null; const ct=r.headers.get('content-type')||''; return ct.includes('json')?await r.json():await r.text(); }
     catch(e){ return null; }
   },
   async post(path, body){
-    try{ const r=await fetch(API+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}); return await r.json(); }
+    try{ const r=await fetch(API+path,{method:'POST',headers:{..._AUTH_HEADERS,'Content-Type':'application/json'},body:JSON.stringify(body||{})}); if(r.status===401){_onAuthError();return null;} return await r.json(); }
     catch(e){ return null; }
   },
   async put(path, body){
-    try{ const r=await fetch(API+path,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}); return await r.json(); }
+    try{ const r=await fetch(API+path,{method:'PUT',headers:{..._AUTH_HEADERS,'Content-Type':'application/json'},body:JSON.stringify(body||{})}); if(r.status===401){_onAuthError();return null;} return await r.json(); }
     catch(e){ return null; }
   },
   async del(path){
-    try{ const r=await fetch(API+path,{method:'DELETE'}); return await r.json(); }
+    try{ const r=await fetch(API+path,{method:'DELETE',headers:_AUTH_HEADERS}); if(r.status===401){_onAuthError();return null;} return await r.json(); }
     catch(e){ return null; }
   },
   async fetchSources(){ const d=await this.get('/api/sources'); state.sources = (d && (d.sources||d.data)) || []; },
@@ -3676,6 +3719,8 @@ registerFunc('settings', { title:'设置' }, body=>{
       <div class="btn-row">
         <button class="btn sm" onclick="openFuncPanel('about')">关于</button>
         <button class="btn sm" onclick="exportSettings()">导出设置</button>
+      </div>
+      <div class="btn-row">
         <button class="btn sm" onclick="importSettings()">导入设置</button>
         <button class="btn sm danger" onclick="resetSettings()">重置设置</button>
       </div>
@@ -4494,5 +4539,17 @@ window.addEventListener('unhandledrejection', e=>{
 
 console.log('ISEP - Android UI loaded v'+APP_VERSION+' (build '+BUILD_DATE+')');
 </script>
+
+<!-- Token 登录覆盖层（PC 浏览器手动输入访问令牌） -->
+<div id="tokenLoginOverlay" class="token-login-overlay">
+  <div class="token-login-card">
+    <div class="token-login-icon">🔒</div>
+    <h2>访问认证</h2>
+    <p>此服务需要访问令牌。<br>请在 TV 应用端的局域网管理页面查看令牌并输入。</p>
+    <input type="text" id="tokenInput" placeholder="输入访问令牌" autocomplete="off" onkeydown="if(event.key==='Enter')_submitTokenLogin()">
+    <button class="token-login-btn" onclick="_submitTokenLogin()">确认连接</button>
+    <div id="tokenLoginError" class="token-login-error"></div>
+  </div>
+</div>
 </body>
 </html>

@@ -58,8 +58,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.iptv.scanner.editor.pro.data.IptvEpgSource
 import com.iptv.scanner.editor.pro.data.IptvSource
 import com.iptv.scanner.editor.pro.ui.theme.tvFocusBorder
@@ -80,6 +82,7 @@ fun SourceManagerPanel(viewModel: AppViewModel) {
     val sourceLoading by viewModel.sourceLoading.collectAsState()
     val sourceMessage by viewModel.sourceMessage.collectAsState()
     val adminUrl by viewModel.adminServerUrl.collectAsState()
+    val adminToken by viewModel.adminServerToken.collectAsState()
     val adminRunning by viewModel.adminServerRunning.collectAsState()
     val adminCountdown by viewModel.adminCountdown.collectAsState()
     var showQrCode by remember { mutableStateOf(false) }
@@ -164,6 +167,7 @@ fun SourceManagerPanel(viewModel: AppViewModel) {
                 Spacer(modifier = Modifier.height(8.dp))
                 LanAdminInfoBar(
                     url = adminUrl,
+                    token = adminToken,
                     showQrCode = showQrCode,
                     onToggleQr = { showQrCode = it },
                     countdown = adminCountdown
@@ -202,6 +206,8 @@ fun SourceManagerPanel(viewModel: AppViewModel) {
                         }
                     }
                 }
+                // 自定义访问令牌输入（启动前设置）
+                LanAdminTokenInput(viewModel = viewModel)
                 // 自动关闭开关（启动前也可设置）
                 AdminAutoStopToggle(viewModel = viewModel)
             }
@@ -512,6 +518,7 @@ private fun AdminAutoStopToggle(viewModel: AppViewModel) {
 @Composable
 private fun LanAdminInfoBar(
     url: String,
+    token: String,
     showQrCode: Boolean,
     onToggleQr: (Boolean) -> Unit,
     countdown: Int = 0
@@ -535,7 +542,7 @@ private fun LanAdminInfoBar(
                         color = Color.White
                     )
                     Text(
-                        text = "$url/",
+                        text = "$url/mobile/" + (if (token.isNotEmpty()) "?token=$token" else ""),
                         style = MaterialTheme.typography.bodySmall,
                         color = Color(0xFFA5D6A7),
                         maxLines = 1,
@@ -580,8 +587,9 @@ private fun LanAdminInfoBar(
                         color = Color.Black
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    // 生成二维码
-                    val qrBitmap = remember(url) { QrCodeUtil.generate("$url/", 512) }
+                    // 生成二维码（包含 token，扫码后前端 JS 提取 token 用于 API 认证）
+                    val qrUrl = "$url/mobile/" + (if (token.isNotEmpty()) "?token=$token" else "")
+                    val qrBitmap = remember(url, token) { QrCodeUtil.generate(qrUrl, 512) }
                     if (qrBitmap != null) {
                         Image(
                             bitmap = qrBitmap.asImageBitmap(),
@@ -601,8 +609,116 @@ private fun LanAdminInfoBar(
                         style = MaterialTheme.typography.bodySmall,
                         color = Color(0xFF666666)
                     )
+                    // 显示访问令牌（PC 浏览器用户需手动输入）
+                    if (token.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Surface(
+                            color = Color(0xFFF5F5F5),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = "访问令牌",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color(0xFF999999)
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = token,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = Color.Black,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "PC 浏览器打开地址后输入此令牌",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color(0xFF999999)
+                                )
+                            }
+                        }
+                    }
                 }
             }
+        }
+    }
+}
+
+/**
+ * 自定义访问令牌输入（仅在服务器未运行时显示）
+ * 用户可设置一个好记的令牌，留空则启动时自动生成随机令牌
+ */
+@Composable
+private fun LanAdminTokenInput(viewModel: AppViewModel) {
+    val adminToken by viewModel.adminServerToken.collectAsState()
+    var tokenInput by remember { mutableStateOf("") }
+    var showInput by remember { mutableStateOf(false) }
+
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "访问令牌",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFFAAAAAA),
+                modifier = Modifier.weight(1f)
+            )
+            if (adminToken.isNotEmpty()) {
+                Text(
+                    text = if (showInput) "" else adminToken,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF4CAF50),
+                    fontWeight = FontWeight.Medium
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+            }
+            OutlinedButton(
+                onClick = { showInput = !showInput; if (!showInput) tokenInput = "" },
+                modifier = Modifier.tvFocusBorder()
+            ) {
+                Text(if (showInput) "取消" else "自定义", fontSize = 12.sp)
+            }
+        }
+
+        if (showInput) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    value = tokenInput,
+                    onValueChange = { tokenInput = it },
+                    placeholder = { Text("留空自动生成", color = Color(0xFF888888), fontSize = 12.sp) },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
+                    shape = RoundedCornerShape(8.dp)
+                )
+                OutlinedButton(
+                    onClick = {
+                        viewModel.setAdminToken(tokenInput.trim())
+                        showInput = false
+                        tokenInput = ""
+                    },
+                    modifier = Modifier.tvFocusBorder()
+                ) {
+                    Text("保存", fontSize = 12.sp)
+                }
+            }
+            Text(
+                text = "设置一个好记的令牌方便 PC 浏览器输入，留空则自动生成",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color(0xFF666666),
+                modifier = Modifier.padding(top = 4.dp)
+            )
         }
     }
 }

@@ -196,6 +196,64 @@ class MPVView @JvmOverloads constructor(
     val isSurfaceValid: Boolean
         get() = holder.surface != null && holder.surface.isValid
 
+    /**
+     * 运行时强制重新初始化 VO 模块（detach → vo=null → reattach → vo=newVo）。
+     *
+     * 根因：仅 setPropertyString("vo", newVo) 在部分设备上不会真正释放旧 VO 模块
+     * 并初始化新 VO。例如从 gpu（EGL）切换到 mediacodec_embed（Surface 直渲），
+     * mpv 可能仍使用旧 gpu VO 导致黑屏。
+     *
+     * 本方法通过完整的 detach/reattach 循环强制 VO 模块重建：
+     * 1. force-window=no + vo=null + detachSurface → 释放旧 VO 资源
+     * 2. attachSurface + force-window=yes + vo=newVo → 初始化新 VO
+     *
+     * 调用后需重新 loadfile 触发新 VO 渲染。
+     */
+    fun reattachSurfaceWithVo(vo: String) {
+        voInUse = vo
+        Log.i(TAG, "reattachSurfaceWithVo: switching to vo=$vo")
+        try {
+            // Step 1: 释放当前 VO 模块
+            MPVLib.setPropertyString("force-window", "no")
+            MPVLib.setPropertyString("vo", "null")
+            MPVLib.detachSurface()
+            Log.i(TAG, "reattachSurfaceWithVo: detached old VO")
+
+            // Step 2: 重新 attach surface 并设置新 VO
+            val s = holder.surface
+            if (s != null && s.isValid) {
+                MPVLib.attachSurface(s)
+                MPVLib.setOptionString("force-window", "yes")
+                MPVLib.setPropertyString("vo", vo)
+                Log.i(TAG, "reattachSurfaceWithVo: attached surface with vo=$vo")
+            } else {
+                // Surface 不可用：只设置 vo，等 surfaceCreated 回调时 attach
+                MPVLib.setPropertyString("vo", vo)
+                Log.w(TAG, "reattachSurfaceWithVo: surface not valid, vo set without reattach")
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "reattachSurfaceWithVo failed", e)
+        }
+    }
+
+    /**
+     * 诊断信息：返回当前 VO、hwdec、surface 状态、视频尺寸等。
+     * 用于日志输出和用户报告问题时的诊断。
+     */
+    fun getDiagnosticInfo(): String {
+        val vo = try { MPVLib.getPropertyString("vo") ?: "unknown" } catch (_: Throwable) { "error" }
+        val hwdec = try { MPVLib.getPropertyString("hwdec") ?: "unknown" } catch (_: Throwable) { "error" }
+        val hwdecCurrent = try { MPVLib.getPropertyString("hwdec-current") ?: "none" } catch (_: Throwable) { "error" }
+        val videoFormat = try { MPVLib.getPropertyString("video-format") ?: "none" } catch (_: Throwable) { "error" }
+        val width = try { MPVLib.getPropertyInt("width") ?: 0 } catch (_: Throwable) { -1 }
+        val height = try { MPVLib.getPropertyInt("height") ?: 0 } catch (_: Throwable) { -1 }
+        val vfps = try { MPVLib.getPropertyDouble("estimated-vfps") ?: 0.0 } catch (_: Throwable) { -1.0 }
+        val surfaceValid = holder.surface?.isValid ?: false
+        return "vo=$vo, hwdec=$hwdec, hwdec-current=$hwdecCurrent, " +
+            "video-format=$videoFormat, ${width}x${height}, vfps=$vfps, " +
+            "surfaceValid=$surfaceValid, voInUse=$voInUse"
+    }
+
     fun playFile(path: String) {
         val s = holder.surface
         if (s != null && s.isValid) {

@@ -339,6 +339,14 @@ data class AdminServerInfo(
     @SerialName("running") val running: Boolean = false,
     @SerialName("already_running") val alreadyRunning: Boolean = false,
     @SerialName("error") val error: String = "",
+    @SerialName("token") val token: String = "",
+)
+
+/** 设置访问令牌响应 */
+@Serializable
+data class TokenResponse(
+    @SerialName("ok") val ok: Boolean = false,
+    @SerialName("token") val token: String = "",
 )
 
 /** 虚拟遥控器命令轮询响应 */

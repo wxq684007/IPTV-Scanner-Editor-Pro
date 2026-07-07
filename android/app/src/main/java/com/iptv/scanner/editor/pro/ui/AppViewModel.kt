@@ -374,6 +374,9 @@ val logLevel: StateFlow<String> = _logLevel.asStateFlow()
     private val _adminServerUrl = MutableStateFlow("")
     val adminServerUrl: StateFlow<String> = _adminServerUrl.asStateFlow()
 
+    private val _adminServerToken = MutableStateFlow("")
+    val adminServerToken: StateFlow<String> = _adminServerToken.asStateFlow()
+
     private val _adminServerRunning = MutableStateFlow(false)
     val adminServerRunning: StateFlow<Boolean> = _adminServerRunning.asStateFlow()
 
@@ -4678,6 +4681,7 @@ showOsd("播放器设置", "日志等级: $levelName")
             val result = withContext(Dispatchers.IO) { repository.startAdminServer(8080) }
             result.onSuccess { info ->
                 _adminServerUrl.value = info.url
+                _adminServerToken.value = info.token
                 if (info.running) {
                     // server 已启动（可能是 already_running）
                     _adminServerRunning.value = true
@@ -4713,6 +4717,7 @@ showOsd("播放器设置", "日志等级: $levelName")
                 result.onSuccess { info ->
                     if (info.running) {
                         _adminServerUrl.value = info.url
+                        _adminServerToken.value = info.token
                         _adminServerRunning.value = true
                         showOsd("局域网管理已启动", info.url)
                         startAdminCountdown()
@@ -5004,7 +5009,25 @@ showOsd("播放器设置", "日志等级: $levelName")
             val result = withContext(Dispatchers.IO) { repository.getAdminUrl() }
             result.onSuccess { info ->
                 _adminServerUrl.value = info.url
+                _adminServerToken.value = info.token
                 _adminServerRunning.value = info.running
+            }
+        }
+    }
+
+    /** 设置自定义访问令牌（仅在服务器未运行时生效） */
+    fun setAdminToken(token: String) {
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) { repository.setAdminToken(token) }
+            result.onSuccess { resp ->
+                _adminServerToken.value = resp.token
+                if (resp.token.isNotEmpty()) {
+                    showOsd("访问令牌已设置", resp.token)
+                } else {
+                    showOsd("访问令牌", "已清除，启动时自动生成")
+                }
+            }.onFailure {
+                showOsd("设置失败", it.message ?: "")
             }
         }
     }
