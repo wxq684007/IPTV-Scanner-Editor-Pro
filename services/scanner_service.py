@@ -15,13 +15,13 @@ from utils.scan_state_manager import get_scan_state_manager
 
 def calculate_optimal_queue_size(thread_count: int = 10) -> int:
     """根据系统资源动态计算最优队列大小
-    
+
     Args:
         thread_count: 扫描线程数
-        
+
     Returns:
         int: 最优队列大小（URL数量）
-        
+
     算法说明：
     - 基于可用内存：每个URL条目约占用1KB内存
     - 基于线程数：队列应至少能容纳线程数 * 10 的任务量
@@ -29,28 +29,28 @@ def calculate_optimal_queue_size(thread_count: int = 10) -> int:
     """
     try:
         import psutil
-        
+
         # 获取系统资源信息
         memory_mb = psutil.virtual_memory().available / (1024 * 1024)
         cpu_count = psutil.cpu_count() or 4
-        
+
         # 基于内存计算（使用5%的可用内存，假设每条目1KB）
         memory_based = int(memory_mb * 0.05 * 1024)  # 转换为条目数
-        
+
         # 基于线程数计算（每个线程至少有10个待处理任务）
         thread_based = thread_count * 10
-        
+
         # 基于CPU核心数计算（每个核心至少1000个任务）
         cpu_based = cpu_count * 1000
-        
+
         # 取三者中的最小值，确保不会过度占用资源
         optimal = min(memory_based, thread_based, cpu_based)
-        
+
         # 限制在合理范围内
         optimal = max(1000, min(optimal, 50000))
-        
+
         return optimal
-        
+
     except ImportError:
         # psutil不可用，使用基于线程数的简单计算
         return max(1000, thread_count * 100)
@@ -187,7 +187,11 @@ class ScannerController(QObject):
                         error_msg = result.get('error', '')
                         self.logger.debug(f"扫描无效: {url} | error_type={error_type} | error={error_msg}")
                         if self.stats['invalid'] % 50 == 1:
-                            self.logger.debug(f"扫描进度: 有效={self.stats['valid']}, 无效={self.stats['invalid']}, 最新错误类型={error_type}")
+                            self.logger.debug(
+                                f"扫描进度: 有效={self.stats['valid']}, "
+                                f"无效={self.stats['invalid']}, "
+                                f"最新错误类型={error_type}"
+                            )
                         self.scan_state_manager.add_invalid_url(self.scan_id, url, error_type)
 
                     current = self.stats['valid'] + self.stats['invalid']
@@ -198,10 +202,10 @@ class ScannerController(QObject):
                     self._run_on_main(self.progress_updated.emit, current, total)
 
             except Exception as e:
-                self.logger.debug(f"扫描URL异常: {url} - {e}")
+                self.logger.warning(f"扫描URL异常: {url} - {e}")
                 with self.stats_lock:
                     self.stats['invalid'] += 1
-                    self.scan_state_manager.add_invalid_url(self.scan_id, url, 'scan_exception')
+                    self.scan_state_manager.add_invalid_url(self.scan_id, url, f'exception: {e}')
                     current = self.stats['valid'] + self.stats['invalid']
                     total = self.stats['total']
                     if total <= 0:

@@ -220,7 +220,7 @@ class ConfigManager(Singleton):
                 if not os.path.exists(config_dir):
                     os.makedirs(config_dir)
                     logger.info(f"配置管理-创建配置目录: {config_dir}")
-                
+
                 # 原子写入：先写入临时文件，再 rename 覆盖目标文件
                 import tempfile
                 fd, tmp_path = tempfile.mkstemp(
@@ -383,7 +383,8 @@ class ConfigManager(Singleton):
             'engine': self.get_value('ScanEngine', 'engine', 'ffprobe')
         }
 
-    def save_server_settings(self, enabled: bool = True, port: int = 8080, host: str = '0.0.0.0', auto_start: bool = True):
+    def save_server_settings(self, enabled: bool = True, port: int = 8080,
+                             host: str = '0.0.0.0', auto_start: bool = True):
         """保存Server后端设置"""
         self.set_value('Server', 'enabled', str(enabled))
         self.set_value('Server', 'port', str(port))
@@ -428,7 +429,7 @@ class ConfigManager(Singleton):
             if self.config.has_section('UI') and self.config.has_option('UI', 'close_action'):
                 self.config.remove_option('UI', 'close_action')
         return self.save_config()
-    
+
     def save_playlist_sources(self, sources: list):
         """保存多个直播源配置
 
@@ -444,7 +445,7 @@ class ConfigManager(Singleton):
             self.set_value('PlaylistSources', f'last_update_{i}', source.get('last_update', '') or '')
         self._cleanup_legacy_playlist_keys()
         return self.save_config()
-    
+
     def _cleanup_legacy_playlist_keys(self):
         """清理旧[Playlist]段中已迁移到[PlaylistSources]的遗留键"""
         legacy_keys = ['url', 'name', 'last_update', 'last_url']
@@ -461,7 +462,7 @@ class ConfigManager(Singleton):
         if self.config.has_section('Playlist') and not self.config.options('Playlist'):
             self.config.remove_section('Playlist')
             logger.debug("配置清理-移除空段: [Playlist]")
-    
+
     def load_playlist_sources(self) -> list:
         """加载多个直播源配置
 
@@ -479,7 +480,7 @@ class ConfigManager(Singleton):
                     'enabled': self._parse_bool(self.get_value('PlaylistSources', f'enabled_{i}', 'True'), True),
                     'last_update': self.get_value('PlaylistSources', f'last_update_{i}', '') or None
                 })
-        
+
         if not sources:
             legacy_url = self.get_value('Playlist', 'url', '')
             if legacy_url:
@@ -492,7 +493,7 @@ class ConfigManager(Singleton):
                 if sources:
                     self.save_playlist_sources(sources)
         return sources
-    
+
     def get_active_playlist_source(self) -> dict | None:
         """获取当前启用的直播源
 
@@ -504,7 +505,7 @@ class ConfigManager(Singleton):
             if source.get('enabled'):
                 return source
         return sources[0] if sources else None
-    
+
     def set_active_playlist_source(self, index: int):
         """设置指定索引的直播源为启用状态
 
@@ -516,7 +517,7 @@ class ConfigManager(Singleton):
             for i, source in enumerate(sources):
                 source['enabled'] = (i == index)
             self.save_playlist_sources(sources)
-    
+
     def get_active_playlist_source_index(self) -> int:
         """获取当前启用的直播源索引
 
@@ -528,7 +529,7 @@ class ConfigManager(Singleton):
             if source.get('enabled'):
                 return i
         return 0 if sources else -1
-    
+
     def update_playlist_source_last_update(self, index: int, timestamp: str):
         """更新指定索引直播源的更新时间
 
@@ -540,7 +541,7 @@ class ConfigManager(Singleton):
         if 0 <= index < len(sources):
             sources[index]['last_update'] = timestamp
             self.save_playlist_sources(sources)
-    
+
     def save_epg_sources(self, sources: list):
         """保存多个EPG源配置
 
@@ -555,7 +556,7 @@ class ConfigManager(Singleton):
             self.set_value('EPGSources', f'last_update_{i}', source.get('last_update', '') or '')
         self._cleanup_legacy_epg_keys()
         return self.save_config()
-    
+
     def _cleanup_legacy_epg_keys(self):
         """清理旧[EPG]段中已迁移到[EPGSources]的遗留键"""
         legacy_keys = ['epg_url', 'epg_source', 'last_update', 'last_url']
@@ -572,7 +573,7 @@ class ConfigManager(Singleton):
         if self.config.has_section('EPG') and not self.config.options('EPG'):
             self.config.remove_section('EPG')
             logger.debug("配置清理-移除空段: [EPG]")
-    
+
     def load_epg_sources(self) -> list:
         """加载多个EPG源配置
 
@@ -628,7 +629,7 @@ class ConfigManager(Singleton):
                 except (configparser.NoSectionError, configparser.NoOptionError):
                     pass
         return self.save_config()
-    
+
     def load_recent_files(self):
         """加载最近打开的文件列表"""
         recent_files = []
@@ -638,7 +639,7 @@ class ConfigManager(Singleton):
             if file_path:
                 recent_files.append(file_path)
         return recent_files
-    
+
     def add_recent_file(self, file_path):
         recent_files = self.load_recent_files()
         if file_path in recent_files:
@@ -653,13 +654,13 @@ class ConfigManager(Singleton):
             self.save_recent_files(recent_files)
             return True
         return False
-    
+
     def save_theme_settings(self, color_mode, visual_style='flat'):
         self.set_value('Theme', 'color_mode', color_mode)
         self.set_value('VisualStyle', 'current_style', visual_style)
         self.set_value('Theme', 'current_theme', f"{color_mode}+{visual_style}")
         return self.save_config()
-    
+
     def load_theme_settings(self):
         color_mode = self.get_value('Theme', 'color_mode', '')
         visual_style = self.get_value('VisualStyle', 'current_style', '')
@@ -698,7 +699,9 @@ class ConfigManager(Singleton):
             'enable_protocol_adaptive': True,
             'hls_start_at_live_edge': False,
             'hls_readahead_secs': 0,
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'user_agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                           'AppleWebKit/537.36 (KHTML, like Gecko) '
+                           'Chrome/120.0.0.0 Safari/537.36'),
             'tls_verify': False,
             'http_headers': '',
             'rtsp_transport': 'tcp',
@@ -749,7 +752,9 @@ class ConfigManager(Singleton):
             'enable_protocol_adaptive': True,
             'hls_start_at_live_edge': False,
             'hls_readahead_secs': 0,
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'user_agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                           'AppleWebKit/537.36 (KHTML, like Gecko) '
+                           'Chrome/120.0.0.0 Safari/537.36'),
             'tls_verify': False,
             'http_headers': '',
             'rtsp_transport': 'tcp',
@@ -774,14 +779,13 @@ class ConfigManager(Singleton):
         }
         result = {}
         need_save = False
+        # 批量收集缺失的键，减少锁争用和通知开销
+        missing_keys = {}
         for key, default in defaults.items():
             raw = self.get_value('Playback', key)
             if raw is None:
                 result[key] = default
-                if isinstance(default, bool):
-                    self.set_value('Playback', key, str(default))
-                else:
-                    self.set_value('Playback', key, str(default))
+                missing_keys[key] = str(default)
                 need_save = True
             elif isinstance(default, bool):
                 result[key] = self._parse_bool(raw)
@@ -797,6 +801,13 @@ class ConfigManager(Singleton):
                     result[key] = default
             else:
                 result[key] = raw
+        # 批量写入缺失的键，避免逐个 set_value 时的重复锁争用
+        if missing_keys:
+            with self._lock:
+                if not self.config.has_section('Playback'):
+                    self.config.add_section('Playback')
+                for key, value in missing_keys.items():
+                    self.config.set('Playback', key, value)
         if need_save:
             self.save_config()
         return result

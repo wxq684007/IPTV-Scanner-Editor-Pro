@@ -250,14 +250,19 @@ class MemoryManager(Singleton):
             }
 
             for pool_name, pool_info in self._object_pools.items():
+                in_use = pool_info.get('in_use', 0)
+                max_sz = pool_info['max_size']
+                total_ops = pool_info['created'] + pool_info['reused']
                 stats['object_pools'][pool_name] = {
                     'pool_size': len(pool_info['pool']),
                     'created': pool_info['created'],
                     'reused': pool_info['reused'],
-                    'max_size': pool_info['max_size'],
-                    'initial_max_size': pool_info.get('initial_max_size', pool_info['max_size']),
+                    'in_use': in_use,
+                    'max_size': max_sz,
+                    'initial_max_size': pool_info.get('initial_max_size', max_sz),
                     'peak_usage': pool_info.get('peak_usage', 0),
-                    'usage_rate': f"{(pool_info['created'] / (pool_info['created'] + pool_info['reused']) * 100):.1f}%" if (pool_info['created'] + pool_info['reused']) > 0 else "N/A"
+                    'reuse_rate': f"{pool_info['reused'] / total_ops * 100:.1f}%" if total_ops > 0 else "N/A",
+                    'usage_rate': f"{in_use / max_sz * 100:.1f}%" if max_sz > 0 else "N/A"
                 }
 
             return stats
@@ -279,10 +284,12 @@ class MemoryManager(Singleton):
 
         for pool_name, pool_stats in stats['object_pools'].items():
             logger.info(f"对象池 {pool_name} - 大小: {pool_stats['pool_size']}/"
-                    f"{pool_stats['max_size']}, 创建: {pool_stats['created']}, "
-                    f"复用: {pool_stats['reused']}")
+                        f"{pool_stats['max_size']}, 创建: {pool_stats['created']}, "
+                        f"复用: {pool_stats['reused']}")
 
 # 全局内存管理器访问函数
+
+
 def get_memory_manager() -> MemoryManager:
     """获取全局内存管理器"""
     return MemoryManager()

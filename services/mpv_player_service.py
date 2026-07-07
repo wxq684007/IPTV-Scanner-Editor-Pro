@@ -1,7 +1,6 @@
 import os
 import time
 import ctypes
-import sys
 import threading
 from PySide6.QtCore import QObject, Signal, QTimer
 from core.log_manager import global_logger
@@ -12,15 +11,11 @@ from services.mpv_common import (
     mpv_event_property,
     mpv_event_log_message,
     MPV_EVENT_NONE,
-    MPV_EVENT_SHUTDOWN,
-    MPV_EVENT_START_FILE,
     MPV_EVENT_END_FILE,
     MPV_EVENT_FILE_LOADED,
     MPV_EVENT_PROPERTY_CHANGE,
     MPV_EVENT_LOG_MESSAGE,
     MPV_FORMAT_STRING,
-    MPV_FORMAT_INT64,
-    MPV_FORMAT_DOUBLE,
     MPV_FORMAT_FLAG,
     MPV_END_FILE_REASON_EOF,
     MPV_END_FILE_REASON_ERROR,
@@ -38,7 +33,6 @@ from services.mpv_common import (
     set_option_string as _mpv_set_option_string,
     send_command as _mpv_send_command,
     observe_property as _mpv_observe_property,
-    wait_for_event as _mpv_wait_event,
 )
 
 try:
@@ -66,7 +60,11 @@ AUDIO_CODEC_MAP = {
     'truehd': 'TrueHD',
 }
 
-DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0.0.0 Safari/537.36"
+)
 
 
 def _load_playback_settings():
@@ -156,7 +154,6 @@ class MpvPlayerController(QObject):
         if self._mpv_initialized:
             return True
 
-
         try:
             import services.mpv_common as _mpv_mod
             if not _mpv_mod._ensure_libmpv_loaded():
@@ -221,22 +218,23 @@ class MpvPlayerController(QObject):
                 except Exception as e:
                     self.logger.error(f"设置窗口ID失败: {str(e)}")
 
-
             hdr_mode = self._playback_settings.get('hdr_output_mode', 'disable')
 
-            system_hdr_enabled = False
             try:
                 if is_windows():
                     from utils.hdr_detect import is_windows_hdr_enabled
-                    system_hdr_enabled = is_windows_hdr_enabled()
+                    _system_hdr_enabled = is_windows_hdr_enabled()
                 elif is_macos():
                     from utils.hdr_detect import is_macos_hdr_enabled
-                    system_hdr_enabled = is_macos_hdr_enabled()
+                    _system_hdr_enabled = is_macos_hdr_enabled()
                 elif is_android():
                     from utils.hdr_detect import is_android_hdr_enabled
-                    system_hdr_enabled = is_android_hdr_enabled()
+                    _system_hdr_enabled = is_android_hdr_enabled()
+                else:
+                    _system_hdr_enabled = False
             except Exception as e:
                 self.logger.warning(f"HDR检测失败，保守使用SDR模式: {e}")
+                _system_hdr_enabled = False  # noqa: F841
 
             self._hdr_fallback_tonemap = False
             # vo 推导：auto 时始终使用 gpu-next（支持 HDR 和 SDR，gpu 不支持 HDR 信号输出）。
@@ -356,8 +354,10 @@ class MpvPlayerController(QObject):
             # 注意：还需调用 mpv_request_log_messages 才能让 MPV_EVENT_LOG_MESSAGE
             # 事件被投递到事件队列，否则日志永远不会输出。
             if os.environ.get('MPV_DEBUG_LOG', '0') == '1':
-                _mpv_set_property_string(self.mpv_handle, 'msg-level',
-                    'all=fatal,demuxer=debug,vd=debug,ad=debug,hwdec=debug')
+                _mpv_set_property_string(
+                    self.mpv_handle, 'msg-level',
+                    'all=fatal,demuxer=debug,vd=debug,ad=debug,hwdec=debug'
+                )
                 _log_request_level = b'debug'
             else:
                 _mpv_set_property_string(self.mpv_handle, 'msg-level', 'all=fatal')
@@ -392,7 +392,6 @@ class MpvPlayerController(QObject):
             _mpv_set_property_string(self.mpv_handle, 'mute', 'no')
             _mpv_set_property_string(self.mpv_handle, 'audio', 'yes')
             _mpv_set_property_string(self.mpv_handle, 'audio-device', 'auto')
-
 
             net_to = self._playback_settings.get('network_timeout_sec', 0)
             if net_to > 0:
@@ -488,7 +487,13 @@ class MpvPlayerController(QObject):
                 _csp = self._get_mpv_property_string('d3d11-output-csp') or '?'
                 _tpk = self._get_mpv_property_string('target-peak') or '?'
                 _gmm = self._get_mpv_property_string('gamut-mapping-mode') or '?'
-                self.logger.info(f"HDR诊断: vo={_vo}, gpu-api={_ga}, gpu-context={_gc}, target-prim={_tp}, target-trc={_tt}, tone-mapping={_tm}, target-colorspace-hint={_tch}, d3d11-output-csp={_csp}, target-peak={_tpk}, gamut-mapping-mode={_gmm}, hdr_mode={hdr_mode}")
+                self.logger.info(
+                    f"HDR诊断: vo={_vo}, gpu-api={_ga}, gpu-context={_gc}, "
+                    f"target-prim={_tp}, target-trc={_tt}, tone-mapping={_tm}, "
+                    f"target-colorspace-hint={_tch}, d3d11-output-csp={_csp}, "
+                    f"target-peak={_tpk}, gamut-mapping-mode={_gmm}, "
+                    f"hdr_mode={hdr_mode}"
+                )
             except Exception as e:
                 self.logger.debug(f"HDR诊断读取失败: {e}")
 
@@ -595,7 +600,10 @@ class MpvPlayerController(QObject):
             self._set_mpv_string('tone-mapping', 'auto')
             self._set_mpv_string('hdr-compute-peak', 'yes')
             self._set_mpv_string('target-peak', '1000')
-            self.logger.info("HDR配置: passthrough → HLG自动转换 (bt.2020/pq, target-peak=1000, compute-peak=yes, gamut=relative)")
+            self.logger.info(
+                "HDR配置: passthrough → HLG自动转换 "
+                "(bt.2020/pq, target-peak=1000, compute-peak=yes, gamut=relative)"
+            )
 
     def _apply_scrgb_config(self, is_pq_video=True):
         # d3d11-output-csp=pq + target-colorspace-hint=yes 已在初始化时设置
@@ -647,7 +655,6 @@ class MpvPlayerController(QObject):
         self._set_mpv_string('gamut-mapping-mode', '')
         self.logger.info(f"HDR配置: 已重置为SDR默认值 (bt.709/{sdr_trc}, target-peak=100)")
 
-
     def _set_mpv_string(self, name, value):
         if self._terminated or not self.mpv_handle:
             return -1
@@ -680,7 +687,6 @@ class MpvPlayerController(QObject):
             pass
         return _mpv_set_property_string(self.mpv_handle, name, str(value))
 
-
     def _is_network_url(self, url):
         if not url:
             return False
@@ -703,7 +709,6 @@ class MpvPlayerController(QObject):
             return kernel32.GetDriveTypeW(drive + '\\') == DRIVE_REMOTE
         except Exception:
             return False
-
 
     @staticmethod
     def _check_path_reachability_sync(url):
@@ -839,14 +844,18 @@ class MpvPlayerController(QObject):
 
             self.logger.info(f"视频HDR参数: primaries={vp_prim}, gamma={vp_gamma}, sig_peak={vp_peak}")
 
-            is_hdr_video = ('pq' in vp_gamma or 'smpte2084' in vp_gamma or
-                           'hlg' in vp_gamma or 'arib-std-b67' in vp_gamma or
-                           vp_peak > 100)
+            is_hdr_video = (
+                'pq' in vp_gamma or 'smpte2084' in vp_gamma or
+                'hlg' in vp_gamma or 'arib-std-b67' in vp_gamma or
+                vp_peak > 100
+            )
 
             # WCG 视频（宽色域 SDR）：BT.2020 色域但 SDR 亮度（gamma=srgb/bt.1886）
             # 这类视频需要保持 bt.2020 色域，避免被压缩到 bt.709 导致偏色
-            is_wcg_video = (not is_hdr_video and
-                           ('bt.2020' in vp_prim or 'bt2020' in vp_prim))
+            is_wcg_video = (
+                not is_hdr_video and
+                ('bt.2020' in vp_prim or 'bt2020' in vp_prim)
+            )
 
             if is_wcg_video:
                 self.logger.info("WCG视频（宽色域SDR），保持bt.2020色域")
@@ -1002,7 +1011,11 @@ class MpvPlayerController(QObject):
             self._set_mpv_string('demuxer-max-back-bytes', f'{max_bytes_mib // 2}MiB')
             self._set_mpv_string('demuxer-lavf-probesize', str(probesize))
             self._set_mpv_string('demuxer-lavf-analyzeduration', str(analyzeduration))
-            self.logger.info(f"动态缓冲调整: {w}x{h} HDR={is_hdr} large={is_large_file} -> cache={cache_secs}s max={max_bytes_mib}MiB probesize={probesize}")
+            self.logger.info(
+                f"动态缓冲调整: {w}x{h} HDR={is_hdr} large={is_large_file} "
+                f"-> cache={cache_secs}s max={max_bytes_mib}MiB "
+                f"probesize={probesize}"
+            )
         except Exception as e:
             self.logger.debug(f"动态缓冲调整失败: {e}")
 
@@ -1131,7 +1144,10 @@ class MpvPlayerController(QObject):
             self._set_cache_param('demuxer-max-bytes', f'{max_bytes_mib}MiB')
             self._set_mpv_string('demuxer-max-back-bytes', f'{max_bytes_mib}MiB')
             self._set_cache_param('demuxer-readahead-secs', '300')
-            self.logger.debug(f"[mpv] ts demux=mpegts cache={cache_secs}s back={max_bytes_mib}MiB dur={program_duration}s fcc={is_fcc}")
+            self.logger.debug(
+                f"[mpv] ts demux=mpegts cache={cache_secs}s "
+                f"back={max_bytes_mib}MiB dur={program_duration}s fcc={is_fcc}"
+            )
             return
 
         if '.m3u8' in u or 'format=hls' in u:
@@ -1175,7 +1191,7 @@ class MpvPlayerController(QObject):
             if headers:
                 header_val = headers.replace('\r\n', '\n').replace('\n', '\\n')
                 self._set_mpv_string('http-header-fields', header_val)
-                self.logger.debug(f"[mpv] http-headers set")
+                self.logger.debug("[mpv] http-headers set")
 
             ua = settings.get('user_agent', DEFAULT_USER_AGENT)
             if ua:
@@ -1276,7 +1292,10 @@ class MpvPlayerController(QObject):
                                     pos_sec = self._get_mpv_property_double('time-pos') or 0.0
                                     dur_sec = self._get_mpv_property_double('duration') or 0.0
                                     if ended_url and pos_sec > 0:
-                                        self._safe_emit(self.local_file_position_to_save, ended_url, float(pos_sec), float(dur_sec))
+                                        self._safe_emit(
+                                            self.local_file_position_to_save,
+                                            ended_url, float(pos_sec), float(dur_sec)
+                                        )
                                 except Exception as e:
                                     self.logger.debug(f"保存播放位置失败: {e}")
                                 self.is_playing = False
@@ -1297,8 +1316,15 @@ class MpvPlayerController(QObject):
                                     self.is_paused = False
                                     self._safe_emit(self.play_state_changed, False)
                                 else:
-                                    err_str = self._get_mpv_error_string(end_file.error) if hasattr(end_file, 'error') else f"error_code={reason}"
-                                    self.logger.warning(f"END_FILE错误，尝试重连: {err_str}, is_net_file={is_net_file}")
+                                    err_str = (
+                                        self._get_mpv_error_string(end_file.error)
+                                        if hasattr(end_file, 'error')
+                                        else f"error_code={reason}"
+                                    )
+                                    self.logger.warning(
+                                        f"END_FILE错误，尝试重连: {err_str}, "
+                                        f"is_net_file={is_net_file}"
+                                    )
                                     self.is_playing = False
                                     self.is_paused = False
                                     self._safe_emit(self.play_state_changed, False)
@@ -1490,7 +1516,7 @@ class MpvPlayerController(QObject):
             return
 
         try:
-            from services.network_preheat_service import DnsPrefetcher, ConnectionPreheater
+            import services.network_preheat_service  # noqa: F401
             for next_url in urls_to_prefetch:
                 dns_prefetcher = getattr(self, '_dns_prefetcher', None)
                 if dns_prefetcher:
@@ -1598,7 +1624,6 @@ class MpvPlayerController(QObject):
         except Exception as e:
             self.logger.error(f"终止MPV播放器失败: {str(e)}")
 
-
     def reinit_for_hdr_change(self, new_hdr_mode):
         try:
             from utils.hdr_detect import clear_hdr_cache
@@ -1649,6 +1674,7 @@ class MpvPlayerController(QObject):
                 from PySide6.QtCore import QTimer
                 pos = saved_position
                 seek_retries = [0]
+
                 def _do_seek():
                     if self._terminated or not self.mpv_handle or not self.is_playing:
                         return
@@ -1949,7 +1975,10 @@ class MpvPlayerController(QObject):
 
             if not hasattr(self, '_last_info_debug') or self._last_info_debug != (w, h, vcodec, acodec):
                 self._last_info_debug = (w, h, vcodec, acodec)
-                self.logger.debug(f"媒体信息：width={w}, height={h}, vcodec='{vcodec}', acodec='{acodec}', fps={fps}, container='{container}'")
+                self.logger.debug(
+                    f"媒体信息：width={w}, height={h}, vcodec='{vcodec}', "
+                    f"acodec='{acodec}', fps={fps}, container='{container}'"
+                )
 
             if not vcodec and not acodec and w == 0:
                 demuxer = get_str('demuxer') or ''
@@ -2052,9 +2081,14 @@ class MpvPlayerController(QObject):
 
                 self._pos_log_count = getattr(self, '_pos_log_count', 0) + 1
                 if self._pos_log_count in (1, 2, 3, 5, 10):
-                    self.logger.debug(f"[SRC{self._pos_log_count}] total={total_time} cur={current_time} pos={position} url={self.current_url[:60] if self.current_url else 'None'}...")
+                    self.logger.debug(
+                        f"[SRC{self._pos_log_count}] total={total_time} "
+                        f"cur={current_time} pos={position} "
+                        f"url={self.current_url[:60] if self.current_url else 'None'}..."
+                    )
 
-                self._safe_emit(self.playback_position_updated,
+                self._safe_emit(
+                    self.playback_position_updated,
                     int(current_time or 0),
                     int(total_time or 0),
                     float(position or 0)
@@ -2088,7 +2122,10 @@ class MpvPlayerController(QObject):
             if _android_data:
                 cache_dir = os.path.join(_android_data, 'cache', 'thumbnails')
             else:
-                cache_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'cache', 'thumbnails')
+                cache_dir = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                    'cache', 'thumbnails'
+                )
             os.makedirs(cache_dir, exist_ok=True)
             url_hash = hashlib.md5(self.current_url.encode('utf-8')).hexdigest()
             filepath = os.path.join(cache_dir, f"{url_hash}.png")
@@ -2099,6 +2136,7 @@ class MpvPlayerController(QObject):
             handle = self.mpv_handle
             if not handle or self._terminated:
                 return
+
             def _do_screenshot():
                 try:
                     from services.mpv_common import send_command as _async_send
@@ -2298,7 +2336,11 @@ class MpvPlayerController(QObject):
                     result3 = self.send_command(['set', cmd_prop, str(track_id)])
                     if result3 == 0:
                         return True
-                    self.logger.error(f"切换轨道失败: {prop}={track_id}, int64错误码={result}, string错误码={result2}, command错误码={result3}")
+                    self.logger.error(
+                        f"切换轨道失败: {prop}={track_id}, "
+                        f"int64错误码={result}, string错误码={result2}, "
+                        f"command错误码={result3}"
+                    )
                     return False
             return True
         except Exception as e:

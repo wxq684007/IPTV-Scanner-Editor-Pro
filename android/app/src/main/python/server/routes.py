@@ -374,7 +374,7 @@ def _is_localhost_origin(origin: str) -> bool:
         parsed = urlparse(origin)
         host = parsed.hostname or ''
         return host in ('localhost', '127.0.0.1', '::1') or _is_private_ip(host)
-    except Exception:
+    except (ValueError, TypeError):
         return False
 
 
@@ -616,7 +616,7 @@ async def handle_status(request):
         try:
             settings = config.load_server_settings()
             port = settings.get('port', 8080)
-        except Exception:
+        except (OSError, ValueError, RuntimeError):
             pass
     return _json_success(
         server='running' if server.is_running() else 'stopped',
@@ -837,7 +837,7 @@ async def handle_channel_add(request):
 async def handle_channels_import(request):
     try:
         data = await request.json()
-    except Exception:
+    except (ValueError, TypeError):
         return _json_error('无效的请求数据', 400)
     content = data.get('content', '')
     if not content:
@@ -871,7 +871,7 @@ async def handle_sources_list(request):
         return _json_error('配置未初始化', 503)
     try:
         sources = config.load_playlist_sources()
-    except Exception:
+    except (OSError, ValueError, RuntimeError):
         sources = []
     return _json_success(sources=sources)
 
@@ -887,7 +887,7 @@ async def handle_sources_add(request):
         return _json_error('URL不能为空')
     try:
         sources = config.load_playlist_sources()
-    except Exception:
+    except (OSError, ValueError, RuntimeError):
         sources = []
     sources.append({'url': url, 'name': name or url, 'enabled': True, 'last_update': None})
     config.save_playlist_sources(sources)
@@ -914,7 +914,7 @@ async def handle_sources_update(request):
     data = await request.json()
     try:
         sources = config.load_playlist_sources()
-    except Exception:
+    except (OSError, ValueError, RuntimeError):
         sources = []
     if not (0 <= idx < len(sources)):
         return _json_error('源不存在', 404)
@@ -936,7 +936,7 @@ async def handle_sources_delete(request):
         return _json_error('无效的源ID')
     try:
         sources = config.load_playlist_sources()
-    except Exception:
+    except (OSError, ValueError, RuntimeError):
         sources = []
     if not (0 <= idx < len(sources)):
         return _json_error('源不存在', 404)
@@ -972,7 +972,7 @@ async def handle_epg_sources_add(request):
         return _json_error('URL不能为空')
     try:
         sources = config.load_epg_sources() if hasattr(config, 'load_epg_sources') else []
-    except Exception:
+    except (OSError, ValueError, RuntimeError):
         sources = []
     # 去重
     if any(s.get('url') == url for s in sources):
@@ -999,7 +999,7 @@ async def handle_epg_sources_delete(request):
         return _json_error('无效的源ID')
     try:
         sources = config.load_epg_sources() if hasattr(config, 'load_epg_sources') else []
-    except Exception:
+    except (OSError, ValueError, RuntimeError):
         sources = []
     if not (0 <= idx < len(sources)):
         return _json_error('源不存在', 404)
@@ -1028,7 +1028,7 @@ async def handle_sources_reload(request):
     data = {}
     try:
         data = await request.json()
-    except Exception:
+    except (ValueError, TypeError):
         pass
     url = (data.get('url') or '').strip()
     if ctx.is_standalone():
@@ -1068,7 +1068,7 @@ async def handle_scan_start(request):
         data = {}
         try:
             data = await request.json()
-        except Exception:
+        except (ValueError, TypeError):
             pass
         url = data.get('url', '').strip()
         if not url:
@@ -1093,7 +1093,7 @@ async def handle_scan_start(request):
     data = {}
     try:
         data = await request.json()
-    except Exception:
+    except (ValueError, TypeError):
         pass
     url = data.get('url', '').strip()
     if not url:
@@ -1205,7 +1205,7 @@ async def handle_scan_range(request):
     data = {}
     try:
         data = await request.json()
-    except Exception:
+    except (ValueError, TypeError):
         pass
     base_url = (data.get('url') or '').strip()
     if not base_url:
@@ -1256,7 +1256,7 @@ async def handle_mappings_list(request):
         if config:
             try:
                 remote_url = config.get_setting('channel_mappings', 'remote_url', '')
-            except Exception:
+            except (ValueError, RuntimeError):
                 pass
         return _json_success(entries=entries, remote_url=remote_url)
     except Exception as e:
@@ -1271,7 +1271,7 @@ async def handle_mappings_add(request):
     data = {}
     try:
         data = await request.json()
-    except Exception:
+    except (ValueError, TypeError):
         pass
     raw_name = (data.get('raw_name') or '').strip()
     standard_name = (data.get('standard_name') or '').strip()
@@ -1477,7 +1477,7 @@ async def handle_player_hdr(request):
     """切换 HDR 输出模式（需要重新初始化 mpv）"""
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, TypeError):
         body = {}
     mode = (body or {}).get('mode', '').strip().lower()
     valid_modes = {'disable', 'tonemap', 'passthrough', 'scrgb', 'auto'}
@@ -1500,7 +1500,7 @@ async def handle_player_screenshot(request):
     """截图保存到缓存目录，返回路径"""
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, TypeError):
         body = {}
     mode = (body or {}).get('mode', 'video').strip().lower()
     # mpv screenshot-to-file 支持: video / subtitles / window / each-frame
@@ -1580,7 +1580,7 @@ async def handle_subtitle_download(request):
     """下载字幕文件到缓存目录，返回本地路径"""
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, TypeError):
         body = {}
     url = (body or {}).get('url', '').strip()
     name = (body or {}).get('name', '').strip()
@@ -1612,7 +1612,7 @@ async def handle_share_file(request):
     """
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, TypeError):
         body = {}
     path = (body or {}).get('path', '').strip()
     if not path or not os.path.exists(path):
@@ -1654,7 +1654,7 @@ async def handle_cache_clear(request):
     """
     try:
         body = await request.json()
-    except Exception:
+    except (ValueError, TypeError):
         body = {}
     cache_type = (body or {}).get('type', 'all').strip().lower()
     valid_types = {'thumbnails', 'screenshots', 'subtitles', 'all'}
