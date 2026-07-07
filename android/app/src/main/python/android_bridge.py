@@ -1,9 +1,14 @@
 import logging
 import os
+import re
 import sys
 import time
 
 _t0 = time.time()
+
+# 应用版本信息（由 Kotlin 端通过 set_app_info() 设置）
+_app_version = '0.0.0.0'
+_app_build_date = 'unknown'
 
 
 def _log(msg, level='I'):
@@ -309,6 +314,23 @@ def _register_mobile_routes(app, base_dir):
         content_type = _MIME_TYPES.get(ext, 'application/octet-stream')
         with open(file_path, 'rb') as f:
             content = f.read()
+        # 对 index.html 动态注入版本信息（替代硬编码的 APP_VERSION / BUILD_DATE）
+        if rel_path == 'index.html':
+            try:
+                html = content.decode('utf-8')
+                html = re.sub(
+                    r"const APP_VERSION='[^']*';",
+                    f"const APP_VERSION='{_app_version}';",
+                    html
+                )
+                html = re.sub(
+                    r"const BUILD_DATE='[^']*';",
+                    f"const BUILD_DATE='{_app_build_date}';",
+                    html
+                )
+                content = html.encode('utf-8')
+            except Exception as e:
+                _log(f'_handle_mobile: version injection failed: {e}', 'W')
         return web.Response(
             body=content, content_type=content_type,
             headers={
@@ -386,6 +408,25 @@ def _err(message, **extra):
     payload = {'error': str(message)}
     payload.update(extra)
     return _json.dumps(payload, ensure_ascii=False)
+
+
+def set_app_info(version='', build_date=''):
+    """设置应用版本信息（由 Kotlin 端通过 Chaquopy callAttr 调用）。
+
+    版本信息会在服务 mobile/index.html 时动态注入到 HTML 中，
+    替代硬编码的 APP_VERSION / BUILD_DATE 常量。
+
+    参数：
+        version: 应用版本号（如 '48.2.0.2'），来自 PackageManager.versionName
+        build_date: 编译日期（如 '2026-07-07'），来自 BuildConfig
+    """
+    global _app_version, _app_build_date
+    if version:
+        _app_version = version
+    if build_date:
+        _app_build_date = build_date
+    _log(f'set_app_info: version={_app_version}, build_date={_app_build_date}')
+    return 'OK'
 
 
 def init_context(ext_files_dir='', files_dir=''):

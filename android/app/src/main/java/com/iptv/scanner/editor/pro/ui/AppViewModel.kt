@@ -369,6 +369,10 @@ val logLevel: StateFlow<String> = _logLevel.asStateFlow()
 
     /** 自动停止倒计时（秒），0 表示无倒计时。启动后 5 分钟自动停止，避免长时间占用端口和电量 */
     private val _adminCountdown = MutableStateFlow(0)
+
+/** 遥控器数字键输入缓冲（如输入 "1","2","3" → 切换到频道 123） */
+private var _channelInputBuffer: String? = null
+private var _channelInputJob: kotlinx.coroutines.Job? = null
     val adminCountdown: StateFlow<Int> = _adminCountdown.asStateFlow()
     private var adminCountdownJob: Job? = null
 
@@ -741,6 +745,13 @@ val logLevel: StateFlow<String> = _logLevel.asStateFlow()
                 }
                 Log.i(TAG, "initContext OK, start polling status")
 
+                // 1.5 设置应用版本信息（供 mobile Web 界面动态注入）
+                val version = getCurrentVersion()
+                val buildDate = getBuildDate()
+                withContext(Dispatchers.IO) {
+                    repository.setAppInfo(version, buildDate)
+                }
+
                 // 2. 轮询 getStatus（最长 60 秒）
                 val maxWaitMs = 60_000L
                 val intervalMs = 1_000L
@@ -1020,6 +1031,58 @@ val logLevel: StateFlow<String> = _logLevel.asStateFlow()
 
         // 预取 EPG（避免用户必须先打开 EPG 面板才能看到节目信息）
         fetchEpgForCurrent()
+
+        // 预取相邻频道的 DNS/TCP 连接（与 PC 端 _prefetch_adjacent_channels 对齐）
+        // 在后台协程中预解析下一/上一频道的域名，减少切台时的 DNS 查询延迟
+        prefetchAdjacentChannels(idx)
+    }
+
+    /**
+     * 预取相邻频道的 DNS 解析（与 PC 端 _prefetch_adjacent_channels 对齐）。
+     *
+     * 在后台协程中预解析下一/上一频道的域名，Android 系统 DNS 缓存会保存结果，
+     * 切台时 mpv 的网络连接直接命中缓存，省去 DNS 查询时间（通常 50-500ms）。
+     *
+     * 仅做 DNS 预解析，不建立 TCP 连接（避免占用文件描述符和电量）。
+     * TCP 预热由 mpv 内部在 loadfile 时自动完成。
+     */
+    private fun prefetchAdjacentChannels(currentIdx: Int) {
+        val channels = _channels.value
+        if (channels.size <= 1) return
+
+        val adjacentUrls = mutableListOf<String>()
+        for (delta in intArrayOf(1, -1)) {
+            val adjIdx = currentIdx + delta
+            if (adjIdx in channels.indices) {
+                val url = channels[adjIdx].url
+                if (url.isNotEmpty()) adjacentUrls.add(url)
+            }
+        }
+        if (adjacentUrls.isEmpty()) return
+
+        viewModelScope.launch(Dispatchers.IO) {
+            for (url in adjacentUrls) {
+                try {
+                    val host = extractHost(url) ?: continue
+                    // DNS 预解析：InetAddress.getByName 会缓存结果到系统 DNS 缓存
+                    java.net.InetAddress.getByName(host)
+                    Log.d(TAG, "DNS prefetch: $host (from $url)")
+                } catch (e: Exception) {
+                    // DNS 预解析失败不影响正常播放
+                    Log.d(TAG, "DNS prefetch failed for $url: ${e.message}")
+                }
+            }
+        }
+    }
+
+    /** 从 URL 中提取主机名（用于 DNS 预解析） */
+    private fun extractHost(url: String): String? {
+        return try {
+            val uri = android.net.Uri.parse(url)
+            uri.host
+        } catch (e: Exception) {
+            null
+        }
     }
 
     // -----------------------------------------------------------------
@@ -2179,6 +2242,19 @@ val logLevel: StateFlow<String> = _logLevel.asStateFlow()
         }
     }
 
+    /** 获取编译日期（从 APK 的 lastUpdateTime 提取） */
+    fun getBuildDate(): String {
+        return try {
+            val app = getApplication<Application>()
+            val packageInfo = app.packageManager.getPackageInfo(app.packageName, 0)
+            val date = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+            date.format(java.util.Date(packageInfo.lastUpdateTime))
+        } catch (e: Exception) {
+            Log.w(TAG, "getBuildDate failed", e)
+            "unknown"
+        }
+    }
+
     /**
      * 检查更新（调用 GitHub API 获取最新 release）。
      * @param auto true=启动时自动检查（仅发现新版本时弹窗）；false=用户手动触发（无论结果都显示）
@@ -2462,10 +2538,14 @@ val logLevel: StateFlow<String> = _logLevel.asStateFlow()
      * 调用 GitHub API 获取最新 release 信息。
      * 返回 (最新版本号, Android APK 下载链接, Release 页面链接)。
      *
-     * 单一通用 APK：Release 中是 IPTV Scanner Editor Pro-Android.apk（含所有 ABI）。
+     * 当前构建规则（build.gradle + build.yml）：
+     * - 按 ABI 分包构建，生成两个独立 APK：
+     *   - arm64-v8a → IPTV Scanner Editor Pro-Android-arm64.apk
+     *   - armeabi-v7a → IPTV Scanner Editor Pro-Android-arm32.apk
+     * - 不传 targetAbi 时生成通用包：IPTV Scanner Editor Pro-Android-universal.apk
      *
-     * 兼容性：如果 Release 中存在旧版按 ABI 拆分的 APK（如 -arm64-v8a.apk），
-     * 仍会按设备首选 ABI 匹配对应文件，确保旧版本用户也能正常更新。
+     * 兼容性：同时匹配旧版命名规则（-arm64-v8a.apk / -armeabi-v7a.apk），
+     * 确保旧版本 Release 的用户也能正常更新。
      */
     private fun fetchLatestRelease(): Triple<String?, String?, String?> {
         val conn = java.net.URL(GITHUB_LATEST_API).openConnection() as java.net.HttpURLConnection
@@ -2494,19 +2574,30 @@ val logLevel: StateFlow<String> = _logLevel.asStateFlow()
                         }
                     }
 
-                    // 优先匹配通用 APK（IPTV Scanner Editor Pro-Android.apk，无 ABI 后缀）
+                    // 优先匹配通用 APK（无 ABI 后缀或 -universal 后缀，含所有 ABI）
                     val universalApk = androidApks.firstOrNull { (name, _) ->
-                        name.equals("IPTV Scanner Editor Pro-Android.apk", ignoreCase = true)
+                        name.equals("IPTV Scanner Editor Pro-Android.apk", ignoreCase = true) ||
+                        name.equals("IPTV Scanner Editor Pro-Android-universal.apk", ignoreCase = true)
                     }
                     if (universalApk != null) {
                         downloadUrl = universalApk.second
                     } else {
-                        // 兼容旧版按 ABI 拆分的 APK：按设备首选 ABI 匹配
+                        // 按 ABI 拆分的 APK：按设备首选 ABI 匹配
+                        // 当前命名：arm64-v8a → -arm64.apk，armeabi-v7a → -arm32.apk
+                        // 旧版命名：arm64-v8a → -arm64-v8a.apk，armeabi-v7a → -armeabi-v7a.apk
                         val deviceAbis = android.os.Build.SUPPORTED_ABIS.toList()
                         Log.i(TAG, "fetchLatestRelease: universal APK not found, fallback to ABI-specific, device ABIs=$deviceAbis")
                         downloadUrl = deviceAbis.firstNotNullOfOrNull { abi ->
+                            // 标准 ABI 名称 → APK 文件名中使用的所有可能后缀
+                            val possibleSuffixes = when (abi) {
+                                "arm64-v8a" -> listOf("-arm64-v8a.apk", "-arm64.apk")
+                                "armeabi-v7a" -> listOf("-armeabi-v7a.apk", "-arm32.apk")
+                                "x86_64" -> listOf("-x86_64.apk", "-x64.apk")
+                                "x86" -> listOf("-x86.apk")
+                                else -> listOf("-$abi.apk")
+                            }
                             androidApks.firstOrNull { (name, _) ->
-                                name.endsWith("-$abi.apk", ignoreCase = true)
+                                possibleSuffixes.any { suffix -> name.endsWith(suffix, ignoreCase = true) }
                             }?.second
                         } ?: androidApks.firstOrNull()?.second ?: releaseUrl
                     }
@@ -4727,6 +4818,22 @@ showOsd("播放器设置", "日志等级: $levelName")
             "osd" -> toggleControlsPinned()
             "prev_channel" -> prevChannel()
             "next_channel" -> nextChannel()
+            // 数字键：缓冲输入，1.5 秒无后续输入后切换到对应索引频道
+            "num_0", "num_1", "num_2", "num_3", "num_4",
+            "num_5", "num_6", "num_7", "num_8", "num_9" -> {
+                val digit = cmd.removePrefix("num_").toIntOrNull() ?: return
+                _channelInputBuffer = (_channelInputBuffer ?: "") + digit.toString()
+                showOsd("频道: " + _channelInputBuffer!!)
+                _channelInputJob?.cancel()
+                _channelInputJob = viewModelScope.launch {
+                    kotlinx.coroutines.delay(1500)
+                    val num = _channelInputBuffer?.toIntOrNull()
+                    _channelInputBuffer = null
+                    if (num != null && num > 0) {
+                        playChannel(num - 1)
+                    }
+                }
+            }
             else -> Log.w(TAG, "未知遥控命令: $cmd")
         }
     }

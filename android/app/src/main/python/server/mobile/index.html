@@ -3733,8 +3733,10 @@ function resetSettings(){
 }
 
 /* ---- 关于面板（与 PC 端 AboutDialog 对齐） ---- */
-const APP_VERSION='47.1.1.4';
-const BUILD_DATE='2026-06-21';
+/* APP_VERSION 和 BUILD_DATE 由服务端动态注入（android_bridge.py set_app_info），
+ * 以下为开发调试时的回退默认值 */
+const APP_VERSION='0.0.0.0';
+const BUILD_DATE='dev';
 registerFunc('about', { title:'关于 IPTV Scanner Editor Pro' }, body=>{
   body.innerHTML = `
     <div style="padding:24px 16px;text-align:center">
@@ -3794,7 +3796,9 @@ registerFunc('about', { title:'关于 IPTV Scanner Editor Pro' }, body=>{
   }
   checkLatestVersion();
 });
-/* 异步查询 GitHub 最新版本（与 PC 端 AboutDialog 对齐） */
+/* 异步查询 GitHub 最新版本（与 PC 端 AboutDialog 对齐）
+ * 同时缓存最新版本号，供 checkUpdate() 比较使用 */
+let _latestVersion=null;
 function checkLatestVersion(){
   fetch('https://api.github.com/repos/sumingyd/IPTV-Scanner-Editor-Pro/releases/latest', {headers:{'User-Agent':'IPTV-Scanner-Editor-Pro'}})
     .then(r => {
@@ -3806,6 +3810,7 @@ function checkLatestVersion(){
     })
     .then(d => {
       const ver = (d.tag_name||'').replace(/^v/, '') || '未知';
+      _latestVersion=ver;
       const el = $('#abLatestVer');
       if(el) el.textContent = ver;
     })
@@ -3814,15 +3819,48 @@ function checkLatestVersion(){
       if(el) el.textContent = typeof msg==='string'?msg:'(获取失败)';
     });
 }
+/* 比较版本号：返回 true 表示 latest 比 current 新 */
+function _isNewerVersion(current, latest){
+  try{
+    const c=current.split('.').map(Number);
+    const l=latest.split('.').map(Number);
+    const maxLen=Math.max(c.length, l.length);
+    while(c.length<maxLen) c.push(0);
+    while(l.length<maxLen) l.push(0);
+    for(let i=0;i<maxLen;i++){
+      if(l[i]>c[i]) return true;
+      if(l[i]<c[i]) return false;
+    }
+    return false;
+  }catch(e){ return false; }
+}
+/* 检查更新：调用 GitHub API 获取最新版本并与当前版本比较 */
 function checkUpdate(){
   showOSD('更新','检查中...');
-  api.get('/api/status').then(d=>{
-    if(d && d.success){
-      showOSD('更新','已是最新版本');
-    } else {
-      showOSD('更新','无法连接服务器');
-    }
-  });
+  fetch('https://api.github.com/repos/sumingyd/IPTV-Scanner-Editor-Pro/releases/latest', {headers:{'User-Agent':'IPTV-Scanner-Editor-Pro'}})
+    .then(r => {
+      if(!r.ok){
+        if(r.status===403) return Promise.reject('API 限制');
+        return Promise.reject('获取失败');
+      }
+      return r.json();
+    })
+    .then(d => {
+      const ver=(d.tag_name||'').replace(/^v/, '')||'未知';
+      _latestVersion=ver;
+      const el=$('#abLatestVer');
+      if(el) el.textContent=ver;
+      if(ver==='未知'){
+        showOSD('更新','获取版本信息失败');
+      } else if(_isNewerVersion(APP_VERSION, ver)){
+        showOSD('更新',`发现新版本 v${ver}（当前 v${APP_VERSION}）`);
+      } else {
+        showOSD('更新',`已是最新版本 v${APP_VERSION}`);
+      }
+    })
+    .catch(msg => {
+      showOSD('更新', typeof msg==='string'?msg:'检查更新失败');
+    });
 }
 function clearCache(){
   if(confirm('清除所有缓存（不影响收藏/书签/续播）？')){

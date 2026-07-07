@@ -144,6 +144,16 @@ class IptvRepository private constructor() {
         }
     }
 
+    /** 设置应用版本信息（供 mobile Web 界面动态注入） */
+    suspend fun setAppInfo(version: String, buildDate: String): Result<Unit> {
+        val raw = callPyRaw("set_app_info", version, buildDate)
+        return if (raw.startsWith("OK")) {
+            Result.success(Unit)
+        } else {
+            Result.failure(IptvException(raw))
+        }
+    }
+
     suspend fun getStatus(): Result<IptvStatus> =
         callPyTyped("get_status_json")
 

@@ -185,8 +185,10 @@ class TestUpdateMixin:
         self.host.update_ctrl.check_for_updates.assert_called_once()
 
     def test_on_update_found(self):
-        self.host._on_update_found('1.2.0', '1.1.0')
-        self.host.update_ctrl._on_update_found.assert_called_once_with('1.2.0', '1.1.0')
+        self.host._on_update_found('1.2.0', '1.1.0', 'https://example.com/download')
+        self.host.update_ctrl._on_update_found.assert_called_once_with(
+            '1.2.0', '1.1.0', 'https://example.com/download'
+        )
 
     def test_on_update_check_completed(self):
         self.host._on_update_check_completed(True, 'OK')

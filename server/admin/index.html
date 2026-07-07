@@ -623,6 +623,36 @@ textarea.form-input {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* 批量操作复选框 */
+.batch-checkbox {
+  width: 20px; height: 20px; cursor: pointer;
+  accent-color: var(--accent); flex-shrink: 0;
+}
+
+/* EPG 日期选择器 */
+.epg-date-bar {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 12px; flex-wrap: wrap;
+}
+.epg-date-bar select, .epg-date-bar input {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  padding: 8px 12px;
+  font-size: 14px;
+}
+
+/* 遥控器数字键盘 */
+.remote-numpad {
+  display: grid;
+  grid-template-columns: repeat(3, 64px);
+  gap: 6px;
+}
+.remote-numpad .remote-btn {
+  min-height: 48px; padding: 4px; font-size: 18px; font-weight: 600;
+}
 </style>
 </head>
 <body>
@@ -731,7 +761,10 @@ textarea.form-input {
           <div class="card-subtitle">管理本地频道（订阅频道只读，请在订阅源页面管理）</div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-outline btn-sm" onclick="exportM3U()">导出 M3U</button>
           <button class="btn btn-outline btn-sm" onclick="showImportM3U()">导入 M3U</button>
+          <button class="btn btn-outline btn-sm" onclick="toggleBatchMode()" id="batchToggleBtn">批量操作</button>
+          <button class="btn btn-danger btn-sm" onclick="batchDeleteChannels()" id="batchDeleteBtn" style="display:none">删除选中</button>
           <button class="btn btn-primary btn-sm" onclick="showAddChannel()">添加频道</button>
         </div>
       </div>
@@ -823,7 +856,10 @@ textarea.form-input {
           <div class="card-title">扫描结果</div>
           <div class="card-subtitle">发现的频道列表</div>
         </div>
-        <button class="btn btn-outline btn-sm" onclick="loadScanResults()">刷新结果</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-outline btn-sm" onclick="loadScanResults()">刷新结果</button>
+          <button class="btn btn-primary btn-sm" onclick="importScanResults()" id="importScanBtn" style="display:none">导入到频道列表</button>
+        </div>
       </div>
       <div id="scanResults"><div class="empty-state"><div class="icon">🔍</div><div class="text">暂无结果</div></div></div>
     </div>
@@ -887,6 +923,15 @@ textarea.form-input {
         <div class="form-group" style="flex:1">
           <label class="form-label">搜索频道</label>
           <input class="form-input" id="epgSearch" placeholder="频道名称或 ID..." onkeydown="if(event.key==='Enter')searchEpg()">
+        </div>
+        <div class="form-group" style="flex-shrink:0">
+          <label class="form-label">日期</label>
+          <select class="form-input" id="epgDateFilter" onchange="selectEpgChannel(_currentEpgChannelId, null)">
+            <option value="">全部日期</option>
+            <option value="today">今天</option>
+            <option value="tomorrow">明天</option>
+            <option value="yesterday">昨天</option>
+          </select>
         </div>
         <div class="form-group" style="flex-shrink:0">
           <label class="form-label">&nbsp;</label>
@@ -1043,6 +1088,23 @@ textarea.form-input {
               <svg viewBox="0 0 24 24" width="22" height="22"><path d="M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h5v2h8v-2h5c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z" fill="currentColor"/></svg>
               <span style="font-size:11px">OSD</span>
             </button>
+          </div>
+        </div>
+
+        <!-- 数字键盘 -->
+        <div class="remote-section">
+          <div class="remote-section-title">数字键</div>
+          <div class="remote-numpad">
+            <button class="remote-btn" onclick="sendRemote('num_1')">1</button>
+            <button class="remote-btn" onclick="sendRemote('num_2')">2</button>
+            <button class="remote-btn" onclick="sendRemote('num_3')">3</button>
+            <button class="remote-btn" onclick="sendRemote('num_4')">4</button>
+            <button class="remote-btn" onclick="sendRemote('num_5')">5</button>
+            <button class="remote-btn" onclick="sendRemote('num_6')">6</button>
+            <button class="remote-btn" onclick="sendRemote('num_7')">7</button>
+            <button class="remote-btn" onclick="sendRemote('num_8')">8</button>
+            <button class="remote-btn" onclick="sendRemote('num_9')">9</button>
+            <button class="remote-btn" onclick="sendRemote('num_0')">0</button>
           </div>
         </div>
 
@@ -1564,12 +1626,17 @@ async function loadChannels(page) {
     const badge = v === true ? '<span class="badge valid">✓ 有效</span>' :
                   v === false ? '<span class="badge invalid">✗ 无效</span>' :
                   '<span class="badge neutral">未知</span>';
+    // 批量模式：显示复选框（仅本地频道可选）
+    const batchCb = (_batchMode && !isSub) ?
+      '<input type="checkbox" id="batchCb_' + id + '" class="batch-checkbox" ' + (_batchSelected.has(id) ? 'checked' : '') + ' onchange="toggleBatchSelect(' + id + ')">' : '';
     // 订阅频道不可编辑/删除（重新加载订阅源时会被覆盖）
     const actions = isSub ?
       '<span style="font-size:12px;color:var(--text-faint)">订阅频道不可编辑</span>' :
+      (_batchMode ? '' :
       '<button class="btn btn-outline btn-sm" onclick="showEditChannel(' + id + ')">编辑</button>' +
-      '<button class="btn btn-danger btn-sm" onclick="deleteChannel(' + id + ')">删除</button>';
+      '<button class="btn btn-danger btn-sm" onclick="deleteChannel(' + id + ')">删除</button>');
     return '<div class="ch-item">' +
+      batchCb +
       '<div class="ch-info">' +
       '<div class="ch-name">' + escHtml(name) + ' ' + sourceBadge + '</div>' +
       '<div class="ch-meta">' + escHtml(url) + '</div>' +
@@ -1650,6 +1717,14 @@ async function showEditChannel(id) {
     '<input class="form-input" id="editChTvg" value="' + escHtml(ch.tvg_id || '') + '">' +
     '</div>' +
     '<div class="form-group">' +
+    '<label class="form-label">TVG频道号</label>' +
+    '<input class="form-input" id="editChTvgChno" value="' + escHtml(ch.tvg_chno || '') + '">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '<label class="form-label">回看参数 (catchup)</label>' +
+    '<input class="form-input" id="editChCatchup" value="' + escHtml(ch.catchup || '') + '">' +
+    '</div>' +
+    '<div class="form-group">' +
     '<label class="form-label">有效状态</label>' +
     '<select class="form-input" id="editChValid">' +
     '<option value="true"' + (ch.valid === true ? ' selected' : '') + '>有效</option>' +
@@ -1663,6 +1738,8 @@ async function showEditChannel(id) {
       group: document.getElementById('editChGroup').value.trim(),
       logo: document.getElementById('editChLogo').value.trim(),
       tvg_id: document.getElementById('editChTvg').value.trim(),
+      tvg_chno: document.getElementById('editChTvgChno').value.trim(),
+      catchup: document.getElementById('editChCatchup').value.trim(),
       valid: document.getElementById('editChValid').value === 'true'
     };
     if (!data.url) { showToast('请输入频道 URL', 'error'); return false; }
@@ -1803,6 +1880,10 @@ async function loadScanResults() {
     return;
   }
   const results = d.results || [];
+  _scanResultsCache = results;
+  // 显示/隐藏导入按钮
+  const importBtn = document.getElementById('importScanBtn');
+  if (importBtn) importBtn.style.display = results.length ? '' : 'none';
   if (!results.length) {
     el.innerHTML = '<div class="empty-state"><div class="icon">🔍</div><div class="text">暂无结果</div></div>';
     return;
@@ -2035,19 +2116,48 @@ async function searchEpg() {
   }).join('');
 }
 
+let _currentEpgChannelId = '';
 async function selectEpgChannel(idEnc, itemEl) {
+  // 记录当前频道 ID，供日期筛选器重新触发
+  if (idEnc) _currentEpgChannelId = idEnc;
   document.querySelectorAll('.epg-channel-item').forEach(e => e.classList.remove('active'));
   if (itemEl) itemEl.classList.add('active');
-  const decodedId = decodeURIComponent(idEnc);
+  const decodedId = decodeURIComponent(_currentEpgChannelId);
   const d = await apiGet('/api/epg?id=' + encodeURIComponent(decodedId));
   const el = document.getElementById('epgProgrammeList');
   if (!d || !d.success) {
     el.innerHTML = '<div class="empty-state"><div class="icon">⚠️</div><div class="text">加载节目失败</div></div>';
     return;
   }
-  const programmes = d.programmes || [];
+  let programmes = d.programmes || [];
   if (!programmes.length) {
     el.innerHTML = '<div class="empty-state"><div class="icon">📺</div><div class="text">该频道暂无节目</div></div>';
+    return;
+  }
+  // 日期筛选
+  const dateFilter = document.getElementById('epgDateFilter') ? document.getElementById('epgDateFilter').value : '';
+  if (dateFilter) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    let targetStart, targetEnd;
+    if (dateFilter === 'today') { targetStart = today; targetEnd = tomorrow; }
+    else if (dateFilter === 'tomorrow') { targetStart = tomorrow; targetEnd = new Date(tomorrow); targetEnd.setDate(targetEnd.getDate() + 1); }
+    else if (dateFilter === 'yesterday') { targetStart = yesterday; targetEnd = today; }
+    if (targetStart && targetEnd) {
+      programmes = programmes.filter(p => {
+        const ts = p.start_ts;
+        if (!ts) return false;
+        const d = new Date(ts * 1000);
+        return d >= targetStart && d < targetEnd;
+      });
+    }
+  }
+  if (!programmes.length) {
+    el.innerHTML = '<div class="empty-state"><div class="icon">📺</div><div class="text">该日期无节目</div></div>';
     return;
   }
   const now = Date.now() / 1000;
@@ -2107,6 +2217,102 @@ document.addEventListener('keydown', function(e) {
     }
   }
 });
+
+// ====== 频道导出 M3U ======
+function exportM3U() {
+  const params = new URLSearchParams();
+  // 带上当前筛选条件
+  const search = document.getElementById('channelSearch').value.trim();
+  const group = document.getElementById('channelGroup').value;
+  const valid = document.getElementById('channelValid').value;
+  const source = document.getElementById('channelSource').value;
+  if (search) params.set('search', search);
+  if (group) params.set('group', group);
+  if (valid) params.set('valid', valid);
+  if (source) params.set('source', source);
+  const url = API + '/api/m3u' + (params.toString() ? '?' + params.toString() : '');
+  // 复制链接到剪贴板 + 提供下载
+  showConfirm('导出 M3U 播放列表', '点击"确定"下载文件，或复制以下链接：\n' + url, () => {
+    window.open(url, '_blank');
+  });
+  // 尝试复制到剪贴板
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(url).then(() => {
+      showToast('M3U 链接已复制到剪贴板', 'success');
+    }).catch(() => {});
+  }
+}
+
+// ====== 扫描结果导入到频道列表 ======
+let _scanResultsCache = [];
+async function importScanResults() {
+  if (!_scanResultsCache.length) {
+    showToast('暂无扫描结果可导入', 'error');
+    return;
+  }
+  // 构造 M3U 内容
+  let m3uContent = '#EXTM3U\n';
+  for (const r of _scanResultsCache) {
+    if (!r.url) continue;
+    const name = r.name || r.url;
+    const group = r.group || '扫描结果';
+    m3uContent += `#EXTINF:-1 tvg-name="${name}" group-title="${group}",${name}\n`;
+    m3uContent += r.url + '\n';
+  }
+  const d = await apiPost('/api/channels/import', { content: m3uContent, name: '扫描导入' });
+  if (d && d.success) {
+    showToast('已导入 ' + (d.imported || 0) + ' 个频道', 'success');
+    loadChannels(1);
+  } else {
+    showToast((d && d.error) || '导入失败', 'error');
+  }
+}
+
+// ====== 频道批量操作 ======
+let _batchMode = false;
+let _batchSelected = new Set();
+
+function toggleBatchMode() {
+  _batchMode = !_batchMode;
+  _batchSelected.clear();
+  document.getElementById('batchToggleBtn').textContent = _batchMode ? '退出批量' : '批量操作';
+  document.getElementById('batchDeleteBtn').style.display = _batchMode ? '' : 'none';
+  loadChannels();
+}
+
+function toggleBatchSelect(id) {
+  if (_batchSelected.has(id)) {
+    _batchSelected.delete(id);
+  } else {
+    _batchSelected.add(id);
+  }
+  const cb = document.getElementById('batchCb_' + id);
+  if (cb) cb.checked = _batchSelected.has(id);
+  const delBtn = document.getElementById('batchDeleteBtn');
+  if (_batchSelected.size > 0) {
+    delBtn.textContent = '删除选中(' + _batchSelected.size + ')';
+  } else {
+    delBtn.textContent = '删除选中';
+  }
+}
+
+async function batchDeleteChannels() {
+  if (_batchSelected.size === 0) {
+    showToast('请先选择要删除的频道', 'error');
+    return;
+  }
+  const count = _batchSelected.size;
+  showConfirm('批量删除', '确定要删除选中的 ' + count + ' 个频道吗？此操作不可恢复。', async () => {
+    let ok = 0, fail = 0;
+    for (const id of _batchSelected) {
+      const d = await apiDelete('/api/channels/' + id);
+      if (d && d.success) ok++; else fail++;
+    }
+    _batchSelected.clear();
+    showToast('已删除 ' + ok + ' 个频道' + (fail ? '，' + fail + ' 个失败' : ''), fail ? 'error' : 'success');
+    loadChannels();
+  });
+}
 
 // ====== 初始化 ======
 async function init() {

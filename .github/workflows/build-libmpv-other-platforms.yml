@@ -77,6 +77,23 @@ jobs:
           # 必须用 refspec `master:refs/remotes/origin/master` 显式创建引用，
           # 否则 `git rev-list --count origin/master` 仍然失败。
           git fetch origin --depth 1 master:refs/remotes/origin/master
+
+          # 修复 davs2 AVS2 解码器崩溃 bug（与 Windows/Android 构建对齐）
+          # 根因：aec_read_intra_pmode_c() 在解码出错时直接 return 4，但未设置
+          # p_aec->b_bit_error 标志。调用者的 AEC_RETURN_ON_ERROR 宏检查此标志，
+          # 由于未设置，错误不会被捕获，解码器继续使用错误的色度预测模式，
+          # bitstream 不同步，最终导致段错误。
+          # 修复：在 return 4 前设置 b_bit_error = 1，让 AEC_RETURN_ON_ERROR 触发，
+          # 解码器跳过错误的 CU 并继续解码后续内容。
+          # 使用 perl -i 保证 macOS (BSD) 和 Linux (GNU) 通用性
+          if grep -q "Error in intra_chroma_pred_mode" source/common/aec.cc && \
+             ! grep -q "p_aec->b_bit_error = 1" source/common/aec.cc; then
+            perl -i -pe 'if (/Error in intra_chroma_pred_mode/) { $fix_next = 1 } elsif ($fix_next) { s/return 4;/p_aec->b_bit_error = 1; return 4;/; $fix_next = 0 }' source/common/aec.cc
+            echo "=== davs2 crash fix applied to aec.cc ==="
+          else
+            echo "=== davs2 crash fix already applied or pattern not found, skipping ==="
+          fi
+
           cd build/linux
           # 更新 config.guess/config.sub 到最新版本（davs2 自带的是 2017 版本，不识别 macOS ARM64）
           # 优先从 GCC 镜像（GitHub raw，稳定）下载，备用从 GNU Savannah 下载
@@ -417,6 +434,23 @@ jobs:
           # 必须用 refspec `master:refs/remotes/origin/master` 显式创建引用，
           # 否则 `git rev-list --count origin/master` 仍然失败。
           git fetch origin --depth 1 master:refs/remotes/origin/master
+
+          # 修复 davs2 AVS2 解码器崩溃 bug（与 Windows/Android 构建对齐）
+          # 根因：aec_read_intra_pmode_c() 在解码出错时直接 return 4，但未设置
+          # p_aec->b_bit_error 标志。调用者的 AEC_RETURN_ON_ERROR 宏检查此标志，
+          # 由于未设置，错误不会被捕获，解码器继续使用错误的色度预测模式，
+          # bitstream 不同步，最终导致段错误。
+          # 修复：在 return 4 前设置 b_bit_error = 1，让 AEC_RETURN_ON_ERROR 触发，
+          # 解码器跳过错误的 CU 并继续解码后续内容。
+          # 使用 perl -i 保证 macOS (BSD) 和 Linux (GNU) 通用性
+          if grep -q "Error in intra_chroma_pred_mode" source/common/aec.cc && \
+             ! grep -q "p_aec->b_bit_error = 1" source/common/aec.cc; then
+            perl -i -pe 'if (/Error in intra_chroma_pred_mode/) { $fix_next = 1 } elsif ($fix_next) { s/return 4;/p_aec->b_bit_error = 1; return 4;/; $fix_next = 0 }' source/common/aec.cc
+            echo "=== davs2 crash fix applied to aec.cc ==="
+          else
+            echo "=== davs2 crash fix already applied or pattern not found, skipping ==="
+          fi
+
           cd build/linux
           # 更新 config.guess/config.sub 到最新版本（davs2 自带的是 2017 版本，不识别 macOS ARM64）
           # 优先从 GCC 镜像（GitHub raw，稳定）下载，备用从 GNU Savannah 下载
@@ -678,6 +712,23 @@ jobs:
           # 必须用 refspec `master:refs/remotes/origin/master` 显式创建引用，
           # 否则 `git rev-list --count origin/master` 仍然失败。
           git fetch origin --depth 1 master:refs/remotes/origin/master
+
+          # 修复 davs2 AVS2 解码器崩溃 bug（与 Windows/Android 构建对齐）
+          # 根因：aec_read_intra_pmode_c() 在解码出错时直接 return 4，但未设置
+          # p_aec->b_bit_error 标志。调用者的 AEC_RETURN_ON_ERROR 宏检查此标志，
+          # 由于未设置，错误不会被捕获，解码器继续使用错误的色度预测模式，
+          # bitstream 不同步，最终导致段错误。
+          # 修复：在 return 4 前设置 b_bit_error = 1，让 AEC_RETURN_ON_ERROR 触发，
+          # 解码器跳过错误的 CU 并继续解码后续内容。
+          # 使用 perl -i 保证 macOS (BSD) 和 Linux (GNU) 通用性
+          if grep -q "Error in intra_chroma_pred_mode" source/common/aec.cc && \
+             ! grep -q "p_aec->b_bit_error = 1" source/common/aec.cc; then
+            perl -i -pe 'if (/Error in intra_chroma_pred_mode/) { $fix_next = 1 } elsif ($fix_next) { s/return 4;/p_aec->b_bit_error = 1; return 4;/; $fix_next = 0 }' source/common/aec.cc
+            echo "=== davs2 crash fix applied to aec.cc ==="
+          else
+            echo "=== davs2 crash fix already applied or pattern not found, skipping ==="
+          fi
+
           cd build/linux
           # 更新 config.guess/config.sub 到最新版本（davs2 自带的是 2017 版本，不识别 macOS ARM64）
           # 优先从 GCC 镜像（GitHub raw，稳定）下载，备用从 GNU Savannah 下载

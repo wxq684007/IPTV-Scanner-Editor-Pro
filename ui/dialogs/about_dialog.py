@@ -162,9 +162,19 @@ class AboutDialog(FloatingDialog):
         close_btn.setStyleSheet(AppStyles.button_style())
         close_btn.clicked.connect(self.close)
 
+        # 在线更新按钮（默认隐藏，版本检查发现新版本后显示）
+        self._update_btn = QtWidgets.QPushButton(
+            tr("update_progress_title", "Online Update")
+        )
+        self._update_btn.setFixedSize(90, 28)
+        self._update_btn.setStyleSheet(AppStyles.button_style())
+        self._update_btn.setVisible(False)
+        self._update_btn.clicked.connect(self._on_update_clicked)
+
         bottom_layout.addWidget(self.copyright_label)
         bottom_layout.addWidget(github_link)
         bottom_layout.addStretch()
+        bottom_layout.addWidget(self._update_btn)
         bottom_layout.addWidget(close_btn)
 
         main_layout.addLayout(bottom_layout)
@@ -216,8 +226,40 @@ class AboutDialog(FloatingDialog):
         try:
             if hasattr(self, 'latest_version_value'):
                 self.latest_version_value.setText(self._latest_version_result)
+
+            # 检查是否需要显示"在线更新"按钮
+            latest = self._latest_version_result
+            if latest and not latest.startswith("("):
+                from core.version import CURRENT_VERSION
+                if self._is_newer_version(CURRENT_VERSION, latest):
+                    if hasattr(self, '_update_btn'):
+                        self._update_btn.setVisible(True)
         except RuntimeError:
             pass
+
+    def _is_newer_version(self, current_version, latest_version):
+        """比较版本号，判断最新版本是否比当前版本新"""
+        try:
+            current_parts = list(map(int, current_version.split('.')))
+            latest_parts = list(map(int, latest_version.split('.')))
+            max_length = max(len(current_parts), len(latest_parts))
+            current_parts.extend([0] * (max_length - len(current_parts)))
+            latest_parts.extend([0] * (max_length - len(latest_parts)))
+            for i in range(max_length):
+                if latest_parts[i] > current_parts[i]:
+                    return True
+                elif latest_parts[i] < current_parts[i]:
+                    return False
+            return False
+        except (ValueError, AttributeError):
+            return False
+
+    def _on_update_clicked(self):
+        """点击"在线更新"按钮"""
+        parent = self.parent()
+        if parent and hasattr(parent, 'update_ctrl'):
+            self.close()
+            parent.update_ctrl.download_and_install()
 
     async def _get_latest_version(self):
         tr = self.language_manager.tr

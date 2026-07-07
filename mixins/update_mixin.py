@@ -1,5 +1,4 @@
 from PySide6.QtCore import QThread, Slot
-from core.log_manager import global_logger as logger
 
 
 class UpdateMixin:
@@ -16,8 +15,10 @@ class UpdateMixin:
     def _do_check_for_updates_async(self):
         self.update_ctrl.check_for_updates()
 
-    def _on_update_found(self, latest_version, current_version):
-        self.update_ctrl._on_update_found(latest_version, current_version)
+    @Slot(str, str, str)
+    def _on_update_found(self, latest_version, current_version, download_url=""):
+        self.update_ctrl._on_update_found(latest_version, current_version, download_url)
 
+    @Slot(bool, str)
     def _on_update_check_completed(self, success, message):
         self.update_ctrl._on_update_check_completed(success, message)
