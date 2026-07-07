@@ -219,8 +219,8 @@ data class BookmarkItem(
 // -----------------------------------------------------------------
 
 data class ChannelPlayerSettings(
-    /** 播放器内核名称（PlayerType.name）：MPV / EXO / VLC / IJK，null=全局默认 */
-    val playerType: String? = null,
+/** 播放器内核名称（仅 MPV），null=全局默认 */
+val playerType: String? = null,
     /** 视频输出（gpu / mediacodec_embed），null=全局默认 */
     val vo: String? = null,
     /** 硬件解码模式（auto-copy / auto / no / mediacodec），null=全局默认 */

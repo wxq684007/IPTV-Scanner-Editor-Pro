@@ -7,7 +7,7 @@
 # 应用自身代码（含 Python 桥接调用、数据模型反射）
 -keep class com.iptv.scanner.editor.pro.** { *; }
 
-# JNI native 方法（VLC/IJK/MPV/ExoPlayer 的 native 绑定）
+# JNI native 方法（MPV 的 native 绑定）
 -keepclasseswithmembernames class * {
     native <methods>;
 }
@@ -22,15 +22,6 @@
 }
 -keep class is.xyz.mpv.MPVLib { *; }
 -keep class is.xyz.mpv.MPVLib$* { *; }
-
-# VLC Java 绑定（org.videolan.libvlc 反射加载）
--keep class org.videolan.libvlc.** { *; }
--keep class org.videolan.medialibrary.** { *; }
--dontwarn org.videolan.**
-
-# IJKPlayer Java 绑定（tv.danmaku.ijk 反射加载）
--keep class tv.danmaku.ijk.media.player.** { *; }
--dontwarn tv.danmaku.**
 
 # kotlinx-serialization（@Serializable 生成的序列化器）
 -keepattributes *Annotation*, InnerClasses
@@ -53,7 +44,3 @@
 # Google ZXing（反射加载解码器）
 -keep class com.google.zxing.** { *; }
 -dontwarn com.google.zxing.**
-
-# AndroidX Media3（ExoPlayer 反射加载渲染器）
--keep class androidx.media3.** { *; }
--dontwarn androidx.media3.**

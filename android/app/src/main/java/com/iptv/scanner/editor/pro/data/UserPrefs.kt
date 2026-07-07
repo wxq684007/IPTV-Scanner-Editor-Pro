@@ -215,28 +215,26 @@ class UserPrefs private constructor() {
             .remove(KEY_HDR_MODE)
             .remove(KEY_RTSP_TRANSPORT)
             .remove(KEY_DEINTERLACE)
-            .remove(KEY_IJK_TESTING)
             .apply()
     }
 
     // -----------------------------------------------------------------
-    // 播放器类型（MPV / EXO / VLC / IJK）
+    // 播放器类型（仅 MPV，与 PC 端统一）
     //
-    // 持久化用户选择的播放器内核，下次启动自动恢复。
-    // 默认 "MPV"（功能最完整）。
+    // 保留持久化字段以兼容旧版配置，实际仅支持 MPV。
     // -----------------------------------------------------------------
 
-    /** 获取持久化的播放器类型名称（PlayerType.name()），默认 "MPV" */
-    fun getPlayerType(): String = prefs.getString(KEY_PLAYER_TYPE, "MPV") ?: "MPV"
+    /** 获取持久化的播放器类型名称，固定返回 "MPV" */
+    fun getPlayerType(): String = "MPV"
 
     fun setPlayerType(type: String) {
-        prefs.edit().putString(KEY_PLAYER_TYPE, type).apply()
+        prefs.edit().putString(KEY_PLAYER_TYPE, "MPV").apply()
     }
 
     // -----------------------------------------------------------------
     // 频道级播放器设置（per-channel override）
     //
-    // 开启后，每个频道可记忆各自的播放器内核 / vo / hwdec / HDR 模式。
+    // 开启后，每个频道可记忆各自的 vo / hwdec / HDR 模式。
     // 切换频道时自动应用该频道的设置（如有），实现不同频道用不同最佳配置。
     // 未设置的项目使用全局默认值。
     // -----------------------------------------------------------------
@@ -295,28 +293,6 @@ class UserPrefs private constructor() {
     fun setLogLevel(level: String) {
         prefs.edit().putString(KEY_LOG_LEVEL, level).apply()
     }
-
-    // -----------------------------------------------------------------
-    // IJK 启动崩溃保护
-    //
-    // IJK native 库在某些设备/片源上可能触发 SIGSEGV，Java try-catch 无法捕获。
-    // 流程：switchPlayer(IJK) 时 markIjkTesting() → IjkController.onPrepared 时
-    // clearIjkTesting()（说明 IJK 可用）→ 启动时若仍为 true，说明上次切换 IJK
-    // 后未成功 prepared 就崩溃，回退到 MPV，避免循环崩溃。
-    // -----------------------------------------------------------------
-
-    /** 标记开始尝试 IJK（切换到 IJK 时调用） */
-    fun markIjkTesting() {
-        prefs.edit().putBoolean(KEY_IJK_TESTING, true).apply()
-    }
-
-    /** 清除 IJK 测试标志（IJK onPrepared 或 detach 时调用） */
-    fun clearIjkTesting() {
-        prefs.edit().putBoolean(KEY_IJK_TESTING, false).apply()
-    }
-
-    /** 上次启动后 IJK 是否处于"测试中"状态未清除（说明崩溃） */
-    fun isIjkTesting(): Boolean = prefs.getBoolean(KEY_IJK_TESTING, false)
 
     // -----------------------------------------------------------------
     // 局域网管理设置
@@ -689,10 +665,6 @@ class UserPrefs private constructor() {
         // 频道级播放器设置（per-channel override）
         private const val KEY_PER_CHANNEL_SETTINGS = "per_channel_player_settings"
         private const val KEY_CHANNEL_SETTINGS_PREFIX = "channel_settings_"
-        // IJK 启动崩溃保护：切换到 IJK 时置 true，onPrepared/detach 时清除；
-        // 启动时若仍为 true，说明上次 IJK 在切换后未成功 prepared 就崩溃（native SIGSEGV
-        // 无法被 Java try-catch 捕获），下次启动自动回退到 MPV，避免循环崩溃。
-        private const val KEY_IJK_TESTING = "ijk_testing"
 
         // 局域网管理设置 key
         private const val KEY_ADMIN_AUTO_STOP = "admin_auto_stop"

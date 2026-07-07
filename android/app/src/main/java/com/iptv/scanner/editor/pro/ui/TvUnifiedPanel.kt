@@ -161,10 +161,13 @@ fun TvUnifiedPanel(viewModel: AppViewModel) {
         kotlin.runCatching { channelListFocus.requestFocus() }
     }
 
-    // 焦点频道变化时刷新 EPG
+    // 焦点频道变化时刷新 EPG（防抖 300ms，避免快速滚动时大量 EPG 请求堆积导致卡死）
     LaunchedEffect(focusedChannelIdx) {
         selectedProgram = null
         if (focusedChannelIdx >= 0) {
+            // 防抖：快速滚动时 LaunchedEffect 会被下次焦点变化取消，
+            // 只有停留超过 300ms 的频道才会真正触发 EPG 请求
+            kotlinx.coroutines.delay(300)
             viewModel.fetchEpgForChannel(focusedChannelIdx)
         }
     }
@@ -925,7 +928,7 @@ private fun MenuColumn(
             add(TvMenuItem("网络增强", "Referer / Proxy / Headers", Icons.Default.Public, onNetwork))
             add(TvMenuItem("工具", "搜索 / 时间线 / 提醒 / 扫描", Icons.Default.Tune, onTools))
             add(TvMenuItem("视图", "视频比例 / OSD", Icons.Default.ViewInAr, onView))
-            // 多画面分组（主画面 MPV + 副画面 ExoPlayer，规避 MPVLib 单例限制）
+            // 多画面分组（主画面 MPV，副画面当前不可用）
             if (multiViewActive && currentMultiViewLayout != null) {
                 // 已激活：在 DUAL → QUAD → NINE → DUAL 之间循环切换
                 val otherLayout = when (currentMultiViewLayout) {
@@ -940,14 +943,14 @@ private fun MenuColumn(
                     Icons.Default.ViewModule,
                     { onEnterMultiView(otherLayout) }
                 ))
-                add(TvMenuItem("退出多画面", "释放副画面 Player", Icons.AutoMirrored.Filled.ExitToApp, onExitMultiView, highlight = true))
+                add(TvMenuItem("退出多画面", "退出多画面模式", Icons.AutoMirrored.Filled.ExitToApp, onExitMultiView, highlight = true))
             } else {
-                add(TvMenuItem("双画面", "主画面 MPV + 副 ExoPlayer", Icons.Default.ViewModule, { onEnterMultiView(MultiViewLayout.DUAL) }))
-                add(TvMenuItem("四画面", "2x2 网格，主画面 + 3 副", Icons.Default.GridView, { onEnterMultiView(MultiViewLayout.QUAD) }))
-                add(TvMenuItem("九画面", "3x3 网格，主画面 + 8 副", Icons.Default.GridView, { onEnterMultiView(MultiViewLayout.NINE) }))
+                add(TvMenuItem("双画面", "左右分屏（副画面暂不可用）", Icons.Default.ViewModule, { onEnterMultiView(MultiViewLayout.DUAL) }))
+                add(TvMenuItem("四画面", "2x2 网格（副画面暂不可用）", Icons.Default.GridView, { onEnterMultiView(MultiViewLayout.QUAD) }))
+                add(TvMenuItem("九画面", "3x3 网格（副画面暂不可用）", Icons.Default.GridView, { onEnterMultiView(MultiViewLayout.NINE) }))
             }
             // 系统分组
-            add(TvMenuItem("设置", "内核 / VO / HWDEC / HDR", Icons.Default.Settings, onSettings))
+            add(TvMenuItem("设置", "VO / HWDEC / HDR", Icons.Default.Settings, onSettings))
             add(TvMenuItem("关于", "版本 / 功能特性", Icons.Default.Info, onAbout))
             add(TvMenuItem(
                 if (isFavorite) "取消收藏" else "收藏",

@@ -36,17 +36,14 @@ import com.iptv.scanner.editor.pro.data.UserPrefs
 import com.iptv.scanner.editor.pro.mpv.MpvController
 import com.iptv.scanner.editor.pro.player.CatchupHelper
 import com.iptv.scanner.editor.pro.player.CatchupProgram
-import com.iptv.scanner.editor.pro.player.ExoPlayerController
 import com.iptv.scanner.editor.pro.player.FccHelper
 import com.iptv.scanner.editor.pro.player.FccService
-import com.iptv.scanner.editor.pro.player.IjkController
 import com.iptv.scanner.editor.pro.player.PlayMode
 import com.iptv.scanner.editor.pro.player.PlaybackState
 import com.iptv.scanner.editor.pro.player.Player
 import com.iptv.scanner.editor.pro.player.PlayerCapabilities
 import com.iptv.scanner.editor.pro.player.PlayerType
 import com.iptv.scanner.editor.pro.player.ProgressHelper
-import com.iptv.scanner.editor.pro.player.VlcController
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -98,169 +95,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val fccService = FccService()
 
     // -----------------------------------------------------------------
-    // 多播放器架构：MPV / ExoPlayer / VLC / IJK 可切换
+    // 播放器架构：仅 MPV 内核（与 PC 端统一）
     //
-    // - mpvSingleton：MpvController 单例（始终保留，用于 setVoAndHwdec 等 mpv 专属 API）
-    // - _player：当前活跃的 Player 实例（默认 mpvSingleton，切换时换实例）
+    // - mpvSingleton：MpvController 单例
     // - mpv：公共字段（类型为 Player 接口），保留字段名以避免大规模 UI 改动
     //   所有 Player 接口方法都可通过 mpv.xxx 调用
-    // - playerType：当前播放器类型（持久化，下次启动自动恢复）
-    // - playerCapabilities：当前播放器能力（UI 据此决定哪些功能面板可用）
+    // - playerType：固定为 MPV
+    // - playerCapabilities：MPV 能力（UI 据此决定哪些功能面板可用）
     // -----------------------------------------------------------------
     private val mpvSingleton: MpvController = MpvController.getInstance()
 
     /**
-     * 待 detach 的旧播放器实例（切换播放器时保存，等旧 View onRelease 后才 detach）。
-     *
-     * 为什么需要延迟 detach：
-     * switchPlayer 在 `_playerType.value = newType` 之前调用 `oldPlayer.detach()`，
-     * detach 会释放 native 资源（如 IjkPlayer.release()），但此时旧 View 仍然存在、
-     * Surface 仍然有效，RenderThread 可能正在渲染 → 访问已释放资源导致 SIGSEGV。
-     *
-     * 修复：switchPlayer 只保存 oldPlayer 到此字段，不立即 detach。
-     * 旧 View 的 onRelease 回调（MainPlayerScreen.onReleasePlayer）触发后才调用
-     * [detachOldPlayer] 执行真正的 detach，此时 Surface 已释放，安全释放 native 资源。
+     * 持久化的播放器类型（固定为 MPV，保留字段以兼容 UI 代码）。
      */
-    private var pendingOldPlayer: Player? = null
-
-    /**
-     * 释放待 detach 的旧播放器实例。
-     * 由 MainPlayerScreen 的 AndroidView.onRelease 调用，确保在旧 View 销毁后才 detach。
-     */
-    fun detachOldPlayer() {
-        pendingOldPlayer?.let { old ->
-            pendingOldPlayer = null
-            try {
-                old.detach()
-            } catch (e: Throwable) {
-                Log.e(TAG, "detachOldPlayer: failed", e)
-            }
-        }
-    }
-
-    /**
-     * 同步释放待 detach 的旧播放器实例（不等 View onRelease）。
-     *
-     * 使用场景：switchPlayer 时如果之前的 pendingOldPlayer 还未被 detach
-     * （例如连续切换 MPV→EXO→VLC，EXO 的 View onRelease 还没触发就又切到 VLC），
-     * 直接覆盖 pendingOldPlayer 会导致 EXO 实例泄漏。
-     *
-     * 此方法立即 detach 旧实例，风险是 Surface 可能仍有效 → SIGSEGV。
-     * 但比泄漏 native 资源更安全（泄漏会导致内存持续增长）。
-     * 对于非 MPV 的播放器（EXO/VLC/IJK），其 detach() 内部已有延迟 release 机制保护。
-     */
-    private fun flushPendingOldPlayer() {
-        pendingOldPlayer?.let { old ->
-            pendingOldPlayer = null
-            try {
-                old.detach()
-                Log.i(TAG, "flushPendingOldPlayer: detached previous pending player")
-            } catch (e: Throwable) {
-                Log.w(TAG, "flushPendingOldPlayer: detach failed: ${e.message}")
-            }
-        }
-    }
-
-    /**
-     * 待延迟释放的副画面 Player 列表。
-     *
-     * 用于 [exitMultiView]/[removeFromMultiView]/[switchMultiViewLayout]：
-     * 先更新 [MultiViewState] 触发 Compose 移除副画面 View（surfaceDestroyed 完成），
-     * 再延迟 detach 释放 native 资源。
-     *
-     * 与 [pendingOldPlayer] 模式一致，避免 detach 时 RenderThread 仍访问 Surface。
-     * ExoPlayerController.detach() 内部还有 200ms 延迟 release，双层保护确保安全。
-     */
-    private val pendingSubPlayersToRelease = mutableListOf<Player>()
-
-    /**
-     * 延迟释放副画面 Player：先 stop（安全），等 View 移除后再 detach。
-     *
-     * @param player 要释放的副画面 Player
-     */
-    private fun releaseSubPlayerDeferred(player: Player) {
-        try { player.stop() } catch (e: Throwable) {
-            Log.w(TAG, "releaseSubPlayerDeferred: stop failed: ${e.message}")
-        }
-        synchronized(pendingSubPlayersToRelease) {
-            pendingSubPlayersToRelease.add(player)
-        }
-        viewModelScope.launch {
-            // 300ms 等 Compose 移除 View + surfaceDestroyed 完成
-            delay(300)
-            synchronized(pendingSubPlayersToRelease) {
-                pendingSubPlayersToRelease.remove(player)
-            }
-            try { player.detach() } catch (e: Throwable) {
-                Log.w(TAG, "releaseSubPlayerDeferred: detach failed: ${e.message}")
-            }
-        }
-    }
-
-    /**
-     * 持久化的播放器类型（从 UserPrefs 读取，可能在 MPV/EXO/VLC/IJK 之间切换）。
-     *
-     * 声明在 [_player] 之前：[_player] 初始化时需要读取此值创建对应实例，
-     * 保证启动时 _player 与 _playerType 同步（避免 UI 按 playerType 创建 View
-     * 但 _player 仍是 mpvSingleton 导致 attachView 类型不匹配 → "已暂停"假象）。
-     */
-    private val _playerType = MutableStateFlow(
-        runCatching { PlayerType.valueOf(userPrefs.getPlayerType()) }.getOrDefault(PlayerType.MPV)
-    )
+    private val _playerType = MutableStateFlow(PlayerType.MPV)
     val playerType: StateFlow<PlayerType> = _playerType.asStateFlow()
 
     /**
-     * 当前活跃的 Player 实例。
-     *
-     * 启动时根据持久化的 [_playerType] 创建对应实例（MPV 用单例，其他新建实例），
-     * 保证 _player 与 _playerType 一致。IJK native 不可用或上次启动崩溃时回退到 MPV
-     * （_playerType 在 init 块中修正为 MPV）。
-     *
-     * 安全保护：
-     * 1. IJK 启动崩溃检查：上次启动后切换到 IJK 时若 native SIGSEGV（Java try-catch
-     *    无法捕获），isIjkTesting()=true，本次启动直接回退到 MPV，避免循环崩溃。
-     * 2. try-catch 保护：EXO/VLC/IJK 构造失败时回退到 MPV，避免 App 进入无可用播放器状态。
+     * 当前活跃的 Player 实例（固定为 mpvSingleton）。
      */
-    private val _player = MutableStateFlow<Player>(createInitialPlayer())
-
-    /**
-     * 启动时创建初始 Player 实例（工厂方法，便于 try-catch 保护）。
-     *
-     * @return 创建的 Player 实例；失败时回退到 [mpvSingleton]
-     */
-    private fun createInitialPlayer(): Player {
-        val type = _playerType.value
-        // IJK 启动崩溃保护：上次启动后切换到 IJK 未成功 prepared 就崩溃，
-        // isIjkTesting 仍为 true，本次启动直接用 MPV，避免再次崩溃。
-        if (type == PlayerType.IJK && userPrefs.isIjkTesting()) {
-            Log.w(TAG, "createInitialPlayer: IJK 上次启动崩溃（isIjkTesting=true），回退到 MPV")
-            userPrefs.clearIjkTesting()
-            _playerType.value = PlayerType.MPV
-            userPrefs.setPlayerType(PlayerType.MPV.name)
-            return mpvSingleton
-        }
-        return try {
-            when (type) {
-                PlayerType.MPV -> mpvSingleton
-                PlayerType.EXO -> ExoPlayerController(getApplication())
-                PlayerType.VLC -> VlcController(getApplication()).let {
-                    if (it.nativeAvailable) it else {
-                        Log.w(TAG, "createInitialPlayer: VLC native 不可用，回退到 MPV")
-                        mpvSingleton
-                    }
-                }
-                PlayerType.IJK -> IjkController(getApplication()).let {
-                    if (it.nativeAvailable) it else {
-                        Log.w(TAG, "createInitialPlayer: IJK native 不可用，回退到 MPV")
-                        mpvSingleton
-                    }
-                }
-            }
-        } catch (e: Throwable) {
-            Log.e(TAG, "createInitialPlayer: create $type failed, fallback to MPV", e)
-            mpvSingleton
-        }
-    }
+    private val _player = MutableStateFlow<Player>(mpvSingleton)
 
     /** 当前播放器实例（Player 接口类型，UI 用 mpv.xxx 调用 Player 接口方法） */
     val mpv: Player get() = _player.value
@@ -270,136 +124,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             .stateIn(viewModelScope, SharingStarted.Eagerly, mpvSingleton.capabilities)
 
     /**
-     * 切换播放器：保存当前播放状态 → detach 旧实例 → 创建新实例 → 通知 View 重建。
-     *
-     * View 重建由 MainPlayerScreen 监听 playerType 变化触发（key(playerType) 强制 AndroidView 重建）。
-     * 重建后调用 [consumePendingRestore] 获取保存的状态，在 attachView 完成后调用
-     * restorePlaybackState 恢复进度。
-     *
-     * @param newType 目标播放器类型
+     * 兼容方法：消费待恢复的播放状态（当前仅 MPV 单实例，始终返回 null）。
+     * 保留方法签名以兼容 MainPlayerScreen 调用。
      */
-    fun switchPlayer(newType: PlayerType) {
-        if (_playerType.value == newType) return
-        val oldPlayer = _player.value
-        // 1. 保存当前播放状态（url + timePos）
-        val savedState = oldPlayer.savePlaybackState()
-        // 2. 先创建新实例（try-catch 保护），成功后再 detach 旧实例。
-        //    顺序很重要：若先 detach 旧实例再创建新实例，新实例创建失败时旧实例已失效，
-        //    App 将进入无可用播放器的状态。
-        val newPlayer: Player = try {
-            when (newType) {
-                PlayerType.MPV -> mpvSingleton
-                PlayerType.EXO -> ExoPlayerController(getApplication())
-                PlayerType.VLC -> VlcController(getApplication())
-                PlayerType.IJK -> IjkController(getApplication())
-            }
-        } catch (e: Throwable) {
-            Log.e(TAG, "switchPlayer: create $newType failed", e)
-            showOsd("播放器", "切换到 ${newType.displayName} 失败: ${e.message}，保持当前播放器")
-            return
-        }
-        // 3. 检测 IJK/VLC native 库是否可用（x86/x86_64 设备或 native 崩溃后不可用）
-        //    IJK 和 VLC 都只提供 arm64/armv7a 两个 ABI 的 native 库，
-        //    在 x86/x86_64 设备（主要是模拟器）上构造时会抛 UnsatisfiedLinkError，
-        //    此时 nativeAvailable=false，回退到 MPV 单例避免后续调用崩溃。
-        val nativeUnavailable = when {
-            newType == PlayerType.IJK && newPlayer is IjkController && !newPlayer.nativeAvailable -> {
-                "IJK"
-            }
-            newType == PlayerType.VLC && newPlayer is VlcController && !newPlayer.nativeAvailable -> {
-                "VLC"
-            }
-            else -> null
-        }
-        if (nativeUnavailable != null) {
-            // 目标播放器 native 不可用，回退到 MPV 单例
-            if (oldPlayer === mpvSingleton) {
-                // 旧播放器已是 MPV，无需切换
-                showOsd("播放器", "$nativeUnavailable 在此设备不可用（需 ARM 架构），保持 MPV")
-                return
-            }
-            // 旧播放器不是 MPV，切换到 MPV 作为安全兜底
-            // 延迟 detach：保存到 pendingOldPlayer，等旧 View onRelease 后才执行
-            // 先释放之前可能残留的 pendingOldPlayer，避免覆盖泄漏
-            flushPendingOldPlayer()
-            pendingOldPlayer = oldPlayer
-            _player.value = mpvSingleton
-            _playerType.value = PlayerType.MPV
-            userPrefs.setPlayerType(PlayerType.MPV.name)
-            // IJK 不可用时清除测试标志，避免下次启动误判为崩溃中
-            if (nativeUnavailable == "IJK") {
-                userPrefs.clearIjkTesting()
-            }
-            _hardwareDecode.value = mpvSingleton.isHardwareDecodeEnabled()
-            pendingRestoreState = savedState
-            observePlayerError(mpvSingleton)
-            showOsd("播放器", "$nativeUnavailable 在此设备不可用（需 ARM 架构），已回退到 MPV")
-            return
-        }
-        // 4. 新实例创建成功，延迟 detach 旧实例。
-        //    关键修复：不在此处调用 oldPlayer.detach()，而是保存到 pendingOldPlayer，
-        //    等旧 View 的 onRelease 回调（MainPlayerScreen.onReleasePlayer）触发后才 detach。
-        //    原因：detach() 会释放 native 资源（如 IjkPlayer.release()），但此时旧 View 仍存在、
-        //    Surface 仍有效，RenderThread 可能正在渲染 → 访问已释放资源导致 SIGSEGV。
-        //    延迟到 View onRelease 后 detach，Surface 已释放，安全释放 native 资源。
-        //    先释放之前可能残留的 pendingOldPlayer，避免覆盖泄漏（连续切换场景）。
-        flushPendingOldPlayer()
-        pendingOldPlayer = oldPlayer
-        _player.value = newPlayer
-        _playerType.value = newType
-        userPrefs.setPlayerType(newType.name)
-        // IJK 启动崩溃保护：切换到 IJK 时标记测试中，onPrepared 或 detach 时清除。
-        // 若切换后 native SIGSEGV（无法被 try-catch 捕获），下次启动时 isIjkTesting()=true，
-        // 自动回退到 MPV，避免循环崩溃。
-        if (newType == PlayerType.IJK) {
-            userPrefs.markIjkTesting()
-        }
-        // 同步硬件解码状态（新播放器的默认值）
-        _hardwareDecode.value = newPlayer.isHardwareDecodeEnabled()
-        // 5. 保存待恢复状态，等 View 重建后 attachView 完成再恢复
-        pendingRestoreState = savedState
-        // 6. 监听新播放器的错误状态，显示 OSD 提示用户
-        observePlayerError(newPlayer)
-        showOsd("播放器", "已切换到 ${newType.displayName}，重新加载中...")
-    }
+    fun consumePendingRestore(): Pair<String, Double>? = null
 
     /**
-     * 监听播放器的错误状态（ExoPlayer/IJK 播放失败时显示 OSD 提示）。
-     *
-     * ExoPlayer/IJK 播放失败时 _paused 变为 true 但 UI 只显示"已暂停"，
-     * 用户无法知道是主动暂停还是播放失败。此方法监听 lastError StateFlow，
-     * 有错误时显示 OSD 提示具体原因。
+     * 兼容方法：释放旧播放器（当前仅 MPV 单实例，no-op）。
+     * 保留方法签名以兼容 MainPlayerScreen 调用。
      */
-    private var playerErrorJob: Job? = null
-    private fun observePlayerError(player: Player) {
-        playerErrorJob?.cancel()
-        val errorFlow = when (player) {
-            is ExoPlayerController -> player.lastError
-            is IjkController -> player.lastError
-            else -> return  // MPV/VLC 有自己的错误处理
-        }
-        playerErrorJob = viewModelScope.launch {
-            errorFlow.collect { error ->
-                if (error.isNotEmpty()) {
-                    Log.w(TAG, "Player error: $error")
-                    showOsd("播放错误", error)
-                }
-            }
-        }
-    }
-
-    /** 待恢复的播放状态（切换播放器后由 MainPlayerScreen 消费） */
-    private var pendingRestoreState: Pair<String, Double>? = null
-
-    /**
-     * 消费待恢复的播放状态（MainPlayerScreen 在新 View attachView 完成后调用）。
-     * 返回 Pair<url, timePosSec>，null 表示无待恢复状态。
-     */
-    fun consumePendingRestore(): Pair<String, Double>? {
-        val s = pendingRestoreState
-        pendingRestoreState = null
-        return s
-    }
+    fun detachOldPlayer() { /* no-op: 仅 MPV 单实例，无需切换 */ }
 
 
     // -----------------------------------------------------------------
@@ -426,14 +160,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // 所有属性初始化完成后再启动初始化（Kotlin 按声明顺序初始化，init 块必须在所有 StateFlow 声明之后）
     init {
-        // 修正 IJK native 不可用时的 _playerType（_player 已在 createInitialPlayer 中回退到 mpvSingleton）
-        if (_playerType.value == PlayerType.IJK && _player.value === mpvSingleton) {
-            _playerType.value = PlayerType.MPV
-            userPrefs.setPlayerType(PlayerType.MPV.name)
-            userPrefs.clearIjkTesting()  // 双重保险：IJK 不可用时清除标志
-        }
-        // 监听非 MPV 播放器的错误状态（启动时 _player 可能是 EXO/IJK/VLC）
-        observePlayerError(_player.value)
         startInitialization()
     }
 
@@ -458,18 +184,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // -----------------------------------------------------------------
     // 多画面状态（TV 端多画面功能）
     //
-    // 主画面（index=0）用 _player（通常为 MPV，功能最全），
-    // 副画面（index=1+）用 ExoPlayer（多实例支持）。
-    // MPV 在安卓端是单例（mpv-android 库限制），副画面不能用 MPV。
-    // -----------------------------------------------------------------
-    private val _multiViewState = MutableStateFlow(MultiViewState())
-    val multiViewState: StateFlow<MultiViewState> = _multiViewState.asStateFlow()
-
-    /** 副画面 Player 实例（index -> Player，主画面用 _player） */
-    private val subPlayers = mutableMapOf<Int, Player>()
-
-    /** 获取副画面 Player 实例（供 MultiViewOverlay 创建 ExoPlayerView 时绑定） */
-    fun getSubPlayerForMultiView(viewportIndex: Int): Player? = subPlayers[viewportIndex]
+// 主画面（index=0）用 MPV（单例）。
+// 副画面（index=1+）当前不可用（MPV 安卓端单例限制），仅保留 UI 结构。
+// -----------------------------------------------------------------
+private val _multiViewState = MutableStateFlow(MultiViewState())
+val multiViewState: StateFlow<MultiViewState> = _multiViewState.asStateFlow()
 
     // -----------------------------------------------------------------
     // 频道列表面板状态
@@ -1267,8 +986,6 @@ val logLevel: StateFlow<String> = _logLevel.asStateFlow()
         // 切台时不主动 stop，直接 loadfile 让 mpv 自动切换解码器。
         // mpv 的 loadfile replace 模式会自动释放旧解码器、加载新文件，
         // 配合 keep-open=yes 在切换间隙保持最后一帧画面，避免黑屏闪烁。
-        // （之前 stop + loadfile 会导致画面清空黑屏，PC 端窗口背景为黑色不明显，
-        //  但 TV 端 SurfaceView 黑屏很显眼）
 
         // FCC 快速换台：向 FCC 代理发送 leave/join 通知（组播场景加速切台）。
         // 与 PC 端 PlaybackController.play_channel() → fcc.on_channel_change() 对齐。
@@ -1279,23 +996,10 @@ val logLevel: StateFlow<String> = _logLevel.asStateFlow()
         val playUrl = channel.url
 
         // 应用频道级播放器设置（如果开启"频道记忆"且该频道有保存设置）
-        val playerSwitched = applyChannelSettingsIfNeeded(idx)
+        applyChannelSettingsIfNeeded(idx)
 
-        // 协议兼容性检查：IJK/ExoPlayer 不支持 RTP/UDP 等非 HTTP 协议。
-        // 遇到不支持的协议时自动切换到 MPV（支持全部协议），避免播放失败无响应。
-        // switchPlayer 会触发 View 重建，重建后通过 pendingRestoreState 恢复播放。
-        if (!isUrlSupportedByPlayer(playUrl, _playerType.value)) {
-            Log.w(TAG, "playChannel: ${_playerType.value.displayName} does not support protocol of $playUrl, switching to MPV")
-            showOsd("协议不支持", "${_playerType.value.displayName} 不支持此协议，已切换到 MPV")
-            switchPlayer(PlayerType.MPV)
-            // 覆盖 switchPlayer 保存的旧状态，改为播放新频道 URL
-            pendingRestoreState = playUrl to 0.0
-        } else if (playerSwitched) {
-            // 频道设置触发了 switchPlayer，覆盖 pendingRestoreState 为新频道 URL
-            pendingRestoreState = playUrl to 0.0
-        } else {
-            mpv.playFile(playUrl)
-        }
+        // MPV 支持全部协议，直接播放
+        mpv.playFile(playUrl)
 
         // 显示 OSD
         if (!silent) {
@@ -1330,50 +1034,19 @@ val logLevel: StateFlow<String> = _logLevel.asStateFlow()
      *
      * 在 playChannel 中调用，播放前应用该频道的专属设置。
      *
-     * @return true 表示触发了 switchPlayer（调用方需覆盖 pendingRestoreState）
+     * @return true 表示应用了频道级设置（调用方需覆盖 pendingRestoreState）
      */
-    private fun applyChannelSettingsIfNeeded(idx: Int): Boolean {
-        if (!userPrefs.isPerChannelPlayerSettings()) return false
-        val settings = userPrefs.getChannelSettings(idx) ?: return false
+    private fun applyChannelSettingsIfNeeded(idx: Int) {
+        if (!userPrefs.isPerChannelPlayerSettings()) return
+        val settings = userPrefs.getChannelSettings(idx) ?: return
 
-        var playerSwitched = false
-
-        // 1. 应用播放器内核
-        settings.playerType?.let { typeName ->
-            try {
-                val type = PlayerType.valueOf(typeName)
-                if (_playerType.value != type) {
-                    switchPlayer(type)
-                    playerSwitched = true
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "applyChannelSettings: invalid playerType=$typeName")
-            }
+        // 1. 应用 vo/hwdec（会触发 mpv 重新加载，随后 playFile 加载新频道）
+        settings.vo?.let { vo ->
+            if (_currentVo.value != vo) setPlayerVo(vo)
         }
-
-        if (playerSwitched) {
-            // switchPlayer 已触发 View 重建，只需更新 UserPrefs 和 StateFlow，
-            // MPVView 重建时会自动读取 UserPrefs 的 vo/hwdec 初始化。
-            settings.vo?.let { vo ->
-                userPrefs.setVo(vo)
-                _currentVo.value = vo
-            }
-            settings.hwdec?.let { hwdec ->
-                val actualHwdec = if (settings.vo == "mediacodec_embed") "mediacodec" else hwdec
-                userPrefs.setHwdec(actualHwdec)
-                _currentHwdec.value = actualHwdec
-            }
-        } else {
-            // 未切换播放器，直接应用 vo/hwdec（会触发 mpv 重新加载，随后 playFile 加载新频道）
-            if (_playerType.value == PlayerType.MPV) {
-                settings.vo?.let { vo ->
-                    if (_currentVo.value != vo) setPlayerVo(vo)
-                }
-                settings.hwdec?.let { hwdec ->
-                    val actualHwdec = if (settings.vo == "mediacodec_embed") "mediacodec" else hwdec
-                    if (_currentHwdec.value != actualHwdec) setPlayerHwdec(actualHwdec)
-                }
-            }
+        settings.hwdec?.let { hwdec ->
+            val actualHwdec = if (settings.vo == "mediacodec_embed") "mediacodec" else hwdec
+            if (_currentHwdec.value != actualHwdec) setPlayerHwdec(actualHwdec)
         }
 
         // 2. 应用 HDR 模式（只更新状态，由 applyHdrOnFileLoaded 在文件加载后应用）
@@ -1389,19 +1062,17 @@ val logLevel: StateFlow<String> = _logLevel.asStateFlow()
             }
         }
 
-        if (playerSwitched || settings.vo != null || settings.hwdec != null || settings.hdrMode != null) {
-            Log.i(TAG, "applyChannelSettings: idx=$idx, settings=$settings, switched=$playerSwitched")
+        if (settings.vo != null || settings.hwdec != null || settings.hdrMode != null) {
+            Log.i(TAG, "applyChannelSettings: idx=$idx, settings=$settings")
         }
-
-        return playerSwitched
     }
 
     /** 自动保存当前播放器设置到指定频道（频道记忆开启时，切换频道前自动调用） */
     private fun autoSaveCurrentSettingsToChannel(idx: Int) {
         val settings = ChannelPlayerSettings(
-            playerType = _playerType.value.name,
-            vo = if (_playerType.value == PlayerType.MPV) _currentVo.value else null,
-            hwdec = if (_playerType.value == PlayerType.MPV) _currentHwdec.value else null,
+            playerType = PlayerType.MPV.name,
+            vo = _currentVo.value,
+            hwdec = _currentHwdec.value,
             hdrMode = _hdrMode.value.name.lowercase()
         )
         userPrefs.setChannelSettings(idx, settings)
@@ -1432,9 +1103,8 @@ val logLevel: StateFlow<String> = _logLevel.asStateFlow()
     // -----------------------------------------------------------------
     // 多画面控制
     //
-    // 主画面（index=0）用当前播放器（通常 MPV，功能最全）
-    // 副画面（index=1+）用 ExoPlayer（多实例支持，MPV 安卓端单例限制）
-    // 副画面默认静音，只有主画面有声音
+    // 主画面（index=0）用当前播放器（MPV）
+    // 副画面（index=1+）当前不可用（MPV 安卓端单例限制，仅保留 UI 结构）
     // -----------------------------------------------------------------
 
     /**
@@ -1442,7 +1112,6 @@ val logLevel: StateFlow<String> = _logLevel.asStateFlow()
      *
      * - 主画面（index=0）保留当前播放的频道
      * - 副画面（index=1+）初始化为空画面，等待用户添加频道
-     * - 副画面 Player 用 ExoPlayerController（多实例支持）
      *
      * @param layout 布局模式（DUAL/QUAD）
      */
@@ -1465,46 +1134,26 @@ val logLevel: StateFlow<String> = _logLevel.asStateFlow()
     }
 
     /**
-     * 退出多画面模式。释放所有副画面 Player，主画面保持播放。
-     *
-     * 时序：先 stop + 更新状态（触发 Compose 移除副画面 View）→ 延迟 detach。
-     * 与 switchPlayer 的 pendingOldPlayer 模式一致，避免 detach 时 RenderThread 仍访问 Surface。
+     * 退出多画面模式。主画面保持播放。
      */
     fun exitMultiView() {
         if (!_multiViewState.value.active) return
-        // 先停止所有副画面（stop 安全，不释放资源）并收集到待释放列表
-        val playersToRelease = subPlayers.values.toList()
-        subPlayers.clear()
         _multiViewState.value = MultiViewState()
-        // 延迟 detach：等 Compose 移除所有副画面 View（surfaceDestroyed 完成）后释放 native 资源
-        playersToRelease.forEach { player -> releaseSubPlayerDeferred(player) }
         // 退出多画面后显示控制层（自动隐藏），让用户看到操作选项
         showControlsAutoHide()
         showOsd("多画面", "已退出多画面模式")
     }
 
     /**
-     * 切换多画面布局。扩展布局新增空视口，缩小布局先释放被移除视口的 Player。
-     *
-     * 缩小时：先从 subPlayers 移除并收集 → 更新状态触发 View 移除 → 延迟 detach。
+     * 切换多画面布局。扩展布局新增空视口，缩小布局移除多余视口。
      */
     fun switchMultiViewLayout(layout: MultiViewLayout) {
         val current = _multiViewState.value
         if (!current.active || current.layout == layout) return
-        val playersToRelease = mutableListOf<Player>()
-        if (layout.count < current.viewports.size) {
-            for (i in layout.count until current.viewports.size) {
-                subPlayers.remove(i)?.let { player ->
-                    playersToRelease.add(player)
-                }
-            }
-        }
         val newViewports = (0 until layout.count).map { i ->
             current.viewports.getOrNull(i) ?: MultiViewport(index = i)
         }
         _multiViewState.value = current.copy(layout = layout, viewports = newViewports)
-        // 延迟 detach：等 Compose 移除被裁剪的副画面 View 后释放 native 资源
-        playersToRelease.forEach { player -> releaseSubPlayerDeferred(player) }
         showOsd("多画面", "已切换到${layout.displayName}")
     }
 
@@ -1538,49 +1187,9 @@ val logLevel: StateFlow<String> = _logLevel.asStateFlow()
             return 0
         }
 
-        // 副画面：协议兼容性检查（ExoPlayer 不支持 RTP/UDP）
-        val playUrl = channel.url
-        if (!isUrlSupportedByPlayer(playUrl, PlayerType.EXO)) {
-            val errorViewport = targetViewport.copy(
-                channelIdx = channelIdx,
-                channelName = channel.name,
-                isError = true,
-                errorMessage = "协议不支持"
-            )
-            _multiViewState.value = state.copy(
-                viewports = state.viewports.map { if (it.index == targetIdx) errorViewport else it }
-            )
-            showOsd("多画面", "${channel.name}: ExoPlayer 不支持此协议")
-            return targetIdx
-        }
-
-        // 创建或复用副画面 Player
-        val player = subPlayers.getOrPut(targetIdx) {
-            ExoPlayerController(getApplication()).also { newPlayer ->
-                observeSubPlayerError(newPlayer, targetIdx)
-            }
-        }
-
-        // 标记视口为播放中（副画面默认静音）
-        val newViewport = targetViewport.copy(
-            channelIdx = channelIdx,
-            channelName = channel.name,
-            isError = false,
-            errorMessage = "",
-            isMuted = true
-        )
-        _multiViewState.value = state.copy(
-            viewports = state.viewports.map { if (it.index == targetIdx) newViewport else it },
-            focusedIndex = targetIdx
-        )
-
-        // 副画面静音（只有主画面有声音）
-        player.setMute(true)
-        player.playFile(playUrl)
-
-        Log.i(TAG, "addChannelToMultiView: ${channel.name} -> viewport $targetIdx")
-        showOsd("多画面", "${channel.name} 已添加到画面 ${targetIdx + 1}")
-        return targetIdx
+        // 副画面当前不可用（MPV 单例限制），显示提示
+        showOsd("多画面", "副画面暂不可用（仅支持 MPV 单画面）")
+        return -1
     }
 
     /**
@@ -1605,12 +1214,10 @@ val logLevel: StateFlow<String> = _logLevel.asStateFlow()
             }
         )
 
-        // 应用到 Player
+        // 应用到 Player（仅主画面可用）
         try {
             if (viewportIndex == 0) {
                 _player.value.setMute(newMuted)
-            } else {
-                subPlayers[viewportIndex]?.setMute(newMuted)
             }
         } catch (e: Throwable) {
             Log.w(TAG, "toggleMultiViewMute: viewport=$viewportIndex, failed: ${e.message}")
@@ -1622,19 +1229,14 @@ val logLevel: StateFlow<String> = _logLevel.asStateFlow()
 
     /**
      * 从多画面移除视口（清空频道）。主画面不能移除（用 [exitMultiView] 退出）。
-     *
-     * 时序：先从 subPlayers 移除 → 更新状态触发 View 移除 → 延迟 detach。
      */
     fun removeFromMultiView(viewportIndex: Int) {
         val state = _multiViewState.value
         if (!state.active || viewportIndex == 0) return
-        val playerToRelease = subPlayers.remove(viewportIndex)
         val newViewports = state.viewports.map { vp ->
             if (vp.index == viewportIndex) MultiViewport(index = viewportIndex) else vp
         }
         _multiViewState.value = state.copy(viewports = newViewports)
-        // 延迟 detach：等 Compose 移除该视口 View 后释放 native 资源
-        playerToRelease?.let { releaseSubPlayerDeferred(it) }
     }
 
     /**
@@ -1695,52 +1297,6 @@ val logLevel: StateFlow<String> = _logLevel.asStateFlow()
         setFocusedViewport(newIdx)
         return true
     }
-
-    /**
-     * 监听副画面 Player 的错误状态，同步到视口状态。
-     */
-    private fun observeSubPlayerError(player: Player, viewportIndex: Int) {
-        if (player is ExoPlayerController) {
-            viewModelScope.launch {
-                player.lastError.collect { error ->
-                    if (error.isNotEmpty()) {
-                        val state = _multiViewState.value
-                        if (!state.active) return@collect
-                        val newViewports = state.viewports.map { vp ->
-                            if (vp.index == viewportIndex) {
-                                vp.copy(isError = true, errorMessage = error)
-                            } else vp
-                        }
-                        _multiViewState.value = state.copy(viewports = newViewports)
-                    }
-                }
-            }
-        }
-    }
-
-/**
-* 检查 URL 协议是否被指定播放器类型支持。
-*
-* 各播放器协议支持范围：
-* - MPV：全部协议（rtp/udp/rtsp/rtmp/http/https/file/content）
-* - VLC：全部协议（rtp/udp/rtsp/rtmp/http/https/file）
-* - IJK：http/https/rtsp/rtmp/file/content（FFmpeg fork 不含 RTP/UDP 协议）
-* - ExoPlayer：http/https/rtsp/file/content（已集成 media3-exoplayer-rtsp 扩展）
-*
-* 遇到不支持的协议时调用方应自动切换到 MPV。
-*/
-private fun isUrlSupportedByPlayer(url: String, type: PlayerType): Boolean {
-// content:// 和 file:// 协议所有播放器都支持
-if (url.startsWith("content://") || url.startsWith("file://") || url.startsWith("/")) {
-return true
-}
-val scheme = url.substringBefore("://", "").lowercase()
-return when (type) {
-PlayerType.MPV, PlayerType.VLC -> true  // 全协议支持
-PlayerType.IJK -> scheme in setOf("http", "https", "rtsp", "rtmp")
-PlayerType.EXO -> scheme in setOf("http", "https", "rtsp")
-}
-}
 
     /**
      * 切换 shuffle 模式（与 PC 端 toggle_shuffle 对齐）。
@@ -4224,14 +3780,8 @@ PlayerType.EXO -> scheme in setOf("http", "https", "rtsp")
         currentPlaybackName = url
         currentIsLocalFile = true
         refreshCurrentBookmarks()
-        if (!isUrlSupportedByPlayer(url, _playerType.value)) {
-            Log.w(TAG, "playUrl: ${_playerType.value.displayName} does not support $url, switching to MPV")
-            showOsd("协议不支持", "${_playerType.value.displayName} 不支持此协议，已切换到 MPV")
-            switchPlayer(PlayerType.MPV)
-            pendingRestoreState = url to 0.0
-        } else {
-            mpv.playFile(url)
-        }
+        // MPV 支持全部协议，直接播放
+        mpv.playFile(url)
         showOsd("网络流", url)
         closeAllPanels()
     }
@@ -4541,12 +4091,9 @@ showOsd("播放器设置", "日志等级: $levelName")
 }
 
     /**
-     * 切换硬件/软件解码（通用方法，适用于所有播放器内核）。
+     * 切换硬件/软件解码。
      *
-     * - MPV：通过 hwdec 属性切换（auto-copy/no），同时更新 _currentHwdec 状态
-     * - VLC：通过 media.setHWDecoderEnabled + 重新播放
-     * - IJK：通过 mediacodec option + 重新播放
-     * - ExoPlayer：通过重建 ExoPlayer + RenderersFactory 切换
+     * MPV：通过 hwdec 属性切换（auto-copy/no），同时更新 _currentHwdec 状态
      *
      * @param enabled true=硬件解码，false=软件解码
      */
@@ -4595,17 +4142,12 @@ showOsd("播放器设置", "日志等级: $levelName")
         _currentHwdec.value = userPrefs.getHwdec()
         _currentDeinterlace.value = userPrefs.getDeinterlace()
         _hdrMode.value = HdrMode.DISABLE
-        // 恢复默认应立即生效：若当前不是 MPV，切换回 MPV（MPV 是默认内核）
-        // switchPlayer 内部会 detach 旧播放器 + 重建 View + 恢复播放进度
-        if (_playerType.value != PlayerType.MPV) {
-            switchPlayer(PlayerType.MPV)
-        } else {
-            (_player.value as? MpvController)?.setVoAndHwdec(_currentVo.value, _currentHwdec.value)
-            (_player.value as? MpvController)?.setDeinterlace(_currentDeinterlace.value)
-            // 已加载视频时立即应用重置后的 HDR 配置（disable → SDR 默认值）
-            if (mpv.fileLoaded.value) {
-                applyHdrOnFileLoaded()
-            }
+        // 恢复默认应立即生效
+        (_player.value as? MpvController)?.setVoAndHwdec(_currentVo.value, _currentHwdec.value)
+        (_player.value as? MpvController)?.setDeinterlace(_currentDeinterlace.value)
+        // 已加载视频时立即应用重置后的 HDR 配置（disable → SDR 默认值）
+        if (mpv.fileLoaded.value) {
+            applyHdrOnFileLoaded()
         }
         showOsd("播放器设置", "已重置为默认值")
     }
@@ -5486,25 +5028,13 @@ showOsd("播放器设置", "日志等级: $levelName")
         resumeSaveJob?.cancel()
         // 关闭 FCC 持久化 UDP socket
         try { FccHelper.closeUdpSocket() } catch (_: Throwable) {}
-        // 清理主播放器（MPV/EXO/VLC/IJK 都需要 stop + detach，避免 native 资源泄漏）
+        // 清理主播放器（MPV 需要 stop + detach，避免 native 资源泄漏）
         // Activity.onDestroy 已先调用一次，这里兜底确保释放
         try {
             val p = _player.value
             p.stop()
             p.detach()
         } catch (_: Throwable) {}
-        // 清理多画面副画面 Player（避免 ExoPlayer 实例泄漏）
-        subPlayers.values.forEach { player ->
-            try { player.stop(); player.detach() } catch (_: Throwable) {}
-        }
-        subPlayers.clear()
-        // 清理待延迟释放的副画面 Player（viewModelScope 已取消，延迟 detach 不会执行）
-        synchronized(pendingSubPlayersToRelease) {
-            pendingSubPlayersToRelease.forEach { player ->
-                try { player.stop(); player.detach() } catch (_: Throwable) {}
-            }
-            pendingSubPlayersToRelease.clear()
-        }
         // 清理 APK 下载资源（避免 receiver 泄漏）
         try {
             apkProgressJob?.cancel()

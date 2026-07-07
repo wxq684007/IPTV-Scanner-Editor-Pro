@@ -5,23 +5,18 @@ import kotlinx.coroutines.flow.StateFlow
 /**
  * 播放器类型枚举。
  *
+ * 仅保留 MPV 内核，与 PC 端统一。
  * - [MPV]：mpv (libmpv)，通过 JNI 调用，功能最完整（EQ/AB循环/逐帧/章节/截图/HDR等）
- * - [EXO]：ExoPlayer (androidx.media3)，Google 官方播放器，HLS/DASH/SmoothStreaming 支持好
- * - [VLC]：libVLC (VLC for Android)，协议支持广（RTSP/RTMP/UDP/HTTP），解码器全
- * - [IJK]：IJKPlayer (Bilibili)，基于 FFmpeg，轻量灵活
  */
 enum class PlayerType(val displayName: String, val description: String) {
-    MPV("mpv", "功能最完整（EQ/AB循环/逐帧/截图/HDR）"),
-    EXO("ExoPlayer", "Google 官方，HLS/DASH 支持好"),
-    VLC("VLC", "协议支持广（RTSP/RTMP/UDP）"),
-    IJK("IJKPlayer", "基于 FFmpeg，轻量灵活")
+    MPV("mpv", "功能最完整（EQ/AB循环/逐帧/截图/HDR）")
 }
 
 /**
  * 播放器能力声明。
  *
  * UI 层根据 [Player.capabilities] 决定是否显示高级功能面板。
- * MPV 全部为 true；ExoPlayer/VLC/IJK 部分为 true。
+ * MPV 全部为 true。
  */
 data class PlayerCapabilities(
     val supportsBrightness: Boolean = false,
@@ -58,20 +53,9 @@ data class PlayerCapabilities(
 /**
  * 播放器抽象接口。
  *
- * 统一 MPV / ExoPlayer / VLC / IJK 四种播放器的 API。
- *
- * 设计原则：
- * 1. 通用状态用 [StateFlow] 暴露，与 MpvController 现有 StateFlow 对齐
- * 2. 核心播放控制方法是抽象的（每个实现必须提供）
- * 3. 高级功能有默认实现（返回 false / no-op），UI 通过 [capabilities] 判断是否可用
- * 4. mpv 专属的 `getPropertyX` / `command` 有默认实现（返回 null / no-op），
- *    UI 代码无需修改即可在非 MPV 播放器上运行（属性显示为 N/A）
- * 5. 切换播放器时通过 [savePlaybackState] / [restorePlaybackState] 保持播放连续性
+ * 仅 MPV 一种实现，保留接口以维持 UI 层与播放器层的解耦。
  *
  * @see MpvController 完整实现
- * @see ExoPlayerController ExoPlayer 实现
- * @see VlcController VLC 实现
- * @see IjkController IJK 实现
  */
 interface Player {
 
@@ -88,7 +72,7 @@ interface Player {
     /** 是否暂停 */
     val paused: StateFlow<Boolean>
 
-    /** 音量（0-130，mpv 标准；其他播放器映射到 0-100） */
+    /** 音量（0-130，mpv 标准） */
     val volume: StateFlow<Int>
 
     /** 是否静音 */
@@ -97,7 +81,7 @@ interface Player {
     /** 媒体标题 */
     val mediaTitle: StateFlow<String>
 
-    /** 轨道列表 JSON（mpv track-list 格式；其他播放器转换为兼容格式） */
+    /** 轨道列表 JSON（mpv track-list 格式） */
     val trackListJson: StateFlow<String>
 
     /** 是否播放结束（EOF） */
@@ -136,7 +120,7 @@ interface Player {
     // -----------------------------------------------------------------
 
     /**
-     * 绑定 View（MPVView / ExoPlayerView / VlcVideoView / IjkVideoView）。
+     * 绑定 View（MPVView）。
      * @param view 平台特定的 View 实例
      */
     fun attachView(view: Any)
@@ -354,10 +338,10 @@ interface Player {
     fun showOsd(text: String, durationMs: Int = 3000) {}
 
     // -----------------------------------------------------------------
-    // 通用属性读写（mpv 专属，其他播放器默认返回 null / no-op）
+    // 通用属性读写（mpv 专属）
     // -----------------------------------------------------------------
 
-    /** 读取字符串属性（mpv 专属，其他播放器返回 null） */
+    /** 读取字符串属性 */
     fun getPropertyString(name: String): String? = null
 
     /** 读取整数属性 */
@@ -390,24 +374,20 @@ interface Player {
 
     /**
      * 获取媒体信息（codec/bitrate/fps/cacheDuration 等）。
-     * 各播放器从各自 API 获取，返回统一的 Map。
      * UI 层的 MediaBadgesRow 通过 key 读取，缺失的 key 显示 N/A。
      */
     fun getMediaInfo(): Map<String, String?> = emptyMap()
 
     // -----------------------------------------------------------------
-    // 硬件解码切换（通用）
+    // 硬件解码切换
     // -----------------------------------------------------------------
 
     /**
      * 切换硬件/软件解码。
      * - MPV：通过 hwdec 属性切换（auto-copy/no）
-     * - VLC：通过 media.setHWDecoderEnabled + 重新播放
-     * - IJK：通过 mediacodec option + 重新播放
-     * - ExoPlayer：通过重建 ExoPlayer + RenderersFactory 切换
      *
      * @param enabled true=硬件解码，false=软件解码
-     * @return 是否切换成功（部分播放器可能需要重建实例，失败时返回 false）
+     * @return 是否切换成功
      */
     fun setHardwareDecode(enabled: Boolean): Boolean = false
 
@@ -418,7 +398,7 @@ interface Player {
     fun isHardwareDecodeEnabled(): Boolean = true
 
     // -----------------------------------------------------------------
-    // 播放状态保存/恢复（用于切换播放器时保持连续性）
+    // 播放状态保存/恢复
     // -----------------------------------------------------------------
 
     /** 保存当前播放状态（url + timePos），无文件时返回 null */

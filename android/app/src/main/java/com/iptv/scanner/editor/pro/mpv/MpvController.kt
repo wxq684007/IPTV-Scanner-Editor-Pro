@@ -130,6 +130,18 @@ class MpvController : MPVLib.EventObserver, Player {
             Log.w(TAG, "observeProperty failed: ${e.message}")
         }
 
+        // 同步查询 mpv 当前 pause 状态，防止 detach() 中 _paused=true 残留导致 UI 误显示"已暂停"。
+        // detach() 会将 _paused 设为 true（安全默认值），但切回 MPV 复用实例时，
+        // mpv 内部 pause 可能是 false（上次 playFile 已解除暂停），若不同步更新，
+        // UI 会一直显示"已暂停"直到下一个 pause 属性变更事件到达。
+        try {
+            val currentPause = MPVLib.getPropertyBoolean("pause") ?: true
+            _paused.value = currentPause
+            Log.i(TAG, "attach: synced pause state from mpv: $currentPause")
+        } catch (e: Throwable) {
+            Log.w(TAG, "attach: sync pause state failed: ${e.message}")
+        }
+
         // 播放器设置持久化：如果该设备已确认需要 vo fallback（黑屏检测曾触发过），
         // 直接设置标志跳过本次黑屏探测。此时 MPVView 已用持久化的 mediacodec_embed 初始化，
         // 无需再等待 2 秒黑屏。
@@ -345,6 +357,10 @@ class MpvController : MPVLib.EventObserver, Player {
     // -----------------------------------------------------------------
     override fun playFile(url: String) = postOnUiThread {
         setupProtocolOptions(url)
+        // 立即设置 _paused=false，避免 UI 在 loadfile 和 pause 属性事件到达之间
+        // 误显示"已暂停"。detach() 会将 _paused 设为 true（安全默认值），
+        // 但 playFile 后实际会播放，需立即更新 UI 状态。
+        _paused.value = false
         mpvView?.playFile(url)
     }
     override fun stop() = postOnUiThread { mpvView?.stop() }
@@ -364,12 +380,13 @@ class MpvController : MPVLib.EventObserver, Player {
      * 根据 URL 协议设置 mpv 解复用器/缓存选项。
      * 与 PC 端 services/mpv_player_service.py _setup_protocol_options 对齐。
      *
+     * FCC 优化（快速换台）：
+     * - 直播流使用小 readahead（1-3s），确保切台后尽快出画
+     * - VOD/HLS 点播使用较大 readahead（10s），平衡起播速度与播放流畅性
+     * - 配合 keep-open=yes 在切台间隙保持最后一帧，消除黑屏
+     *
      * MPVView.initialize() 已设置通用缓冲（demuxer-max-bytes=16MiB,
-     * demuxer-readahead-secs=1, force-seekable=yes），本方法针对特定协议覆盖：
-     * - HLS (m3u8)：增大预读到 120s，确保 segment 平滑切换（PC 端同样设置）
-     * - RTSP：使用 TCP 传输（避免 UDP 丢包），设置 5s 预读
-     * - MPEG-TS：显式指定 demuxer=mpegts，增大预读到 300s
-     * - 通用网络流：重置为默认值（避免上次 HLS/TS 的设置残留）
+     * demuxer-readahead-secs=1, force-seekable=yes），本方法针对特定协议覆盖。
      *
      * 本地文件不设置协议选项（直接 return）。
      */
@@ -382,37 +399,49 @@ class MpvController : MPVLib.EventObserver, Player {
         if (!isNetwork) return  // 本地文件不设置协议选项
         try {
             when {
-                // HLS (m3u8)：增大预读，确保 segment 平滑切换
+                // HLS (m3u8)：直播流适度预读，平衡起播速度与流畅性
                 ".m3u8" in u || "format=hls" in u -> {
                     MPVLib.setPropertyString("demuxer-lavf-format", "")
                     MPVLib.setPropertyString("cache", "yes")
                     MPVLib.setPropertyString("force-seekable", "yes")
-                    MPVLib.setPropertyString("demuxer-readahead-secs", "120")
-                    Log.i(TAG, "HLS options: readahead=120s")
+                    MPVLib.setPropertyString("demuxer-readahead-secs", "3")
+                    MPVLib.setPropertyString("cache-secs", "2")
+                    // FCC：预取 HLS 播放列表，减少 segment 切换间隙
+                    MPVLib.setPropertyString("prefetch-playlist", "yes")
+                    Log.i(TAG, "HLS options: readahead=3s, cache-secs=2, prefetch-playlist=yes")
                 }
-                // RTSP：根据用户设置的传输协议（tcp/udp）
+                // RTSP：根据用户设置的传输协议（tcp/udp），低延迟预读
                 u.startsWith("rtsp://") -> {
                     val transport = UserPrefs.getInstance().getRtspTransport()
                     MPVLib.setPropertyString("rtsp-transport", transport)
                     MPVLib.setPropertyString("cache", "yes")
                     MPVLib.setPropertyString("demuxer-lavf-format", "")
-                    MPVLib.setPropertyString("demuxer-readahead-secs", "5")
-                    Log.i(TAG, "RTSP options: transport=$transport")
+                    MPVLib.setPropertyString("demuxer-readahead-secs", "1")
+                    MPVLib.setPropertyString("cache-secs", "1")
+                    Log.i(TAG, "RTSP options: transport=$transport, readahead=1s, cache-secs=1")
                 }
-                // MPEG-TS：显式指定 demuxer，增大预读
-                u.endsWith(".ts") || u.startsWith("udp://") || "/rtp/" in u -> {
+                // MPEG-TS / UDP / RTP：IPTV 直播流，最小预读实现秒开
+                // 关键优化：readahead 从 10s 降到 1s，配合 cache-secs=1
+                // 消除切台黑屏（原 10s 预读导致 mpv 等待 10s 数据才出画）
+                u.endsWith(".ts") || u.startsWith("udp://") || "/rtp/" in u || u.startsWith("rtp://") -> {
                     MPVLib.setPropertyString("demuxer", "lavf")
                     MPVLib.setPropertyString("demuxer-lavf-format", "mpegts")
                     MPVLib.setPropertyString("cache", "yes")
                     MPVLib.setPropertyString("force-seekable", "yes")
-                    MPVLib.setPropertyString("demuxer-readahead-secs", "300")
-                    Log.i(TAG, "TS options: demuxer=mpegts readahead=300s")
+                    MPVLib.setPropertyString("demuxer-readahead-secs", "1")
+                    MPVLib.setPropertyString("cache-secs", "1")
+                    // 跳过 TS probe 加速起播（直播流格式已知，无需探测）
+                    MPVLib.setPropertyString("demuxer-mpeg-probe-info", "no")
+                    // 降低视频延迟（直播流优先出画）
+                    MPVLib.setPropertyString("video-latency-hacks", "yes")
+                    Log.i(TAG, "TS/UDP/RTP options: readahead=1s, cache-secs=1, probe-info=no")
                 }
                 else -> {
-                    // 通用网络流：重置为默认值（避免上次 HLS/TS 的设置残留）
+                    // 通用网络流：最小预读，快速起播
                     MPVLib.setPropertyString("demuxer-readahead-secs", "1")
+                    MPVLib.setPropertyString("cache-secs", "1")
                     MPVLib.setPropertyString("force-seekable", "yes")
-                    Log.i(TAG, "Generic stream options: readahead=1s")
+                    Log.i(TAG, "Generic stream options: readahead=1s, cache-secs=1")
                 }
             }
         } catch (e: Throwable) {
@@ -844,9 +873,8 @@ class MpvController : MPVLib.EventObserver, Player {
      *
      * 关键修复：使用 [MPVView.playFile] 而非直接调用 MPVLib.command("loadfile")。
      *
-     * 原因：切换播放器（MPV → EXO/IJK/VLC → MPV）后切回 MPV 时，
-     * MPVView.initialize() 复用 native mpv 实例（nativeInstanceAlive=true），
-     * 此时 mpv 的 vo 仍为 "null"（destroy() 时设置），Surface 尚未 attach。
+     * 原因：Surface 重建后复用 native mpv 实例时，
+     * mpv 的 vo 仍为 "null"（destroy() 时设置），Surface 尚未 attach。
      * 若直接 loadfile，mpv 在 vo=null + 无 Surface 的状态下加载文件，
      * 后续 surfaceCreated 恢复 vo 后 mpv 已陷入无法渲染的状态。
      *

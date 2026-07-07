@@ -1,6 +1,5 @@
 package com.iptv.scanner.editor.pro.ui
 
-import android.view.ViewGroup
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,9 +23,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
-import com.iptv.scanner.editor.pro.player.ExoPlayerController
-import com.iptv.scanner.editor.pro.player.ExoPlayerView
 import com.iptv.scanner.editor.pro.ui.theme.tvFocusBorder
 
 /**
@@ -37,7 +33,7 @@ import com.iptv.scanner.editor.pro.ui.theme.tvFocusBorder
  * - QUAD：2x2 网格（主画面左上，副画面右上/左下/右下）
  *
  * 主画面（index=0）由 [primaryContent] Composable 渲染（复用 MainPlayerScreen 现有播放器 View 逻辑）。
- * 副画面（index=1+）由本组件内部创建 [ExoPlayerView] 渲染。
+ * 副画面（index=1+）当前不可用（MPV 单例限制），显示占位提示。
  *
  * @param state 多画面状态
  * @param primaryContent 主画面内容 Composable
@@ -325,12 +321,10 @@ private fun ViewportCell(
 }
 
 /**
- * 副画面内容（ExoPlayerView）。
+ * 副画面内容占位。
  *
- * player 用 remember(viewportIndex, viewport.channelIdx) 确保频道变化时重新获取
- * （添加频道时 player 从 null 变为非 null）。
- * AndroidView 不用 key 包裹 channelIdx，避免切换频道时重建 View（ExoPlayer 实例
- * 不变，player.playFile 切换 URL 即可，View 重建会导致短暂黑屏）。
+ * MPV 在安卓端为单例，不支持多实例，副画面当前不可用。
+ * 仅保留 UI 结构，显示"暂不可用"提示。
  */
 @Composable
 private fun SubViewportContent(
@@ -338,34 +332,32 @@ private fun SubViewportContent(
     viewport: MultiViewport?,
     getSubPlayer: (Int) -> com.iptv.scanner.editor.pro.player.Player?
 ) {
-    if (viewport == null || viewport.isEmpty) {
-        // 空画面不创建 View
-        return
-    }
-
-    // channelIdx 作为 key：添加频道时（-1 → 实际值）重新获取 player
-    val player = remember(viewportIndex, viewport.channelIdx) {
-        getSubPlayer(viewportIndex) as? ExoPlayerController
-    }
-
-    if (player != null) {
-        AndroidView(
-            factory = { ctx ->
-                ExoPlayerView(ctx).also { view ->
-                    view.layoutParams = ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT
-                    )
-                    player.attachView(view)
-                }
-            },
-            update = { /* ExoPlayerView surface 回调内部处理 */ },
-            onRelease = { view ->
-                // 不在这里 detach：detach 由 ViewModel 的 releaseSubPlayerDeferred 延迟执行
-                // （先更新状态触发 View 移除 → surfaceDestroyed 完成 → 延迟 300ms 后 detach）
-            },
-            modifier = Modifier.fillMaxSize()
-        )
+    // MPV 单例限制：副画面不可用，显示占位提示
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+            Icon(
+                Icons.Default.Error,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.3f),
+                modifier = Modifier.size(28.dp)
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "副画面暂不可用",
+                color = Color.White.copy(alpha = 0.4f),
+                fontSize = 11.sp
+            )
+            Text(
+                text = "仅支持 MPV 单画面",
+                color = Color.White.copy(alpha = 0.3f),
+                fontSize = 10.sp
+            )
+        }
     }
 }
 

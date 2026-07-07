@@ -477,7 +477,7 @@ class MainActivityCompose : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        // 停止并释放当前活跃播放器（可能是 MPV/EXO/VLC/IJK，不只是 MPV）
+        // 停止并释放当前活跃播放器（MPV）
         // 注意：MPVView.destroy()（销毁 mpv 原生实例）由 AndroidView 的 onRelease 处理
         // 这里 stop + detach 当前播放器，避免 native 资源（解码器/缓冲队列/observer）泄漏
         try {

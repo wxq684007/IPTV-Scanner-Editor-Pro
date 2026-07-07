@@ -479,6 +479,11 @@ class ServerContext:
                     content = load_m3u_from_url_data(resp.content)
                     channels, _ = parse_m3u_content(content)
                     if channels:
+                        # 标记频道来源（订阅源 URL），用于 Android 端区分 SUB/LOCAL tab
+                        # 若不设置 source，Android 端 LOCAL tab 的 source.isEmpty() 过滤条件
+                        # 会将所有订阅频道误判为本地频道显示
+                        for c in channels:
+                            c['source'] = url
                         all_channels.extend(channels)
                 except Exception as e:
                     logger.warning(f"加载源 {url} 失败: {e}")

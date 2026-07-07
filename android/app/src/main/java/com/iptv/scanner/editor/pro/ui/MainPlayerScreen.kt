@@ -37,7 +37,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -50,10 +49,6 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.iptv.scanner.editor.pro.data.ReminderItem
 import com.iptv.scanner.editor.pro.data.UserPrefs
 import com.iptv.scanner.editor.pro.mpv.MPVView
-import com.iptv.scanner.editor.pro.player.ExoPlayerView
-import com.iptv.scanner.editor.pro.player.IjkVideoView
-import com.iptv.scanner.editor.pro.player.PlayerType
-import com.iptv.scanner.editor.pro.player.VlcVideoView
 
 /**
  * 主播放屏：MPVView + 透明控制层 + 面板抽屉 + OSD 浮层。
@@ -105,8 +100,6 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
     val triggeredReminder by viewModel.triggeredReminder.collectAsState()
     val osd by viewModel.osd.collectAsState()
 
-    // 多播放器支持：根据 playerType 创建对应 View
-    val playerType by viewModel.playerType.collectAsState()
     val player = viewModel.mpv  // 当前 Player 实例（类型为 Player 接口）
     val paused by player.paused.collectAsState()
     val videoWidth by player.videoWidth.collectAsState()
@@ -171,92 +164,39 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
             // 黑色背景由 Activity window background + SurfaceView 自身提供
     ) {
         // -----------------------------------------------------------------
-        // 1. 底层：播放器 View（根据 playerType 创建 MPVView/ExoPlayerView/VlcVideoView/IjkVideoView）
-        //
-        // 用 key(playerType) 强制在切换播放器时重建 View（AndroidView 的 factory 不会因
-        // state 变化重新执行，必须用 key 包裹才能销毁旧 View 创建新 View）。
+        // 1. 底层：MPV 播放器 View
         //
         // 单画面模式：用 aspectRatio 让 SurfaceView 尺寸匹配视频比例，居中显示。
-        // 多画面模式：主画面用 fillMaxSize 填满网格 cell，副画面用 ExoPlayer（多实例）。
+        // 多画面模式：主画面用 fillMaxSize 填满网格 cell。
         // -----------------------------------------------------------------
         val createPlayerView: (android.content.Context) -> android.view.View = { ctx ->
-            Log.i("MainPlayerScreen", "Creating player view, playerType=$playerType, uiMode=$uiMode")
-            when (playerType) {
-                PlayerType.MPV -> {
-                    val mpvView = MPVView(ctx)
-                    val configDir = ctx.getDir("mpv_config", Context.MODE_PRIVATE).absolutePath
-                    val cacheDir = ctx.cacheDir.absolutePath
-                    val userPrefs = UserPrefs.getInstance()
-                    val vo = userPrefs.getVo()
-                    val hwdec = userPrefs.getHwdec()
-                    try {
-                        mpvView.initialize(configDir, cacheDir, vo = vo, hwdec = hwdec)
-                        player.attachView(mpvView)
-                        Log.i("MainPlayerScreen", "MPVView initialized (vo=$vo, hwdec=$hwdec) + attached")
-                    } catch (e: Throwable) {
-                        Log.e("MainPlayerScreen", "MPVView initialize failed", e)
-                    }
-                    viewModel.consumePendingRestore()?.let { (url, time) ->
-                        Log.i("MainPlayerScreen", "Restoring playback: $url @ ${time}s")
-                        player.restorePlaybackState(url, time)
-                    }
-                    mpvView
-                }
-                PlayerType.EXO -> {
-                    val exoView = ExoPlayerView(ctx)
-                    player.attachView(exoView)
-                    viewModel.consumePendingRestore()?.let { (url, time) ->
-                        Log.i("MainPlayerScreen", "Restoring playback (Exo): $url @ ${time}s")
-                        player.restorePlaybackState(url, time)
-                    }
-                    exoView
-                }
-                PlayerType.VLC -> {
-                    val vlcView = VlcVideoView(ctx)
-                    player.attachView(vlcView)
-                    viewModel.consumePendingRestore()?.let { (url, time) ->
-                        Log.i("MainPlayerScreen", "Restoring playback (VLC): $url @ ${time}s")
-                        player.restorePlaybackState(url, time)
-                    }
-                    vlcView
-                }
-                PlayerType.IJK -> {
-                    val ijkView = IjkVideoView(ctx)
-                    player.attachView(ijkView)
-                    viewModel.consumePendingRestore()?.let { (url, time) ->
-                        Log.i("MainPlayerScreen", "Restoring playback (IJK): $url @ ${time}s")
-                        player.restorePlaybackState(url, time)
-                    }
-                    ijkView
-                }
+            Log.i("MainPlayerScreen", "Creating MPV player view, uiMode=$uiMode")
+            val mpvView = MPVView(ctx)
+            val configDir = ctx.getDir("mpv_config", Context.MODE_PRIVATE).absolutePath
+            val cacheDir = ctx.cacheDir.absolutePath
+            val userPrefs = UserPrefs.getInstance()
+            val vo = userPrefs.getVo()
+            val hwdec = userPrefs.getHwdec()
+            try {
+                mpvView.initialize(configDir, cacheDir, vo = vo, hwdec = hwdec)
+                player.attachView(mpvView)
+                Log.i("MainPlayerScreen", "MPVView initialized (vo=$vo, hwdec=$hwdec) + attached")
+            } catch (e: Throwable) {
+                Log.e("MainPlayerScreen", "MPVView initialize failed", e)
             }
+            mpvView
         }
         val onReleasePlayer: (android.view.View) -> Unit = { view ->
             Log.i("MainPlayerScreen", "onRelease: destroying player view")
             if (view is MPVView) view.destroy()
-            // 通知 ViewModel 旧 View 已销毁，可以安全 detach 旧播放器（释放 native 资源）。
-            // 必须在 View 销毁后 detach，否则 Surface 仍有效时释放 native 资源会导致
-            // RenderThread SIGSEGV（IjkPlayer.release / ExoPlayer.release 时崩溃）。
             viewModel.detachOldPlayer()
         }
 
-        // 用 key(playerType) 包裹整个播放器子树，确保切换播放器类型时：
-        // 1. 旧 View 子树先完全销毁（触发 onRelease → MPVView.destroy / ExoPlayerView detach）
-        // 2. 新 View 子树再创建（触发 factory → MPVView.initialize）
-        //
-        // 之前用 remember(playerType) { movableContentOf { } } 不保证销毁先于创建，
-        // 导致切回 MPV 时新 MPVView.initialize() 与旧 MPVView.destroy() 竞态：
-        //   - 旧 destroy 杀死新 native mpv 实例（MPVLib 是全局单例）
-        //   - 旧 IjkPlayer.release() 触发 RenderThread SIGSEGV（Surface 仍引用已释放资源）
-        //
-        // key() 保证 Compose 在 key 变化时先调用旧子树的 onRelease，再创建新子树。
-        // multiViewState.active 变化时 key 不变，movableContentOf 仍可在子树内移动而不销毁。
-        key(playerType) {
-            // 用 movableContentOf 包装主画面 AndroidView，确保 multiViewState.active 变化时
-            // AndroidView 在 Compose 树中移动而不销毁重建（避免 MPV 实例销毁导致播放中断）。
-            val primaryPlayer = remember {
-                movableContentOf {
-                    AndroidView(
+        // 用 movableContentOf 包装主画面 AndroidView，确保 multiViewState.active 变化时
+        // AndroidView 在 Compose 树中移动而不销毁重建（避免 MPV 实例销毁导致播放中断）。
+        val primaryPlayer = remember {
+            movableContentOf {
+                AndroidView(
                         factory = createPlayerView,
                         update = { /* 各 View 的 surfaceChanged 等回调内部已处理 */ },
                         onRelease = onReleasePlayer,
@@ -270,7 +210,7 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
                 MultiViewOverlay(
                     state = multiViewState,
                     primaryContent = { primaryPlayer() },
-                    getSubPlayer = { idx -> viewModel.getSubPlayerForMultiView(idx) },
+                    getSubPlayer = { _ -> null },  // 副画面不可用（MPV 单例）
                     onViewportClick = { idx -> viewModel.setFocusedViewport(idx) },
                     onViewportClose = { idx -> viewModel.removeFromMultiView(idx) },
                     onToggleMute = { idx -> viewModel.toggleMultiViewMute(idx) }
@@ -285,7 +225,6 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
                     primaryPlayer()
                 }
             }
-        }
 
         // -----------------------------------------------------------------
         // 2. 透明点击层（点击切换控制层显示/隐藏）

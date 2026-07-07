@@ -522,6 +522,9 @@ async def handle_channels_list(request):
         valid_only = request.rel_url.query.get('valid', '').strip()
         group = request.rel_url.query.get('group', '').strip()
         search = request.rel_url.query.get('search', '').strip().lower()
+        # source 过滤：source=local 仅显示手动添加/本地频道（source 为空），
+        # source=sub 仅显示订阅源频道（source 非空），不传则显示全部
+        source_filter = request.rel_url.query.get('source', '').strip()
         page = max(1, int(request.rel_url.query.get('page', '1')))
         page_size = min(500, max(1, int(request.rel_url.query.get('size', '100'))))
         channels = []
@@ -533,6 +536,10 @@ async def handle_channels_list(request):
             if group and ch.get('group', '') != group:
                 continue
             if search and search not in ch.get('name', '').lower() and search not in ch.get('group', '').lower():
+                continue
+            if source_filter == 'local' and ch.get('source', ''):
+                continue
+            if source_filter == 'sub' and not ch.get('source', ''):
                 continue
             channels.append({**ch, '_index': i})
         total_filtered = len(channels)
