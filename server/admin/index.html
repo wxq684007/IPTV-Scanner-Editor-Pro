@@ -728,7 +728,7 @@ textarea.form-input {
       <div class="card-header">
         <div>
           <div class="card-title">频道管理</div>
-          <div class="card-subtitle">管理所有已加载的频道</div>
+          <div class="card-subtitle">管理本地频道（订阅频道只读，请在订阅源页面管理）</div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-outline btn-sm" onclick="showImportM3U()">导入 M3U</button>
@@ -739,6 +739,14 @@ textarea.form-input {
         <div class="form-group" style="flex:2">
           <label class="form-label">搜索</label>
           <input class="form-input" id="channelSearch" placeholder="频道名称..." onkeydown="if(event.key==='Enter')loadChannels(1)">
+        </div>
+        <div class="form-group">
+          <label class="form-label">来源</label>
+          <select class="form-input" id="channelSource" onchange="loadChannels(1)">
+            <option value="">全部</option>
+            <option value="sub">订阅源</option>
+            <option value="local">本地/手动</option>
+          </select>
         </div>
         <div class="form-group">
           <label class="form-label">分组</label>
@@ -1509,12 +1517,14 @@ async function loadChannels(page) {
   const search = document.getElementById('channelSearch').value.trim();
   const group = document.getElementById('channelGroup').value;
   const valid = document.getElementById('channelValid').value;
+  const source = document.getElementById('channelSource').value;
   const params = new URLSearchParams();
   params.set('page', channelPage);
   params.set('size', channelPageSize);
   if (search) params.set('search', search);
   if (group) params.set('group', group);
   if (valid) params.set('valid', valid);
+  if (source) params.set('source', source);
   const el = document.getElementById('channelList');
   el.innerHTML = '<div class="empty-state"><div class="loading"></div></div>';
   document.getElementById('channelPager').innerHTML = '';
@@ -1549,19 +1559,24 @@ async function loadChannels(page) {
     const url = ch.url || '';
     const grp = ch.group || '';
     const v = ch.valid;
+    const isSub = !!ch.source;
+    const sourceBadge = isSub ? '<span class="badge neutral" style="font-size:11px">订阅</span>' : '<span class="badge valid" style="font-size:11px;background:rgba(76,175,80,0.15);color:#4CAF50">本地</span>';
     const badge = v === true ? '<span class="badge valid">✓ 有效</span>' :
                   v === false ? '<span class="badge invalid">✗ 无效</span>' :
                   '<span class="badge neutral">未知</span>';
+    // 订阅频道不可编辑/删除（重新加载订阅源时会被覆盖）
+    const actions = isSub ?
+      '<span style="font-size:12px;color:var(--text-faint)">订阅频道不可编辑</span>' :
+      '<button class="btn btn-outline btn-sm" onclick="showEditChannel(' + id + ')">编辑</button>' +
+      '<button class="btn btn-danger btn-sm" onclick="deleteChannel(' + id + ')">删除</button>';
     return '<div class="ch-item">' +
       '<div class="ch-info">' +
-      '<div class="ch-name">' + escHtml(name) + '</div>' +
+      '<div class="ch-name">' + escHtml(name) + ' ' + sourceBadge + '</div>' +
       '<div class="ch-meta">' + escHtml(url) + '</div>' +
       (grp ? '<div class="ch-group">分组: ' + escHtml(grp) + '</div>' : '') +
       '</div>' +
       '<div class="ch-badge">' + badge + '</div>' +
-      '<div class="ch-actions">' +
-      '<button class="btn btn-outline btn-sm" onclick="showEditChannel(' + id + ')">编辑</button>' +
-      '<button class="btn btn-danger btn-sm" onclick="deleteChannel(' + id + ')">删除</button>' +
+      '<div class="ch-actions">' + actions +
       '</div>' +
       '</div>';
   }).join('');

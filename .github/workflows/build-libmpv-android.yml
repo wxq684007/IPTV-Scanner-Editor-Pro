@@ -225,8 +225,22 @@ jobs:
           # 4. 修改 scripts/ffmpeg.sh：在 --enable-{...} 中追加 libdavs2
           #    bash brace expansion 会展开为 --enable-libdavs2
           sed -i 's/--enable-{jni,mediacodec,mbedtls,libdav1d,libxml2}/--enable-{jni,mediacodec,mbedtls,libdav1d,libxml2,libdavs2}/' scripts/ffmpeg.sh
-          echo "=== Patched ffmpeg.sh (libdavs2 enabled) ==="
-          grep "enable-" scripts/ffmpeg.sh
+
+          #    安全优化：禁用编码器、封装器、CLI 程序和文档
+          #    MPV 是播放器，只需要解码器(decoder)和解封装器(demuxer)
+          #    - --disable-encoders:  禁用所有编码器（播放器从不编码）
+          #    - --disable-muxers:    禁用所有封装器（播放器从不写容器文件）
+          #    - --disable-programs:  不构建 ffmpeg/ffprobe CLI（不需要）
+          #    - --disable-doc:       不构建文档
+          #    所有解码器、解封装器、解析器、协议、滤镜均保留，确保所有格式可播放
+          sed -i '/--enable-{jni,mediacodec,mbedtls,libdav1d,libxml2,libdavs2}/a \
+            --disable-encoders \
+            --disable-muxers \
+            --disable-programs \
+            --disable-doc' scripts/ffmpeg.sh
+
+          echo "=== Patched ffmpeg.sh (libdavs2 enabled, encoders/muxers/programs disabled) ==="
+          grep -E "enable-|disable-" scripts/ffmpeg.sh
 
       - name: Download dependencies
         # 运行 download.sh 下载所有依赖（包括 FFmpeg 和 davs2 源码）
@@ -345,7 +359,23 @@ jobs:
           # 修复：直接在 prefix/ 目录下搜索所有 lib*.so，确保不遗漏任何依赖库。
           find ./prefix -name "lib*.so" -type f -exec cp -L {} "$ARTIFACT_DIR/" \; 2>/dev/null || true
 
-          echo "=== Collected artifacts ==="
+          echo "=== Collected artifacts (before strip) ==="
+          ls -la "$ARTIFACT_DIR/"
+
+          # Strip debug symbols from all .so files
+          # mpv-android buildscripts 默认不 strip，导致 .so 文件包含约 75% 的调试符号
+          # 使用 NDK 的 llvm-strip 移除 .debug_* / .symtab / .strtab 节区
+          # 这不会影响任何解码器/播放功能，仅移除调试信息
+          STRIP_TOOL="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+          echo "=== Stripping debug symbols ==="
+          for so_file in "$ARTIFACT_DIR"/*.so; do
+            before_size=$(stat -c%s "$so_file")
+            "$STRIP_TOOL" --strip-debug "$so_file"
+            after_size=$(stat -c%s "$so_file")
+            echo "  $(basename $so_file): $(( before_size / 1048576 ))MB -> $(( after_size / 1048576 ))MB"
+          done
+
+          echo "=== Collected artifacts (after strip) ==="
           ls -la "$ARTIFACT_DIR/"
 
           # 验证 CAVS 和 AVS2 支持

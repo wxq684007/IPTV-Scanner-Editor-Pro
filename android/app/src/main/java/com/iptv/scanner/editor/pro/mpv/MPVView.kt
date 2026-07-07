@@ -85,11 +85,13 @@ class MPVView @JvmOverloads constructor(
         MPVLib.setOptionString("video-sync", "audio")
         MPVLib.setOptionString("cache-pause-initial", "no")
 
-        MPVLib.setOptionString("demuxer-max-bytes", "16MiB")
-        MPVLib.setOptionString("demuxer-max-back-bytes", "4MiB")
-        MPVLib.setOptionString("demuxer-readahead-secs", "1")
+        MPVLib.setOptionString("demuxer-max-bytes", "128MiB")
+        MPVLib.setOptionString("demuxer-max-back-bytes", "64MiB")
+        MPVLib.setOptionString("demuxer-readahead-secs", "10")
         MPVLib.setOptionString("demuxer-seekable-cache", "yes")
         MPVLib.setOptionString("force-seekable", "yes")
+        // 不等待缓存填满就开始播放，实现秒开（与 PC 端 cache-pause-initial=no 配合）
+        MPVLib.setOptionString("demuxer-cache-wait", "no")
 
         MPVLib.setOptionString("network-timeout", "30")
         MPVLib.setOptionString("source-timeout", "10")

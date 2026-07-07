@@ -397,51 +397,81 @@ class MpvController : MPVLib.EventObserver, Player {
                 u.startsWith("rtsp://") || u.startsWith("rtp://") || u.startsWith("udp://") ||
                 ".m3u8" in u
         if (!isNetwork) return  // 本地文件不设置协议选项
+
+        val isFcc = "?fcc=" in u
         try {
             when {
-                // HLS (m3u8)：直播流适度预读，平衡起播速度与流畅性
+                // HLS (m3u8)：与 PC 端 _setup_protocol_options 对齐
                 ".m3u8" in u || "format=hls" in u -> {
                     MPVLib.setPropertyString("demuxer-lavf-format", "")
                     MPVLib.setPropertyString("cache", "yes")
                     MPVLib.setPropertyString("force-seekable", "yes")
-                    MPVLib.setPropertyString("demuxer-readahead-secs", "3")
-                    MPVLib.setPropertyString("cache-secs", "2")
-                    // FCC：预取 HLS 播放列表，减少 segment 切换间隙
+                    MPVLib.setPropertyString("demuxer-readahead-secs", "120")
+                    MPVLib.setPropertyString("cache-secs", "3600")
                     MPVLib.setPropertyString("prefetch-playlist", "yes")
-                    Log.i(TAG, "HLS options: readahead=3s, cache-secs=2, prefetch-playlist=yes")
+                    Log.i(TAG, "HLS options: readahead=120s, cache-secs=3600, prefetch=yes")
                 }
-                // RTSP：根据用户设置的传输协议（tcp/udp），低延迟预读
+                // RTSP：与 PC 端对齐，区分 tcp/udp 传输
                 u.startsWith("rtsp://") -> {
                     val transport = UserPrefs.getInstance().getRtspTransport()
                     MPVLib.setPropertyString("rtsp-transport", transport)
+                    MPVLib.setPropertyString("user-agent", "VLC/3.0.18Libmpv")
                     MPVLib.setPropertyString("cache", "yes")
                     MPVLib.setPropertyString("demuxer-lavf-format", "")
-                    MPVLib.setPropertyString("demuxer-readahead-secs", "1")
-                    MPVLib.setPropertyString("cache-secs", "1")
-                    Log.i(TAG, "RTSP options: transport=$transport, readahead=1s, cache-secs=1")
+                    MPVLib.setPropertyString("cache-secs", "3600")
+                    if (transport == "udp") {
+                        // RTSP over UDP：小 probe 快速识别，低 readahead
+                        MPVLib.setPropertyString("demuxer-lavf-probesize", "500000")
+                        MPVLib.setPropertyString("demuxer-lavf-analyzeduration", "1")
+                        MPVLib.setPropertyString("demuxer-readahead-secs", "5")
+                        MPVLib.setPropertyString("force-seekable", "no")
+                        Log.i(TAG, "RTSP-UDP options: probesize=500K, readahead=5s")
+                    } else {
+                        // RTSP over TCP：需要足够 probe 识别编码（如 CAVS）
+                        MPVLib.setPropertyString("demuxer-lavf-probesize", "5000000")
+                        MPVLib.setPropertyString("demuxer-lavf-analyzeduration", "5")
+                        MPVLib.setPropertyString("demuxer-readahead-secs", "10")
+                        Log.i(TAG, "RTSP-TCP options: probesize=5M, readahead=10s")
+                    }
                 }
-                // MPEG-TS / UDP / RTP：IPTV 直播流，最小预读实现秒开
-                // 关键优化：readahead 从 10s 降到 1s，配合 cache-secs=1
-                // 消除切台黑屏（原 10s 预读导致 mpv 等待 10s 数据才出画）
+                // MPEG-TS / UDP / RTP：IPTV 直播流，与 PC 端 looks_ts 分支对齐
+                // 关键：用 probesize+analyzeduration 控制流识别速度（而非缩小 readahead）
+                // cache-pause-initial=no + demuxer-cache-wait=no 确保不等待缓冲直接出画
                 u.endsWith(".ts") || u.startsWith("udp://") || "/rtp/" in u || u.startsWith("rtp://") -> {
                     MPVLib.setPropertyString("demuxer", "lavf")
                     MPVLib.setPropertyString("demuxer-lavf-format", "mpegts")
+                    MPVLib.setPropertyString("demuxer-lavf-buffersize", "128000")
+                    if (isFcc) {
+                        // FCC 快速换台：rtp2httpd 代理已预加入组播，流数据即时可用
+                        MPVLib.setPropertyString("demuxer-lavf-probesize", "2000000")
+                        MPVLib.setPropertyString("demuxer-lavf-analyzeduration", "2")
+                    } else {
+                        // 非 FCC 直播流需要足够 probe 识别编码（如 CAVS）
+                        MPVLib.setPropertyString("demuxer-lavf-probesize", "5000000")
+                        MPVLib.setPropertyString("demuxer-lavf-analyzeduration", "5")
+                    }
                     MPVLib.setPropertyString("cache", "yes")
                     MPVLib.setPropertyString("force-seekable", "yes")
-                    MPVLib.setPropertyString("demuxer-readahead-secs", "1")
-                    MPVLib.setPropertyString("cache-secs", "1")
-                    // 跳过 TS probe 加速起播（直播流格式已知，无需探测）
-                    MPVLib.setPropertyString("demuxer-mpeg-probe-info", "no")
-                    // 降低视频延迟（直播流优先出画）
-                    MPVLib.setPropertyString("video-latency-hacks", "yes")
-                    Log.i(TAG, "TS/UDP/RTP options: readahead=1s, cache-secs=1, probe-info=no")
+                    MPVLib.setPropertyString("demuxer-seekable-cache", "yes")
+                    MPVLib.setPropertyString("cache-secs", "3600")
+                    MPVLib.setPropertyString("demuxer-readahead-secs", "30")
+                    Log.i(TAG, "TS/UDP/RTP options: probesize=${if (isFcc) "2M" else "5M"}, readahead=30s, fcc=$isFcc")
                 }
                 else -> {
-                    // 通用网络流：最小预读，快速起播
-                    MPVLib.setPropertyString("demuxer-readahead-secs", "1")
-                    MPVLib.setPropertyString("cache-secs", "1")
+                    // 通用网络流：与 PC 端默认分支对齐
+                    MPVLib.setPropertyString("demuxer-lavf-format", "")
+                    if (isFcc) {
+                        MPVLib.setPropertyString("demuxer-lavf-probesize", "2000000")
+                        MPVLib.setPropertyString("demuxer-lavf-analyzeduration", "2")
+                    } else {
+                        MPVLib.setPropertyString("demuxer-lavf-probesize", "5000000")
+                        MPVLib.setPropertyString("demuxer-lavf-analyzeduration", "5")
+                    }
+                    MPVLib.setPropertyString("cache", "yes")
                     MPVLib.setPropertyString("force-seekable", "yes")
-                    Log.i(TAG, "Generic stream options: readahead=1s, cache-secs=1")
+                    MPVLib.setPropertyString("cache-secs", "3600")
+                    MPVLib.setPropertyString("demuxer-readahead-secs", "30")
+                    Log.i(TAG, "Generic stream options: probesize=5M, readahead=30s, fcc=$isFcc")
                 }
             }
         } catch (e: Throwable) {

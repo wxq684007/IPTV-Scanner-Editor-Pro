@@ -575,10 +575,8 @@ async def handle_channel_get(request):
 
 
 async def handle_channel_update(request):
-    model = get_channel_model()
-    all_channels = _get_all_channels()
-    if not all_channels:
-        return _json_error('暂无频道数据', 503)
+    ctx = get_context()
+    model = get_channel_model() if ctx else None
     try:
         idx = int(request.match_info['id'])
     except ValueError:
@@ -586,6 +584,10 @@ async def handle_channel_update(request):
     data = await request.json()
     if model and 0 <= idx < model.rowCount():
         model.update_channel(idx, data)
+    elif ctx and hasattr(ctx, '_channels') and 0 <= idx < len(ctx._channels):
+        # standalone 模式（Android）：直接更新内存中的频道并持久化
+        ctx._channels[idx].update(data)
+        ctx._save_channels_to_cache()
     else:
         mw = get_main_window()
         if mw:
@@ -597,16 +599,18 @@ async def handle_channel_update(request):
 
 
 async def handle_channel_delete(request):
-    model = get_channel_model()
-    all_channels = _get_all_channels()
-    if not all_channels:
-        return _json_error('暂无频道数据', 503)
+    ctx = get_context()
+    model = get_channel_model() if ctx else None
     try:
         idx = int(request.match_info['id'])
     except ValueError:
         return _json_error('无效的频道ID')
     if model and 0 <= idx < model.rowCount():
         model.remove_channel(idx)
+    elif ctx and hasattr(ctx, '_channels') and 0 <= idx < len(ctx._channels):
+        # standalone 模式（Android）：直接从内存列表删除并持久化
+        ctx._channels.pop(idx)
+        ctx._save_channels_to_cache()
     return _json_success()
 
 
@@ -618,9 +622,14 @@ async def handle_channel_add(request):
     data.setdefault('group', '未分类')
     data.setdefault('valid', None)
     data.setdefault('source', '')  # 空源 = 手动添加/本地频道
-    model = get_channel_model()
+    ctx = get_context()
+    model = get_channel_model() if ctx else None
     if model:
         model.add_channel(data)
+    elif ctx and hasattr(ctx, '_channels'):
+        # standalone 模式（Android）：直接追加到内存列表并持久化
+        ctx._channels.append(data)
+        ctx._save_channels_to_cache()
     return _json_success()
 
 
@@ -641,6 +650,8 @@ async def handle_channels_import(request):
         ctx = get_context()
         if ctx and hasattr(ctx, '_channels'):
             ctx._channels.extend(channels)
+            # 持久化到缓存，重启后不丢失
+            ctx._save_channels_to_cache()
             all_groups = list(dict.fromkeys([c.get('group', '未分组') for c in ctx._channels]))
             ctx._channels_list = all_groups if hasattr(ctx, '_channels_list') else None
         return _json_success(imported=len(channels))

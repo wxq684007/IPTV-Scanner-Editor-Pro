@@ -411,7 +411,24 @@ jobs:
               rm -rf /tmp/mpv-extract
             done
           fi
-          echo "=== Final jniLibs structure ==="
+          echo "=== Final jniLibs structure (before strip) ==="
+          find "$JNILIBS_DIR" -name "*.so" -ls
+
+          # Strip debug symbols from all .so files
+          # 作为安全网：即使 build-libmpv-android.yml 已 strip，这里再确保一次
+          # CAVS 构建（来自 release）的 .so 可能未 strip；mpv-android APK 的 .so 通常已 strip
+          # 使用系统 strip（binutils），兼容所有 ABI 的 ELF 文件
+          echo "=== Stripping debug symbols (safety net) ==="
+          for so_file in $(find "$JNILIBS_DIR" -name "*.so" -type f); do
+            before_size=$(stat -c%s "$so_file")
+            strip --strip-debug "$so_file" 2>/dev/null || true
+            after_size=$(stat -c%s "$so_file")
+            saved=$(( before_size - after_size ))
+            if [ "$saved" -gt 0 ]; then
+              echo "  $(basename $so_file) ($arch): $(( before_size / 1048576 ))MB -> $(( after_size / 1048576 ))MB (saved $(( saved / 1048576 ))MB)"
+            fi
+          done
+          echo "=== Final jniLibs structure (after strip) ==="
           find "$JNILIBS_DIR" -name "*.so" -ls
 
       - name: Create local.properties
