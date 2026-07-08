@@ -24,6 +24,10 @@
          才使用 MANAGE_EXTERNAL_STORAGE。 -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
+    <!-- 开机自启动权限（与酷9 BOOT_START 对齐）：
+         接收 BOOT_COMPLETED 广播，在用户开启"开机自启动"设置后自动启动应用。
+         面向 IPTV 盒子/电视场景，不在 Play Store 分发。 -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- TV 端支持声明（required=false 让应用同时可在手机和 TV 上安装）：
          - leanback: Android TV 特性（D-pad 导航、TV UI 模式）
@@ -56,6 +60,18 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 开机自启动接收器（与酷9 BOOT_START 对齐） -->
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
 
         <!-- FileProvider：用于应用内 APK 更新，把下载好的 APK 通过 content:// URI 分享给系统安装器 -->
         <provider

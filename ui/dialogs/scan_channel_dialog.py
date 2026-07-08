@@ -1920,6 +1920,9 @@ class ScanChannelDialog(FloatingDialog):
 
     def _delete_selected_channels(self):
         """删除选中的频道（支持多选批量删除）"""
+        # 焦点在文本输入框时不拦截 Delete 键（让用户正常删除字符）
+        if self._is_focused_on_text_input():
+            return
         tr = self.language_manager.tr
         indices = self._get_selected_indices()
         if not indices:
@@ -1933,6 +1936,9 @@ class ScanChannelDialog(FloatingDialog):
 
     def _select_all_channels(self):
         """全选频道"""
+        # 焦点在文本输入框时不拦截 Ctrl+A（让用户正常全选文本）
+        if self._is_focused_on_text_input():
+            return
         self.channel_list.selectAll()
 
     def _invert_selection(self):
@@ -2259,6 +2265,26 @@ class ScanChannelDialog(FloatingDialog):
         QShortcut(QKeySequence("Ctrl+F"), self, self._focus_search)
         QShortcut(QKeySequence("Ctrl+A"), self, self._select_all_channels)
         QShortcut(QKeySequence("Delete"), self, self._delete_selected_channels)
+
+    def _is_focused_on_text_input(self) -> bool:
+        """判断当前焦点是否在文本输入控件上（QLineEdit/QPlainTextEdit/QComboBox editable）。
+
+        用于阻止 Delete/Ctrl+A 等快捷键在用户编辑文本时被拦截。
+        """
+        w = QtWidgets.QApplication.focusWidget()
+        if not w:
+            return False
+        text_input_types = (
+            QtWidgets.QLineEdit,
+            QtWidgets.QPlainTextEdit,
+            QtWidgets.QTextEdit,
+        )
+        if isinstance(w, text_input_types):
+            return True
+        # 可编辑的 QComboBox 内部有 QLineEdit
+        if isinstance(w, QtWidgets.QComboBox) and w.isEditable():
+            return True
+        return False
 
     def _focus_search(self):
         """聚焦搜索框"""

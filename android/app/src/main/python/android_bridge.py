@@ -1353,7 +1353,7 @@ def set_admin_token(token=''):
         return _err('服务器运行中，请先停止后再修改令牌')
     _admin_auth_token = token.strip()
     if _admin_auth_token:
-        _log(f'Admin server token set to custom: {_admin_auth_token[:8]}...')
+        _log(f'Admin server token set to custom: {_admin_auth_token}')
     else:
         _log('Admin server token cleared, will auto-generate on start')
     return _ok({'ok': True, 'token': _admin_auth_token})
@@ -1405,9 +1405,10 @@ def start_admin_server(port=8080):
         return _err(f'获取局域网 IP 失败: {e}')
 
     # 生成认证 token（首次启动时生成，之后复用）
+    # 4 位数字令牌，方便 PC 浏览器手动输入
     if not _admin_auth_token:
-        _admin_auth_token = secrets.token_urlsafe(16)
-        _log(f'Admin server auth token generated: {_admin_auth_token[:8]}...')
+        _admin_auth_token = f'{secrets.randbelow(10000):04d}'
+        _log(f'Admin server auth token generated: {_admin_auth_token}')
 
     def _run_server():
         global _admin_server_running, _admin_loop, _admin_server_error, _admin_server_task

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -48,7 +49,7 @@ fun SplashScreen(viewModel: AppViewModel) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
-                modifier = Modifier.padding(24.dp)
+                modifier = Modifier.systemBarsPadding().padding(24.dp)
             ) {
                 // 加载指示器（失败时不显示）
                 if (initState !is AppViewModel.InitState.Failed) {

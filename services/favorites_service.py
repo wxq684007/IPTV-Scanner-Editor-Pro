@@ -171,6 +171,11 @@ class FavoritesService:
             self._play_history.clear()
             self._save_history_to_config()
 
+    def remove_from_history(self, url: str):
+        with self._lock:
+            self._play_history = [h for h in self._play_history if h.get('url', '') != url]
+            self._save_history_to_config()
+
     def clear_favorites(self):
         with self._lock:
             self._favorites.clear()

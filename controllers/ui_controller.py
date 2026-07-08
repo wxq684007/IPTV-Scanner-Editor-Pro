@@ -566,7 +566,53 @@ class UIController:
             self.update_media_info_labels(info, tr)
             self.window._network_base_info = self.window.network_info.text()
 
+            # --- 播放时信号质量评分：从实时媒体信息计算并回写到频道数据 + 更新评分条 ---
+            self._update_channel_quality_from_media_info(info)
+
         except RuntimeError:
+            pass
+
+    def _update_channel_quality_from_media_info(self, info: Dict[str, Any]):
+        """从实时媒体信息计算频道质量评分，回写到频道数据并更新播放列表评分条。
+
+        扫描过的频道（valid 非 None）已有持久化评分，不覆盖。
+        未扫描的频道用实时播放信息动态计算，每次媒体信息变化时更新，
+        直到信息稳定后评分条也就固定了（QualityBarWidget.set_score 内部有去重）。
+        """
+        try:
+            channel = getattr(self.window, 'current_channel', None)
+            if not channel:
+                return
+            url = channel.get('url', '')
+            if not url:
+                return
+
+            # 扫描过的频道已有持久化评分，不覆盖
+            if channel.get('valid') is not None and channel.get('quality_score') is not None:
+                return
+
+            from services.stream_quality_scorer import StreamQualityScorer
+            score_info = StreamQualityScorer.score_from_media_info(info)
+            if score_info is None:
+                return
+
+            total = score_info.get('total', 0)
+            grade = score_info.get('grade', '')
+            resolution = score_info.get('resolution', '')
+
+            # 回写到频道数据（内存中，不持久化到 M3U 文件）
+            channel['quality_score'] = total
+            channel['quality_grade'] = grade
+            if resolution:
+                channel['resolution'] = resolution
+            bitrate_str = score_info.get('bitrate', '')
+            if bitrate_str:
+                channel['bitrate'] = bitrate_str
+
+            # 更新播放列表中对应条目的评分条
+            if hasattr(self.window, 'channel_ctrl'):
+                self.window.channel_ctrl.update_quality_bar_for_url(url, total, grade)
+        except Exception:
             pass
 
     def update_media_info(self):
@@ -1221,6 +1267,17 @@ class UIController:
 
             playback_menu = menu_bar.addMenu(tr("menu_playback", "Playback"))
 
+            # ---- 核心播放控制 ----
+            play_pause = QAction(tr("menu_play_pause", "Play/Pause\tSpace"), self.window)
+            play_pause.triggered.connect(lambda: self.window.playback_ctrl.toggle_play() if hasattr(self.window, 'playback_ctrl') else None)
+            playback_menu.addAction(play_pause)
+
+            stop_play = QAction(tr("menu_stop", "Stop\tEsc"), self.window)
+            stop_play.triggered.connect(lambda: self.window.playback_ctrl.stop_playback() if hasattr(self.window, 'playback_ctrl') else None)
+            playback_menu.addAction(stop_play)
+
+            playback_menu.addSeparator()
+
             prev_channel = QAction(tr("menu_prev_channel", "Previous Channel\t↑"), self.window)
             prev_channel.triggered.connect(lambda: self.window.event_handler._switch_channel(-1) if hasattr(self.window, 'event_handler') else None)
             playback_menu.addAction(prev_channel)
@@ -1235,125 +1292,95 @@ class UIController:
 
             playback_menu.addSeparator()
 
-            play_pause = QAction(tr("menu_play_pause", "Play/Pause\tSpace"), self.window)
-            play_pause.triggered.connect(lambda: self.window.playback_ctrl.toggle_play() if hasattr(self.window, 'playback_ctrl') else None)
-            playback_menu.addAction(play_pause)
-
-            stop_play = QAction(tr("menu_stop", "Stop\tEsc"), self.window)
-            stop_play.triggered.connect(lambda: self.window.playback_ctrl.stop_playback() if hasattr(self.window, 'playback_ctrl') else None)
-            playback_menu.addAction(stop_play)
-
-            playback_menu.addSeparator()
-
+            # ---- 进退/音量/倍速 子菜单 ----
+            seek_menu = playback_menu.addMenu(tr("menu_seek", "Seek"))
             seek_back = QAction(tr("menu_seek_back", "Seek Back\t←"), self.window)
             seek_back.triggered.connect(lambda: self.window.event_handler._seek_relative(-10) if hasattr(self.window, 'event_handler') else None)
-            playback_menu.addAction(seek_back)
-
+            seek_menu.addAction(seek_back)
             seek_forward = QAction(tr("menu_seek_forward", "Seek Forward\t→"), self.window)
             seek_forward.triggered.connect(lambda: self.window.event_handler._seek_relative(10) if hasattr(self.window, 'event_handler') else None)
-            playback_menu.addAction(seek_forward)
+            seek_menu.addAction(seek_forward)
 
-            playback_menu.addSeparator()
-
+            vol_menu = playback_menu.addMenu(tr("menu_volume", "Volume"))
             vol_up = QAction(tr("menu_vol_up", "Volume Up\tScroll Up"), self.window)
             vol_up.triggered.connect(lambda: self.window.event_handler._adjust_volume(5) if hasattr(self.window, 'event_handler') else None)
-            playback_menu.addAction(vol_up)
-
+            vol_menu.addAction(vol_up)
             vol_down = QAction(tr("menu_vol_down", "Volume Down\tScroll Down"), self.window)
             vol_down.triggered.connect(lambda: self.window.event_handler._adjust_volume(-5) if hasattr(self.window, 'event_handler') else None)
-            playback_menu.addAction(vol_down)
-
+            vol_menu.addAction(vol_down)
             mute_action = QAction(tr("menu_mute", "Mute\tCtrl+M"), self.window)
             mute_action.triggered.connect(lambda: self.window.toggle_mute() if hasattr(self.window, 'toggle_mute') else None)
-            playback_menu.addAction(mute_action)
+            vol_menu.addAction(mute_action)
 
-            playback_menu.addSeparator()
-
+            speed_menu = playback_menu.addMenu(tr("menu_speed", "Speed"))
             speed_up = QAction(tr("menu_speed_up", "Speed Up\t."), self.window)
             speed_up.triggered.connect(lambda: self.window.media_ctrl.adjust_speed(0.1))
-            playback_menu.addAction(speed_up)
-
+            speed_menu.addAction(speed_up)
             speed_down = QAction(tr("menu_speed_down", "Speed Down\t,"), self.window)
             speed_down.triggered.connect(lambda: self.window.media_ctrl.adjust_speed(-0.1))
-            playback_menu.addAction(speed_down)
+            speed_menu.addAction(speed_down)
 
             playback_menu.addSeparator()
 
-            screenshot = QAction(tr("menu_screenshot", "Screenshot\tS"), self.window)
-            screenshot.triggered.connect(lambda: self.window.media_ctrl.take_screenshot())
-            playback_menu.addAction(screenshot)
-
-            burst_screenshot = QAction(tr("menu_burst_screenshot", "Burst Screenshot..."), self.window)
-            burst_screenshot.triggered.connect(lambda: self.window.media_ctrl._show_burst_screenshot_dialog() if hasattr(self.window, 'media_ctrl') else None)
-            playback_menu.addAction(burst_screenshot)
-
-            bookmarks = QAction(tr("menu_bookmarks", "Bookmarks & Chapters..."), self.window)
-            bookmarks.triggered.connect(lambda: self.window.media_ctrl._show_bookmark_dialog() if hasattr(self.window, 'media_ctrl') else None)
-            playback_menu.addAction(bookmarks)
-
-            av_sync = QAction(tr("menu_av_sync", "A/V Sync Monitor..."), self.window)
-            av_sync.triggered.connect(lambda: self.window.media_ctrl._show_av_sync_dialog() if hasattr(self.window, 'media_ctrl') else None)
-            playback_menu.addAction(av_sync)
-
-            stream_quality = QAction(tr("menu_stream_quality", "Stream Quality..."), self.window)
-            stream_quality.triggered.connect(lambda: self.window.media_ctrl._show_stream_quality_dialog() if hasattr(self.window, 'media_ctrl') else None)
-            playback_menu.addAction(stream_quality)
-
-            video_3d = QAction(tr("menu_3d_video", "3D / 360° Video..."), self.window)
-            video_3d.triggered.connect(lambda: self.window.media_ctrl._show_3d_dialog() if hasattr(self.window, 'media_ctrl') else None)
-            playback_menu.addAction(video_3d)
-
-            playback_menu.addSeparator()
-
-            audio_menu = playback_menu.addMenu(tr("ctx_audio_track", "Audio Track"))
-            audio_menu.aboutToShow.connect(lambda: self.window.media_ctrl._populate_audio_menu(audio_menu))
-
-            subtitle_menu = playback_menu.addMenu(tr("ctx_subtitle", "Subtitle"))
-            subtitle_menu.aboutToShow.connect(lambda: self.window.media_ctrl._populate_subtitle_menu(subtitle_menu))
-
-            # 字幕样式对话框入口
+            # ---- 音频与字幕 子菜单 ----
+            audio_sub_menu = playback_menu.addMenu(tr("menu_audio_subtitle", "Audio & Subtitle"))
+            audio_track_menu = audio_sub_menu.addMenu(tr("ctx_audio_track", "Audio Track"))
+            audio_track_menu.aboutToShow.connect(lambda: self.window.media_ctrl._populate_audio_menu(audio_track_menu))
+            subtitle_track_menu = audio_sub_menu.addMenu(tr("ctx_subtitle", "Subtitle"))
+            subtitle_track_menu.aboutToShow.connect(lambda: self.window.media_ctrl._populate_subtitle_menu(subtitle_track_menu))
+            audio_sub_menu.addSeparator()
             sub_style = QAction(tr("menu_subtitle_style", "Subtitle Style..."), self.window)
             sub_style.triggered.connect(lambda: self.window.media_ctrl._show_subtitle_style_dialog() if hasattr(self.window, 'media_ctrl') else None)
-            playback_menu.addAction(sub_style)
-
-            # 在线下载字幕入口
+            audio_sub_menu.addAction(sub_style)
             sub_download = QAction(tr("menu_subtitle_download", "Download Subtitle..."), self.window)
             sub_download.triggered.connect(lambda: self.window.media_ctrl._download_subtitle() if hasattr(self.window, 'media_ctrl') else None)
-            playback_menu.addAction(sub_download)
-
-            # 视频图像调整入口
-            video_eq = QAction(tr("menu_video_eq", "Video Equalizer..."), self.window)
-            video_eq.triggered.connect(lambda: self.window.media_ctrl._show_video_eq_dialog() if hasattr(self.window, 'media_ctrl') else None)
-            playback_menu.addAction(video_eq)
-
-            # 音频调整入口
+            audio_sub_menu.addAction(sub_download)
+            audio_sub_menu.addSeparator()
             audio_eq = QAction(tr("menu_audio_eq", "Audio Equalizer..."), self.window)
             audio_eq.triggered.connect(lambda: self.window.media_ctrl._show_audio_eq_dialog() if hasattr(self.window, 'media_ctrl') else None)
-            playback_menu.addAction(audio_eq)
+            audio_sub_menu.addAction(audio_eq)
 
-            # 切片导出 + GIF 制作入口
+            # ---- 视频与图像 子菜单 ----
+            video_img_menu = playback_menu.addMenu(tr("menu_video_image", "Video & Image"))
+            video_eq = QAction(tr("menu_video_eq", "Video Equalizer..."), self.window)
+            video_eq.triggered.connect(lambda: self.window.media_ctrl._show_video_eq_dialog() if hasattr(self.window, 'media_ctrl') else None)
+            video_img_menu.addAction(video_eq)
+            screenshot = QAction(tr("menu_screenshot", "Screenshot\tS"), self.window)
+            screenshot.triggered.connect(lambda: self.window.media_ctrl.take_screenshot())
+            video_img_menu.addAction(screenshot)
+            burst_screenshot = QAction(tr("menu_burst_screenshot", "Burst Screenshot..."), self.window)
+            burst_screenshot.triggered.connect(lambda: self.window.media_ctrl._show_burst_screenshot_dialog() if hasattr(self.window, 'media_ctrl') else None)
+            video_img_menu.addAction(burst_screenshot)
+            video_img_menu.addSeparator()
             clip_export = QAction(tr("menu_clip_export", "Clip Export / GIF..."), self.window)
             clip_export.triggered.connect(self._open_clip_export_dialog)
-            playback_menu.addAction(clip_export)
+            video_img_menu.addAction(clip_export)
 
-            playback_menu.addSeparator()
-
-            # 播放队列与控制入口
+            # ---- 高级工具 子菜单 ----
+            adv_tools_menu = playback_menu.addMenu(tr("menu_advanced_tools", "Advanced Tools"))
+            bookmarks = QAction(tr("menu_bookmarks", "Bookmarks & Chapters..."), self.window)
+            bookmarks.triggered.connect(lambda: self.window.media_ctrl._show_bookmark_dialog() if hasattr(self.window, 'media_ctrl') else None)
+            adv_tools_menu.addAction(bookmarks)
+            av_sync = QAction(tr("menu_av_sync", "A/V Sync Monitor..."), self.window)
+            av_sync.triggered.connect(lambda: self.window.media_ctrl._show_av_sync_dialog() if hasattr(self.window, 'media_ctrl') else None)
+            adv_tools_menu.addAction(av_sync)
+            stream_quality = QAction(tr("menu_stream_quality", "Stream Quality..."), self.window)
+            stream_quality.triggered.connect(lambda: self.window.media_ctrl._show_stream_quality_dialog() if hasattr(self.window, 'media_ctrl') else None)
+            adv_tools_menu.addAction(stream_quality)
+            video_3d = QAction(tr("menu_3d_video", "3D / 360° Video..."), self.window)
+            video_3d.triggered.connect(lambda: self.window.media_ctrl._show_3d_dialog() if hasattr(self.window, 'media_ctrl') else None)
+            adv_tools_menu.addAction(video_3d)
+            adv_tools_menu.addSeparator()
             playback_queue = QAction(tr("menu_playback_queue", "Playback Queue..."), self.window)
             playback_queue.triggered.connect(lambda: self.window.media_ctrl._show_playback_queue_dialog() if hasattr(self.window, 'media_ctrl') else None)
-            playback_menu.addAction(playback_queue)
-
-            # 断点续播列表入口
+            adv_tools_menu.addAction(playback_queue)
             resume_list = QAction(tr("menu_resume_list", "Resume Positions..."), self.window)
             resume_list.triggered.connect(lambda: self.window.media_ctrl._show_resume_list_dialog() if hasattr(self.window, 'media_ctrl') else None)
-            playback_menu.addAction(resume_list)
-
-            playback_menu.addSeparator()
-
-            # 网络流媒体增强入口
+            adv_tools_menu.addAction(resume_list)
+            adv_tools_menu.addSeparator()
             network_enhance = QAction(tr("menu_network_enhance", "Network Enhance..."), self.window)
             network_enhance.triggered.connect(lambda: self.window.media_ctrl._show_network_enhance_dialog() if hasattr(self.window, 'media_ctrl') else None)
-            playback_menu.addAction(network_enhance)
+            adv_tools_menu.addAction(network_enhance)
 
             view_menu = menu_bar.addMenu(tr("menu_view", "View"))
 

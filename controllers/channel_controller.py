@@ -410,3 +410,39 @@ class ChannelController:
         if self.window.group_combo:
             return self.window.group_combo.currentText()
         return ""
+
+    def update_quality_bar_for_url(self, url: str, score: float, grade: str = ''):
+        """播放过程中获取到媒体信息后，更新播放列表中对应频道的评分条。
+
+        遍历 sub_channel_list 和 local_channel_list，找到 URL 匹配的条目，
+        通过 findChild 找到 QualityBarWidget 并调用 set_score。
+
+        Args:
+            url: 频道 URL
+            score: 质量评分 (0~100)
+            grade: 质量等级 (A/B/C/D/F)
+        """
+        if not url:
+            return
+        for list_attr in ('sub_channel_list', 'local_channel_list'):
+            cl = getattr(self.window, list_attr, None)
+            if not cl:
+                continue
+            for i in range(cl.count()):
+                item = cl.item(i)
+                if not item:
+                    continue
+                idx = item.data(Qt.ItemDataRole.UserRole)
+                channels = getattr(self.window, '_sub_channels', None) if list_attr == 'sub_channel_list' \
+                    else getattr(self.window, '_local_channels', None)
+                if not isinstance(idx, int) or not channels or idx >= len(channels):
+                    continue
+                if channels[idx].get('url', '') != url:
+                    continue
+                # 找到匹配的条目，更新评分条
+                item_widget = cl.itemWidget(item)
+                if item_widget:
+                    bar = item_widget.findChild(QualityBarWidget, "quality_bar")
+                    if bar:
+                        bar.set_score(score, grade)
+                break

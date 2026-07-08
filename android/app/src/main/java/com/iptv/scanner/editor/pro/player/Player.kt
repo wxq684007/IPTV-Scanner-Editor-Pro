@@ -5,11 +5,20 @@ import kotlinx.coroutines.flow.StateFlow
 /**
  * 播放器类型枚举。
  *
- * 仅保留 MPV 内核，与 PC 端统一。
+ * 三种播放器内核可切换（与酷9多解码器架构对齐）：
  * - [MPV]：mpv (libmpv)，通过 JNI 调用，功能最完整（EQ/AB循环/逐帧/章节/截图/HDR等）
+ * - [EXO]：ExoPlayer 硬解，Google Media3 引擎，HLS/DASH/RTSP 兼容性好
+ * - [SYSTEM]：系统解码（ExoPlayer 软解），兼容性 fallback
  */
 enum class PlayerType(val displayName: String, val description: String) {
-    MPV("mpv", "功能最完整（EQ/AB循环/逐帧/截图/HDR）")
+    MPV("mpv", "功能最完整（EQ/AB循环/逐帧/截图/HDR）"),
+    EXO("ExoPlayer", "Google ExoPlayer 硬解（HLS/DASH/RTSP 兼容性好）"),
+    SYSTEM("系统解码", "系统解码软解（兼容性 fallback）");
+
+    companion object {
+        fun fromName(name: String?): PlayerType =
+            entries.firstOrNull { it.name == name } ?: MPV
+    }
 }
 
 /**

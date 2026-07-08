@@ -34,6 +34,7 @@ class MediaController:
         pc = self.window.player_controller
         is_playing = pc and (pc.is_playing or getattr(pc, 'is_paused', False))
 
+        # ---- 核心播放控制 ----
         if is_playing:
             play_pause_text = tr("ctx_pause", "Pause") if not getattr(pc, 'is_paused', False) else tr("ctx_play", "Play")
             menu.addAction(play_pause_text, lambda *a: self.window.playback_ctrl.toggle_play())
@@ -44,8 +45,9 @@ class MediaController:
             menu.addAction(tr("ctx_prev_channel", "Previous Channel"), lambda *a: self.window.event_handler._switch_channel(-1))
             menu.addAction(tr("ctx_next_channel", "Next Channel"), lambda *a: self.window.event_handler._switch_channel(1))
 
-            menu.addSeparator()
+        menu.addSeparator()
 
+        # ---- 倍速/音量/比例 子菜单 ----
         speed_menu = menu.addMenu(tr("ctx_speed", "Speed"))
         speed_menu.setStyleSheet(AppStyles.player_menu_bar_style())
         try:
@@ -85,37 +87,37 @@ class MediaController:
             label = aspect_labels.get(ratio, ratio) + (" ✓" if ratio == current_ratio else "")
             aspect_menu.addAction(label, lambda *a, r=ratio: self._set_aspect(r))
 
+        # ---- 播放中：音频与字幕 / 工具 子菜单 ----
         if is_playing:
-            # 播放队列与控制入口
-            menu.addAction(tr("ctx_playback_queue", "Playback Queue..."), lambda *a: self._show_playback_queue_dialog())
-            # 断点续播列表入口
-            menu.addAction(tr("ctx_resume_list", "Resume Positions..."), lambda *a: self._show_resume_list_dialog())
+            menu.addSeparator()
 
-            audio_menu = menu.addMenu(tr("ctx_audio_track", "Audio Track"))
-            audio_menu.setStyleSheet(AppStyles.player_menu_bar_style())
-            self._populate_audio_menu(audio_menu)
+            # 音频与字幕
+            audio_sub_menu = menu.addMenu(tr("ctx_audio_subtitle", "Audio & Subtitle"))
+            audio_sub_menu.setStyleSheet(AppStyles.player_menu_bar_style())
+            audio_track_menu = audio_sub_menu.addMenu(tr("ctx_audio_track", "Audio Track"))
+            audio_track_menu.setStyleSheet(AppStyles.player_menu_bar_style())
+            self._populate_audio_menu(audio_track_menu)
+            sub_track_menu = audio_sub_menu.addMenu(tr("ctx_subtitle", "Subtitle"))
+            sub_track_menu.setStyleSheet(AppStyles.player_menu_bar_style())
+            self._populate_subtitle_menu(sub_track_menu)
+            audio_sub_menu.addSeparator()
+            audio_sub_menu.addAction(tr("ctx_audio_eq", "Audio Equalizer..."), lambda *a: self._show_audio_eq_dialog())
+            audio_sub_menu.addAction(tr("ctx_video_eq", "Video Equalizer..."), lambda *a: self._show_video_eq_dialog())
 
-            # 音频调整入口
-            menu.addAction(tr("ctx_audio_eq", "Audio Equalizer..."), lambda *a: self._show_audio_eq_dialog())
-
-            sub_menu = menu.addMenu(tr("ctx_subtitle", "Subtitle"))
-            sub_menu.setStyleSheet(AppStyles.player_menu_bar_style())
-            self._populate_subtitle_menu(sub_menu)
-
-            # 视频图像调整入口
-            menu.addAction(tr("ctx_video_eq", "Video Equalizer..."), lambda *a: self._show_video_eq_dialog())
-
-            # 书签/章节入口
-            menu.addAction(tr("ctx_bookmarks", "Bookmarks & Chapters..."), lambda *a: self._show_bookmark_dialog())
-
-            # A/V 同步监控入口
-            menu.addAction(tr("ctx_av_sync", "A/V Sync Monitor..."), lambda *a: self._show_av_sync_dialog())
-
-            # 流质量检测入口
-            menu.addAction(tr("ctx_stream_quality", "Stream Quality..."), lambda *a: self._show_stream_quality_dialog())
-
-            # 3D / 360° 视频入口
-            menu.addAction(tr("ctx_3d_video", "3D / 360° Video..."), lambda *a: self._show_3d_dialog())
+            # 工具
+            tools_menu = menu.addMenu(tr("ctx_tools", "Tools"))
+            tools_menu.setStyleSheet(AppStyles.player_menu_bar_style())
+            tools_menu.addAction(tr("ctx_screenshot", "Screenshot\tS"), lambda *a: self._take_screenshot())
+            tools_menu.addAction(tr("ctx_burst_screenshot", "Burst Screenshot..."), lambda *a: self._show_burst_screenshot_dialog())
+            tools_menu.addSeparator()
+            tools_menu.addAction(tr("ctx_bookmarks", "Bookmarks & Chapters..."), lambda *a: self._show_bookmark_dialog())
+            tools_menu.addAction(tr("ctx_av_sync", "A/V Sync Monitor..."), lambda *a: self._show_av_sync_dialog())
+            tools_menu.addAction(tr("ctx_stream_quality", "Stream Quality..."), lambda *a: self._show_stream_quality_dialog())
+            tools_menu.addAction(tr("ctx_3d_video", "3D / 360° Video..."), lambda *a: self._show_3d_dialog())
+            tools_menu.addSeparator()
+            tools_menu.addAction(tr("ctx_playback_queue", "Playback Queue..."), lambda *a: self._show_playback_queue_dialog())
+            tools_menu.addAction(tr("ctx_resume_list", "Resume Positions..."), lambda *a: self._show_resume_list_dialog())
+            tools_menu.addAction(tr("ctx_network_enhance", "Network Enhance..."), lambda *a: self._show_network_enhance_dialog())
 
             # HDR 模式子菜单
             self._populate_hdr_submenu(menu)
@@ -130,10 +132,6 @@ class MediaController:
             self._populate_lyrics_menu(lyrics_menu)
 
         menu.addSeparator()
-
-        if is_playing:
-            menu.addAction(tr("ctx_screenshot", "Screenshot\tS"), lambda *a: self._take_screenshot())
-            menu.addAction(tr("ctx_burst_screenshot", "Burst Screenshot..."), lambda *a: self._show_burst_screenshot_dialog())
 
         menu.addAction(tr("ctx_fullscreen", "Fullscreen\tF11"), lambda *a: self.window.toggle_fullscreen())
         menu.addAction(tr("ctx_pip", "Picture-in-Picture\tP"), lambda *a: self.window.pip_ctrl.toggle())

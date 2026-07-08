@@ -33,22 +33,11 @@ class EpgMixin:
         start = program.get('start', '')
         end = program.get('end', '')
 
-        has_reminder = self.epg_reminder_ctrl.has_reminder(ch_name, prog_title, start)
-        if has_reminder:
-            reminder_action = QAction(tr('epg_cancel_reminder', '取消提醒'), menu)
-            reminder_action.triggered.connect(lambda: self.epg_reminder_ctrl.toggle_reminder_for_program(
-                ch_name, prog_title, start, end, self.current_channel.get('tvg_id', '') if self.current_channel else ''))
-        else:
-            reminder_action = QAction(tr('epg_set_reminder', '设置提醒'), menu)
-            reminder_action.triggered.connect(lambda: self.epg_reminder_ctrl.toggle_reminder_for_program(
-                ch_name, prog_title, start, end, self.current_channel.get('tvg_id', '') if self.current_channel else ''))
-        menu.addAction(reminder_action)
-
+        # 回看（已结束的节目且频道支持回看）
         try:
             start_dt = datetime.fromisoformat(start)
             end_dt = datetime.fromisoformat(end)
             now = datetime.now()
-            # 判断是否支持回看：有 catchup_source/catchup 字段，或 URL 匹配 PLTV/SNM 等可回看模式
             supports_catchup = bool(self.current_channel and (
                 self.current_channel.get('catchup_source', '')
                 or self.current_channel.get('catchup', '')
@@ -64,10 +53,89 @@ class EpgMixin:
                 catchup_action = QAction(tr('menu_catchup', '回看'), menu)
                 catchup_action.triggered.connect(lambda: self.catchup_ctrl.start_catchup(program))
                 menu.addAction(catchup_action)
+                menu.addSeparator()
         except Exception:
             pass
 
+        # 提醒
+        has_reminder = self.epg_reminder_ctrl.has_reminder(ch_name, prog_title, start)
+        if has_reminder:
+            reminder_action = QAction(tr('epg_cancel_reminder', '取消提醒'), menu)
+            reminder_action.triggered.connect(lambda: self.epg_reminder_ctrl.toggle_reminder_for_program(
+                ch_name, prog_title, start, end, self.current_channel.get('tvg_id', '') if self.current_channel else ''))
+        else:
+            reminder_action = QAction(tr('epg_set_reminder', '设置提醒'), menu)
+            reminder_action.triggered.connect(lambda: self.epg_reminder_ctrl.toggle_reminder_for_program(
+                ch_name, prog_title, start, end, self.current_channel.get('tvg_id', '') if self.current_channel else ''))
+        menu.addAction(reminder_action)
+
+        menu.addSeparator()
+
+        # 复制节目信息
+        copy_title_action = QAction(tr('epg_copy_title', '复制节目标题'), menu)
+        copy_title_action.triggered.connect(lambda: self._epg_copy_text(prog_title))
+        menu.addAction(copy_title_action)
+
+        # 复制完整节目信息（频道 + 时间 + 标题）
+        try:
+            start_dt2 = datetime.fromisoformat(start) if start else None
+            end_dt2 = datetime.fromisoformat(end) if end else None
+            time_str = ''
+            if start_dt2 and end_dt2:
+                time_str = f"{start_dt2.strftime('%Y-%m-%d %H:%M')} - {end_dt2.strftime('%H:%M')}"
+            elif start_dt2:
+                time_str = start_dt2.strftime('%Y-%m-%d %H:%M')
+            full_info = f"{ch_name}  {time_str}\n{prog_title}"
+            if program.get('desc'):
+                full_info += f"\n{program.get('desc', '')}"
+            copy_info_action = QAction(tr('epg_copy_info', '复制节目信息'), menu)
+            copy_info_action.triggered.connect(lambda: self._epg_copy_text(full_info))
+            menu.addAction(copy_info_action)
+        except Exception:
+            pass
+
+        menu.addSeparator()
+
+        # 跳转到此节目所在频道
+        if ch_name and self.current_channel:
+            goto_ch_action = QAction(tr('epg_goto_channel', '定位到当前频道'), menu)
+            goto_ch_action.triggered.connect(lambda: self._epg_goto_current_channel())
+            menu.addAction(goto_ch_action)
+
         menu.exec(self.epg_content.mapToGlobal(pos))
+
+    def _epg_copy_text(self, text):
+        if not text:
+            return
+        from PySide6.QtWidgets import QApplication
+        QApplication.clipboard().setText(text)
+        tr = self.language_manager.tr
+        self.status_bar_show_message(tr('copied_to_clipboard', '已复制到剪贴板'))
+
+    def _epg_goto_current_channel(self):
+        """在播放列表中定位并选中当前频道"""
+        if not self.current_channel:
+            return
+        ch_name = self.current_channel.get('name', '')
+        if not ch_name:
+            return
+        # 在订阅和本地列表中搜索
+        for list_widget, channels in [
+            (self.sub_channel_list, getattr(self, '_sub_channels', [])),
+            (self.local_channel_list, getattr(self, '_local_channels', [])),
+        ]:
+            if not list_widget or not channels:
+                continue
+            for i in range(list_widget.count()):
+                lw_item = list_widget.item(i)
+                if not lw_item:
+                    continue
+                idx = lw_item.data(Qt.ItemDataRole.UserRole)
+                if isinstance(idx, int) and 0 <= idx < len(channels):
+                    if channels[idx].get('name', '') == ch_name:
+                        list_widget.setCurrentRow(i)
+                        list_widget.scrollToItem(lw_item)
+                        return
 
     def start_catchup(self, program):
         self.catchup_ctrl.start_catchup(program)

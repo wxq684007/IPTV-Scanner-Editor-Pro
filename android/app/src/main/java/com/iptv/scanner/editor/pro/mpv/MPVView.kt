@@ -79,12 +79,19 @@ class MPVView @JvmOverloads constructor(
         MPVLib.setOptionString("keep-open", "yes")
         MPVLib.setOptionString("keepaspect", "yes")
         MPVLib.setOptionString("keepaspect-window", "no")
-        // HDR 支持：使用 16-bit 浮点 FBO 格式，允许 HDR 内容以高色深渲染
-        // 8-bit rgba8 会截断 HDR 信号为 SDR 导致色彩信息丢失
-        MPVLib.setOptionString("fbo-format", "rgba16hf")
-        // 启用 target-colorspace-hint 让 Android 系统自动切换 HDR 显示模式
-        // mpv 通过 SurfaceView 传递 HDR 元数据给系统，系统自动切换到 HDR 显示
-        MPVLib.setOptionString("target-colorspace-hint", "yes")
+        // FBO 格式：根据 HDR 模式选择。
+        // rgba16hf（16-bit 半浮点）允许 HDR 内容以高色深渲染，但很多 GPU（尤其
+        // 电视盒子如 Homatics、部分 Mali/Adreno）不支持 16-bit 浮点帧缓冲，
+        // EGL 初始化成功但 FBO 创建失败 → 黑屏（无画面）。
+        // 默认用 rgba8（8-bit，全设备兼容），仅在 HDR 模式非 disable 时使用 rgba16hf。
+        val hdrMode = UserPrefs.getInstance().getHdrMode()
+        val fboFormat = if (hdrMode == "disable") "rgba8" else "rgba16hf"
+        MPVLib.setOptionString("fbo-format", fboFormat)
+        // target-colorspace-hint：仅 HDR 模式启用。
+        // 部分设备显示控制器无法处理 colorspace 切换信号，会导致黑屏。
+        if (hdrMode != "disable") {
+            MPVLib.setOptionString("target-colorspace-hint", "yes")
+        }
 
         MPVLib.setOptionString("framedrop", "all")
         MPVLib.setOptionString("video-sync", "audio")
@@ -109,10 +116,15 @@ class MPVView @JvmOverloads constructor(
         val threads = maxOf(2, cpuCount / 2)
         MPVLib.setOptionString("vd-lavc-threads", threads.toString())
 
-        MPVLib.init()
-
+        // force-window 和 idle 必须在 init() 之前设置！
+        // libmpv 的 mpv_set_option_string() 只在 mpv_initialize() 之前有效，
+        // init() 之后调用会静默失败（返回错误码但代码未检查），导致选项从未生效。
+        // - force-window=no：无文件时不创建视频窗口（避免空窗口占用 GPU 资源）
+        // - idle=once：播放结束后保持 mpv 实例存活（配合 keep-open=yes）
         MPVLib.setOptionString("force-window", "no")
         MPVLib.setOptionString("idle", "once")
+
+        MPVLib.init()
 
         updateLogLevel()
 
@@ -223,7 +235,8 @@ class MPVView @JvmOverloads constructor(
             val s = holder.surface
             if (s != null && s.isValid) {
                 MPVLib.attachSurface(s)
-                MPVLib.setOptionString("force-window", "yes")
+                // setPropertyString（非 setOptionString）：init() 之后只能用属性方式设置
+                MPVLib.setPropertyString("force-window", "yes")
                 MPVLib.setPropertyString("vo", vo)
                 Log.i(TAG, "reattachSurfaceWithVo: attached surface with vo=$vo")
             } else {
@@ -274,7 +287,9 @@ class MPVView @JvmOverloads constructor(
         Log.i(TAG, "surfaceCreated: attaching surface (vo=$voInUse)")
         try {
             MPVLib.attachSurface(holder.surface)
-            MPVLib.setOptionString("force-window", "yes")
+            // force-window 在 init() 之后只能用 setPropertyString（运行时属性），
+            // setOptionString 在 init() 后静默失败，曾导致 force-window 从未设为 yes。
+            MPVLib.setPropertyString("force-window", "yes")
             // 关键：surfaceCreated 必须总是把 vo 切回有效值。
             // destroy() 中会设置 vo=null 释放 vo 模块，这里恢复。
             MPVLib.setPropertyString("vo", voInUse)

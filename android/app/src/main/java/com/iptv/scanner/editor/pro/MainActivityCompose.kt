@@ -8,6 +8,7 @@ import android.view.KeyEvent
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -72,6 +73,10 @@ class MainActivityCompose : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 启用 edge-to-edge（沉浸式布局）：让内容绘制到状态栏/导航栏后面。
+        // Android 15 (targetSdk 35) 已强制此行为，旧版本需主动调用以保持一致。
+        // 视频播放器全屏沉浸（延伸到状态栏后），控制层/面板通过 systemBarsPadding 避让系统栏。
+        enableEdgeToEdge()
         Log.i(TAG, "onCreate")
 
         setContent {
@@ -145,6 +150,33 @@ class MainActivityCompose : ComponentActivity() {
         val initState = viewModel.initState.value
         if (initState !is AppViewModel.InitState.Ready) {
             return super.onKeyDown(keyCode, event)
+        }
+
+        // 数字选台（与酷9 CHANNEL_NUMBER 对齐）：
+        // 用户按数字键 0-9 时，累积输入并显示在 OSD 上。
+        // 2秒内无新输入或按确认键(DPAD_CENTER/ENTER)时，切到对应频道。
+        val digit = when (keyCode) {
+            KeyEvent.KEYCODE_0 -> 0
+            KeyEvent.KEYCODE_1 -> 1
+            KeyEvent.KEYCODE_2 -> 2
+            KeyEvent.KEYCODE_3 -> 3
+            KeyEvent.KEYCODE_4 -> 4
+            KeyEvent.KEYCODE_5 -> 5
+            KeyEvent.KEYCODE_6 -> 6
+            KeyEvent.KEYCODE_7 -> 7
+            KeyEvent.KEYCODE_8 -> 8
+            KeyEvent.KEYCODE_9 -> 9
+            else -> -1
+        }
+        if (digit >= 0) {
+            viewModel.inputChannelNumber(digit)
+            return true
+        }
+        // 确认键：立即执行数字选台
+        if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER) {
+            if (viewModel.commitChannelNumber()) {
+                return true
+            }
         }
 
         // BACK 键：先关闭面板 → 再退出多画面 → 再退出回看/时移 → 最后显示退出确认对话框

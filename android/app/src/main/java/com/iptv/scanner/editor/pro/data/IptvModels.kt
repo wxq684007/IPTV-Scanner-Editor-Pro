@@ -282,6 +282,62 @@ data class SubtitleSearchResponse(
 )
 
 // -----------------------------------------------------------------
+// 倍速双步进控制配置（与酷9 Speed_value 对齐）
+// -----------------------------------------------------------------
+
+/**
+ * 倍速参数配置。
+ *
+ * @param min 最小倍速（如 0.5）
+ * @param max 最大倍速（如 3.0）
+ * @param slowStep 慢放步进（如 0.25，速度 < 1.0 时使用）
+ * @param fastStep 快放步进（如 0.5，速度 >= 1.0 且 < threshold 时使用）
+ * @param fastStep2 二级快放步进（如 1.0，速度 >= threshold 时使用）
+ * @param fastStep2Threshold 二级快放触发阈值（如 2.0）
+ */
+data class SpeedConfig(
+    val min: Double = 0.5,
+    val max: Double = 3.0,
+    val slowStep: Double = 0.25,
+    val fastStep: Double = 0.5,
+    val fastStep2: Double = 1.0,
+    val fastStep2Threshold: Double = 2.0
+) {
+    /**
+     * 根据当前速度计算加速后的新速度。
+     * - 速度 < 1.0：用 slowStep（从慢放区域逐步加速到 1.0）
+     * - 1.0 <= 速度 < threshold：用 fastStep
+     * - 速度 >= threshold：用 fastStep2（大步进快速到达 max）
+     */
+    fun speedUp(current: Double): Double {
+        val step = when {
+            current < 1.0 -> slowStep
+            current < fastStep2Threshold -> fastStep
+            else -> fastStep2
+        }
+        return (current + step).coerceIn(min, max)
+    }
+
+    /**
+     * 根据当前速度计算减速后的新速度。
+     * - 速度 > threshold：用 fastStep2（从高速区域大步减速）
+     * - 1.0 < 速度 <= threshold：用 fastStep
+     * - 速度 <= 1.0：用 slowStep（逐步减速到 min）
+     */
+    fun speedDown(current: Double): Double {
+        val step = when {
+            current > fastStep2Threshold -> fastStep2
+            current > 1.0 -> fastStep
+            else -> slowStep
+        }
+        return (current - step).coerceIn(min, max)
+    }
+
+    /** 格式化为酷9配置字符串 */
+    fun toConfigString(): String = "$min,$max,$slowStep,$fastStep,$fastStep2,$fastStep2Threshold"
+}
+
+// -----------------------------------------------------------------
 // 通用响应
 // -----------------------------------------------------------------
 

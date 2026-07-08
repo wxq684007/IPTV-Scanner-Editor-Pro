@@ -217,6 +217,10 @@ class UserPrefs private constructor() {
             .remove(KEY_HDR_MODE)
             .remove(KEY_RTSP_TRANSPORT)
             .remove(KEY_DEINTERLACE)
+            .remove(KEY_TIMEOUT_SWITCH_SOURCE)
+            .remove(KEY_RECONNECT_INDEX)
+            .remove(KEY_SCREEN_LOCK)
+            .remove(KEY_SPEED_PARAMS)
             .apply()
     }
 
@@ -226,11 +230,178 @@ class UserPrefs private constructor() {
     // 保留持久化字段以兼容旧版配置，实际仅支持 MPV。
     // -----------------------------------------------------------------
 
-    /** 获取持久化的播放器类型名称，固定返回 "MPV" */
-    fun getPlayerType(): String = "MPV"
+    /**
+     * 获取持久化的播放器类型名称。
+     * - "MPV"：mpv 内核（默认，功能最完整）
+     * - "SYSTEM"：系统解码（ExoPlayer，兼容性 fallback）
+     */
+    fun getPlayerType(): String = prefs.getString(KEY_PLAYER_TYPE, DEFAULT_PLAYER_TYPE) ?: DEFAULT_PLAYER_TYPE
 
     fun setPlayerType(type: String) {
-        prefs.edit().putString(KEY_PLAYER_TYPE, "MPV").apply()
+        prefs.edit().putString(KEY_PLAYER_TYPE, type).apply()
+    }
+
+    // -----------------------------------------------------------------
+    // 超时换源（与酷9 LIVE_CONNECT_TIMEOUT 对齐）
+    //
+    // 0=5s, 1=10s, 2=15s, 3=20s, 4=25s, 5=30s
+    // 播放超时后自动切换到下一个源
+    // -----------------------------------------------------------------
+
+    /** 获取超时换源档位（0-5），默认 1（10秒） */
+    fun getTimeoutSwitchSource(): Int = prefs.getInt(KEY_TIMEOUT_SWITCH_SOURCE, DEFAULT_TIMEOUT_SWITCH_SOURCE)
+
+    fun setTimeoutSwitchSource(value: Int) {
+        prefs.edit().putInt(KEY_TIMEOUT_SWITCH_SOURCE, value).apply()
+    }
+
+    /** 超时换源档位对应的毫秒值 */
+    fun getTimeoutMs(): Long = when (getTimeoutSwitchSource()) {
+        0 -> 5_000L
+        1 -> 10_000L
+        2 -> 15_000L
+        3 -> 20_000L
+        4 -> 25_000L
+        5 -> 30_000L
+        else -> 10_000L
+    }
+
+    // -----------------------------------------------------------------
+    // 断线重连（与酷9 RECONNECT_INDEX 对齐）
+    //
+    // 0=关闭, 1=1s, 2=3s, 3=5s, 4=10s, 5=20s
+    // -----------------------------------------------------------------
+
+    /** 获取断线重连档位（0-5），默认 0（关闭） */
+    fun getReconnectIndex(): Int = prefs.getInt(KEY_RECONNECT_INDEX, DEFAULT_RECONNECT_INDEX)
+
+    fun setReconnectIndex(value: Int) {
+        prefs.edit().putInt(KEY_RECONNECT_INDEX, value).apply()
+    }
+
+    /** 断线重连档位对应的延迟毫秒值，0 表示关闭 */
+    fun getReconnectDelayMs(): Long = when (getReconnectIndex()) {
+        0 -> 0L
+        1 -> 1_000L
+        2 -> 3_000L
+        3 -> 5_000L
+        4 -> 10_000L
+        5 -> 20_000L
+        else -> 0L
+    }
+
+    // -----------------------------------------------------------------
+    // 开机自启动（与酷9 BOOT_START 对齐）
+    // -----------------------------------------------------------------
+
+    /** 是否开启开机自启动，默认 false */
+    fun getBootStart(): Boolean = prefs.getBoolean(KEY_BOOT_START, false)
+
+    fun setBootStart(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_BOOT_START, enabled).apply()
+    }
+
+    // -----------------------------------------------------------------
+    // EPG 时区偏移（与酷9 TIME_ZONE_SELECT 对齐）
+    //
+    // 0=默认时区, 1=-12h, 2=-11h, ..., 13=+0h(默认), ..., 24=+11h, 25=+12h
+    // -----------------------------------------------------------------
+
+    /** 获取 EPG 时区偏移档位（0-25），默认 0（默认时区） */
+    fun getEpgTimezoneOffset(): Int = prefs.getInt(KEY_EPG_TIMEZONE_OFFSET, 0)
+
+    fun setEpgTimezoneOffset(value: Int) {
+        prefs.edit().putInt(KEY_EPG_TIMEZONE_OFFSET, value.coerceIn(0, 25)).apply()
+    }
+
+    /** EPG 时区偏移的小时数（-12 到 +12，0 表示默认） */
+    fun getEpgTimezoneOffsetHours(): Int {
+        val idx = getEpgTimezoneOffset()
+        if (idx == 0) return 0
+        return idx - 13  // 1→-12, 13→0, 25→+12
+    }
+
+    // -----------------------------------------------------------------
+    // EPG 缓存定时策略（与酷9 EPGCACHE_SELECT 对齐）
+    //
+    // 0=关闭缓存, 1=每天2点, 2=每天4点, 3=每天6点, 4=每天8点,
+    // 5=每天10点, 6=每天12点, 7=每天14点, 8=每天16点,
+    // 9=每天18点, 10=每天20点, 11=每天22点
+    // -----------------------------------------------------------------
+
+    /** 获取 EPG 缓存定时档位（0-11），默认 4（每天8点） */
+    fun getEpgCacheSchedule(): Int = prefs.getInt(KEY_EPG_CACHE_SCHEDULE, DEFAULT_EPG_CACHE_SCHEDULE)
+
+    fun setEpgCacheSchedule(value: Int) {
+        prefs.edit().putInt(KEY_EPG_CACHE_SCHEDULE, value.coerceIn(0, 11)).apply()
+    }
+
+    /** EPG 缓存定时档位对应的小时（0-23），-1 表示关闭 */
+    fun getEpgCacheHour(): Int {
+        val idx = getEpgCacheSchedule()
+        if (idx == 0) return -1
+        return (idx - 1) * 2  // 1→0, 2→2, 3→4, ..., 11→20
+    }
+
+    // -----------------------------------------------------------------
+    // 画面锁定/换源不黑屏（与酷9 EYE_PROTECTION 对齐）
+    //
+    // true=切换源时保持最后一个画面（keep-open）
+    // false=切换源黑屏一下
+    // -----------------------------------------------------------------
+
+    /** 是否开启画面锁定（换源不黑屏），默认 true */
+    fun getScreenLock(): Boolean = prefs.getBoolean(KEY_SCREEN_LOCK, true)
+
+    fun setScreenLock(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_SCREEN_LOCK, enabled).apply()
+    }
+
+    // -----------------------------------------------------------------
+    // 倍速双步进控制（与酷9 Speed_value 对齐）
+    //
+    // 格式: min,max,slowStep,fastStep,fastStep2,fastStep2Threshold
+    // 例如: 0.5,3,0.25,0.5,1,2
+    // -----------------------------------------------------------------
+
+    /** 获取倍速参数字符串，默认 "0.5,3,0.25,0.5,1,2" */
+    fun getSpeedParams(): String = prefs.getString(KEY_SPEED_PARAMS, DEFAULT_SPEED_PARAMS) ?: DEFAULT_SPEED_PARAMS
+
+    fun setSpeedParams(params: String) {
+        prefs.edit().putString(KEY_SPEED_PARAMS, params).apply()
+    }
+
+    /** 解析倍速参数为 SpeedConfig */
+    fun getSpeedConfig(): SpeedConfig {
+        val parts = getSpeedParams().split(",")
+        return try {
+            SpeedConfig(
+                min = parts.getOrNull(0)?.toDoubleOrNull() ?: 0.5,
+                max = parts.getOrNull(1)?.toDoubleOrNull() ?: 3.0,
+                slowStep = parts.getOrNull(2)?.toDoubleOrNull() ?: 0.25,
+                fastStep = parts.getOrNull(3)?.toDoubleOrNull() ?: 0.5,
+                fastStep2 = parts.getOrNull(4)?.toDoubleOrNull() ?: 1.0,
+                fastStep2Threshold = parts.getOrNull(5)?.toDoubleOrNull() ?: 2.0
+            )
+        } catch (e: Exception) {
+            SpeedConfig()
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // 二级分组模式（与酷9 GROUP_PARS_SET_SELECT 对齐）
+    //
+    // 0=传统分组（仅网络列表分组）
+    // 1=列表分组（所有列表分组）
+    // 2=二级分组模式1（所有分组显示二级分组）
+    // 3=二级分组模式2（分组数<1的隐藏二级分组）
+    // -----------------------------------------------------------------
+
+    /** 获取分组模式（0-3），默认 3 */
+    fun getGroupMode(): Int = prefs.getInt(KEY_GROUP_MODE, DEFAULT_GROUP_MODE)
+
+    fun setGroupMode(value: Int) {
+        prefs.edit().putInt(KEY_GROUP_MODE, value.coerceIn(0, 3)).apply()
     }
 
     // -----------------------------------------------------------------
@@ -752,8 +923,38 @@ class UserPrefs private constructor() {
         private const val KEY_HWDEC = "player_hwdec"
         private const val KEY_VO_FALLBACK = "player_vo_fallback_confirmed"
         private const val KEY_PLAYER_TYPE = "player_type"
+        private const val DEFAULT_PLAYER_TYPE = "MPV"
         private const val KEY_HDR_MODE = "hdr_output_mode"
         private const val DEFAULT_HDR_MODE = "disable"
+
+        // 超时换源
+        private const val KEY_TIMEOUT_SWITCH_SOURCE = "timeout_switch_source"
+        private const val DEFAULT_TIMEOUT_SWITCH_SOURCE = 1
+
+        // 断线重连
+        private const val KEY_RECONNECT_INDEX = "reconnect_index"
+        private const val DEFAULT_RECONNECT_INDEX = 0
+
+        // 开机自启动
+        private const val KEY_BOOT_START = "boot_start"
+
+        // EPG 时区偏移
+        private const val KEY_EPG_TIMEZONE_OFFSET = "epg_timezone_offset"
+
+        // EPG 缓存定时
+        private const val KEY_EPG_CACHE_SCHEDULE = "epg_cache_schedule"
+        private const val DEFAULT_EPG_CACHE_SCHEDULE = 4
+
+        // 画面锁定（换源不黑屏）
+        private const val KEY_SCREEN_LOCK = "screen_lock"
+
+        // 倍速双步进参数
+        private const val KEY_SPEED_PARAMS = "speed_params"
+        private const val DEFAULT_SPEED_PARAMS = "0.5,3,0.25,0.5,1,2"
+
+        // 二级分组模式
+        private const val KEY_GROUP_MODE = "group_mode"
+        private const val DEFAULT_GROUP_MODE = 3
         private const val KEY_RTSP_TRANSPORT = "rtsp_transport"
         private const val DEFAULT_RTSP_TRANSPORT = "tcp"
         private const val KEY_DEINTERLACE = "deinterlace"

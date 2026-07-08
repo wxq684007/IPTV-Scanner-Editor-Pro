@@ -456,7 +456,8 @@ class SettingsFileOperations:
             deinterlace_combo,
             tr("deinterlace_desc",
                "Deinterlacing for interlaced video (channels with horizontal lines/comb artifacts). "
-               "'Auto' uses Yadif filter, only activates on interlaced frames.")
+               "'Auto' uses Yadif Bob mode (mode=1), 50i->50p, maintains original framerate for smooth motion. "
+               "Requires copy-back hwdec or software decoding.")
         )
 
         # 缓存 override：留空或 0 表示保持播放器内部动态计算值（按流类型/HDR/分辨率自适应）
@@ -810,7 +811,6 @@ class SettingsFileOperations:
             ('framedrop', 'framedrop'),
             ('video_sync', 'video-sync'),
             ('hwdec', 'hwdec'),
-            ('deinterlace', 'deinterlace'),
         ]
         for cfg_key, mpv_prop in runtime_props:
             old_val = old_playback.get(cfg_key)
@@ -830,17 +830,24 @@ class SettingsFileOperations:
                             new_val = 'auto-copy'
                         else:
                             new_val = 'no'
-                # deinterlace: auto → yes（mpv 的 deinterlace 只支持 yes/no）
-                if cfg_key == 'deinterlace':
-                    val_str = str(new_val).lower()
-                    if val_str == 'auto':
-                        new_val = 'yes'
-                    elif val_str not in ('yes', 'no'):
-                        new_val = 'no'
                 pc.set_property_string(mpv_prop, str(new_val))
             except Exception as e:
                 from core.log_manager import global_logger
                 global_logger.debug(f"即时应用 {mpv_prop}={new_val} 失败: {e}")
+
+        # 反交错：使用 vf 滤镜（yadif=mode=1 bob）代替 deinterlace 属性，保持帧率不变
+        old_di = old_playback.get('deinterlace', 'no')
+        new_di = new_playback.get('deinterlace', 'no')
+        if old_di != new_di:
+            try:
+                di_val = str(new_di).lower()
+                if di_val in ('yes', 'auto'):
+                    pc._enable_deinterlace_filter()
+                else:
+                    pc._disable_deinterlace_filter()
+            except Exception as e:
+                from core.log_manager import global_logger
+                global_logger.debug(f"即时应用 deinterlace={new_di} 失败: {e}")
 
         # audio_passthrough 需要特殊处理（映射到 audio-spdif + audio-passthrough）
         old_pt = old_playback.get('audio_passthrough', 'never')

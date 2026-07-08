@@ -246,7 +246,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:transparent;color:#e
 .token-login-icon{font-size:36px;margin-bottom:10px}
 .token-login-card h2{font-size:18px;font-weight:700;color:#fff;margin-bottom:8px}
 .token-login-card p{font-size:13px;color:rgba(255,255,255,.5);margin-bottom:20px;line-height:1.5}
-.token-login-card input{width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);border-radius:8px;padding:12px 14px;color:#fff;font-size:14px;outline:none;text-align:center;letter-spacing:1px}
+.token-login-card input{width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);border-radius:8px;padding:12px 14px;color:#fff;font-size:20px;outline:none;text-align:center;letter-spacing:6px;font-weight:600}
 .token-login-card input:focus{border-color:var(--accent)}
 .token-login-btn{width:100%;margin-top:16px;background:var(--accent);border:none;border-radius:8px;padding:12px;color:#fff;font-size:14px;font-weight:600;cursor:pointer}
 .token-login-btn:active{opacity:.8}
@@ -4546,7 +4546,7 @@ console.log('ISEP - Android UI loaded v'+APP_VERSION+' (build '+BUILD_DATE+')');
     <div class="token-login-icon">🔒</div>
     <h2>访问认证</h2>
     <p>此服务需要访问令牌。<br>请在 TV 应用端的局域网管理页面查看令牌并输入。</p>
-    <input type="text" id="tokenInput" placeholder="输入访问令牌" autocomplete="off" onkeydown="if(event.key==='Enter')_submitTokenLogin()">
+    <input type="text" id="tokenInput" placeholder="4 位数字" maxlength="4" inputmode="numeric" pattern="[0-9]*" autocomplete="off" onkeydown="if(event.key==='Enter')_submitTokenLogin()">
     <button class="token-login-btn" onclick="_submitTokenLogin()">确认连接</button>
     <div id="tokenLoginError" class="token-login-error"></div>
   </div>

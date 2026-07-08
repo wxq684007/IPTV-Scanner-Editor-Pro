@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -210,9 +211,9 @@ fun TvUnifiedPanel(viewModel: AppViewModel) {
         color = Color(0xE6000000),
         modifier = Modifier.fillMaxSize()
     ) {
-        Row(modifier = Modifier.fillMaxSize()) {
-            // -----------------------------------------------------------------
-            // 第一列：控制层（订阅 / 本地 / 菜单 / OSD）
+Row(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
+// -----------------------------------------------------------------
+// 第一列：控制层（订阅 / 本地 / 菜单 / OSD）
             // -----------------------------------------------------------------
             ModeColumn(
                 mode = unifiedMode,

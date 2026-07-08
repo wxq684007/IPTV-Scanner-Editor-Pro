@@ -1051,8 +1051,8 @@ class MpvController : MPVLib.EventObserver, Player {
 
     /**
      * 是否已尝试过 fbo-format 降级（rgba16hf → rgba8）。
-     * 某些 GPU 不支持 16-bit 浮点帧缓冲，导致 gpu VO EGL 初始化成功但渲染失败（黑屏）。
-     * 降级到 rgba8 可解决部分设备的黑屏问题（代价是 HDR 色彩精度降低）。
+     * 仅在 HDR 模式启用时 fbo-format 为 rgba16hf 才有意义。
+     * HDR 关闭时 fbo-format 已默认为 rgba8，跳过降级直接 fallback。
      */
     @Volatile
     private var fboFormatDowngraded = false
@@ -1061,9 +1061,9 @@ class MpvController : MPVLib.EventObserver, Player {
      * 黑屏检测 Runnable：检查 videoWidth，若解码器没工作则触发 vo fallback。
      *
      * 分级 Fallback 策略：
-     * 1. videoWidth==0 + vo=gpu/gpu-next + 未降级 fbo-format →
+     * 1. videoWidth==0 + vo=gpu/gpu-next + fbo-format=rgba16hf + 未降级 →
      *    尝试 fbo-format=rgba8（解决不支持 rgba16hf 的 GPU）
-     * 2. videoWidth==0 + 已降级 fbo-format →
+     * 2. videoWidth==0 + 其他情况（fbo-format 已为 rgba8 或已降级）→
      *    切换到 mediacodec_embed（绕过 GPU 渲染管线）
      *
      * 判断依据（仅 videoWidth==0）：
@@ -1107,8 +1107,12 @@ class MpvController : MPVLib.EventObserver, Player {
                 return@Runnable
             }
             // 连续两次检测到 videoWidth==0，确认黑屏
-            // 分级 Fallback：先尝试 fbo-format 降级，再切换到 mediacodec_embed
-            if (!fboFormatDowngraded && (currentVo == "gpu" || currentVo == "gpu-next")) {
+            // 检查当前 fbo-format：仅当为 rgba16hf 时才尝试降级
+            val currentFboFormat = try {
+                MPVLib.getPropertyString("fbo-format") ?: "rgba8"
+            } catch (_: Throwable) { "rgba8" }
+            if (!fboFormatDowngraded && currentFboFormat == "rgba16hf" &&
+                (currentVo == "gpu" || currentVo == "gpu-next")) {
                 // 第一级：fbo-format 降级（rgba16hf → rgba8）
                 // 某些 GPU（如旧 Mali/Adreno）不支持 16-bit 浮点帧缓冲，
                 // EGL 初始化成功但渲染失败导致黑屏。降级到 rgba8 可恢复渲染。

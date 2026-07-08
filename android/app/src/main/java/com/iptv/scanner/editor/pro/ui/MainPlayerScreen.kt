@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -49,6 +51,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.iptv.scanner.editor.pro.data.ReminderItem
 import com.iptv.scanner.editor.pro.data.UserPrefs
 import com.iptv.scanner.editor.pro.mpv.MPVView
+import com.iptv.scanner.editor.pro.player.PlayerType
+import androidx.media3.ui.PlayerView
 
 /**
  * 主播放屏：MPVView + 透明控制层 + 面板抽屉 + OSD 浮层。
@@ -164,32 +168,56 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
             // 黑色背景由 Activity window background + SurfaceView 自身提供
     ) {
         // -----------------------------------------------------------------
-        // 1. 底层：MPV 播放器 View
+        // 1. 底层：播放器 View
+        //
+        // 根据 playerType 创建对应的 View：
+        // - MPV：MPVView（libmpv JNI）
+        // - EXO/SYSTEM：ExoPlayer 的 PlayerView（Google Media3）
         //
         // 单画面模式：用 aspectRatio 让 SurfaceView 尺寸匹配视频比例，居中显示。
         // 多画面模式：主画面用 fillMaxSize 填满网格 cell。
         // -----------------------------------------------------------------
         val createPlayerView: (android.content.Context) -> android.view.View = { ctx ->
-            Log.i("MainPlayerScreen", "Creating MPV player view, uiMode=$uiMode")
-            val mpvView = MPVView(ctx)
-            val configDir = ctx.getDir("mpv_config", Context.MODE_PRIVATE).absolutePath
-            val cacheDir = ctx.cacheDir.absolutePath
-            val userPrefs = UserPrefs.getInstance()
-            val vo = userPrefs.getVo()
-            val hwdec = userPrefs.getHwdec()
-            try {
-                mpvView.initialize(configDir, cacheDir, vo = vo, hwdec = hwdec)
-                player.attachView(mpvView)
-                Log.i("MainPlayerScreen", "MPVView initialized (vo=$vo, hwdec=$hwdec) + attached")
-            } catch (e: Throwable) {
-                Log.e("MainPlayerScreen", "MPVView initialize failed", e)
+            val pType = viewModel.playerType.value
+            Log.i("MainPlayerScreen", "Creating player view, uiMode=$uiMode, type=$pType")
+            when (pType) {
+                PlayerType.MPV -> {
+                    val mpvView = MPVView(ctx)
+                    val configDir = ctx.getDir("mpv_config", Context.MODE_PRIVATE).absolutePath
+                    val cacheDir = ctx.cacheDir.absolutePath
+                    val userPrefs = UserPrefs.getInstance()
+                    val vo = userPrefs.getVo()
+                    val hwdec = userPrefs.getHwdec()
+                    try {
+                        mpvView.initialize(configDir, cacheDir, vo = vo, hwdec = hwdec)
+                        player.attachView(mpvView)
+                        Log.i("MainPlayerScreen", "MPVView initialized (vo=$vo, hwdec=$hwdec) + attached")
+                    } catch (e: Throwable) {
+                        Log.e("MainPlayerScreen", "MPVView initialize failed", e)
+                    }
+                    mpvView
+                }
+                PlayerType.EXO, PlayerType.SYSTEM -> {
+                    val exoView = PlayerView(ctx).apply {
+                        useController = false
+                        setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
+                    }
+                    player.attachView(exoView)
+                    Log.i("MainPlayerScreen", "PlayerView (ExoPlayer) attached, type=$pType")
+                    exoView
+                }
             }
-            mpvView
         }
         val onReleasePlayer: (android.view.View) -> Unit = { view ->
             Log.i("MainPlayerScreen", "onRelease: destroying player view")
-            if (view is MPVView) view.destroy()
-            viewModel.detachOldPlayer()
+            when (view) {
+                is MPVView -> view.destroy()
+                is PlayerView -> {
+                    view.player = null
+                    viewModel.detachOldPlayer()
+                }
+                else -> viewModel.detachOldPlayer()
+            }
         }
 
         // 用 movableContentOf 包装主画面 AndroidView，确保 multiViewState.active 变化时
@@ -259,7 +287,7 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
                     .background(Color(0x66000000))
             ) {
                 Column(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().systemBarsPadding(),
                     verticalArrangement = Arrangement.SpaceBetween
                 ) {
                     // ----------------- 顶部：频道名 + 面板入口按钮 -----------------
@@ -569,7 +597,8 @@ private fun OsdView(
         color = Color(0xE6000000),
         shape = RoundedCornerShape(8.dp),
         modifier = Modifier
-            .padding(top = 56.dp)
+            .statusBarsPadding()
+            .padding(top = 48.dp)
             .padding(horizontal = 16.dp)
     ) {
         Column(

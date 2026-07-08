@@ -223,6 +223,11 @@ class PlaybackController:
         self.current_channel = channel
         self.window.play_state.set_live()
 
+        # 重置媒体信息缓存，确保新频道的媒体信息和质量评分被重新计算
+        # 不重置会导致：切到相同分辨率的频道时 static_key 不变，评分条不更新
+        self.window._last_info_key = None
+        self.window._last_media_info = {}
+
         self._prefetch_adjacent_channels(channel)
 
     def _exit_catchup_mode(self):

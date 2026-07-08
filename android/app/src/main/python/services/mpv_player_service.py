@@ -420,13 +420,14 @@ class MpvPlayerController(QObject):
                 video_sync_raw = 'audio'
             _mpv_set_property_string(self.mpv_handle, 'video-sync', video_sync_raw)
 
-            # 反交错：yes 时 mpv 自动检测隔行视频并添加 yadif 滤镜
+            # 反交错：使用 yadif=mode=1 (bob) vf 滤镜代替 mpv 的 deinterlace 属性
+            # 原因：deinterlace=yes 内部用 yadif mode=0（frame mode），50i→25p 帧率减半，运动卡顿
+            # yadif=mode=1 (field/bob mode) 输出 50i→50p，保持运动流畅同时消除梳齿条纹
             deinterlace_raw = str(self._playback_settings.get('deinterlace', 'no')).lower()
             if deinterlace_raw not in ('yes', 'no', 'auto'):
                 deinterlace_raw = 'no'
-            if deinterlace_raw == 'auto':
-                deinterlace_raw = 'yes'
-            _mpv_set_property_string(self.mpv_handle, 'deinterlace', deinterlace_raw)
+            if deinterlace_raw in ('yes', 'auto'):
+                self._enable_deinterlace_filter()
 
             passthrough = self._playback_settings.get('audio_passthrough', 'never')
             if passthrough and passthrough != 'never':
@@ -2781,6 +2782,46 @@ class MpvPlayerController(QObject):
         self.set_hue(0)
         self.set_gamma(0)
         self.set_sharpness(0.0)
+
+    # ---------- 反交错（vf 滤镜） ----------
+    def _enable_deinterlace_filter(self):
+        """启用 yadif bob 反交错滤镜（mode=1，50i→50p，保持运动流畅）
+
+        使用 vf 滤镜链的命名标签 @iptv_deint 管理，便于运行时添加/移除。
+        与 mpv 的 deinterlace 属性区别：
+        - deinterlace=yes：内部用 yadif mode=0（frame mode），50i→25p，帧率减半，运动卡顿
+        - yadif=mode=1（field/bob mode）：50i→50p，保持原始帧率，运动流畅
+        注意：lavfi/vf 滤镜需要 copy-back 硬解（hwdec=auto-copy）或软解（hwdec=no）。
+        """
+        if not self.mpv_handle or self._terminated:
+            return
+        try:
+            self.send_command(['vf', 'remove', '@iptv_deint'])
+        except Exception:
+            pass
+        ret = self.send_command(['vf', 'add', '@iptv_deint:yadif=mode=1'])
+        if ret != 0:
+            cur_hwdec = ''
+            try:
+                cur_hwdec = self._get_mpv_property_string('hwdec') or ''
+            except Exception:
+                pass
+            self.logger.warning(
+                f"yadif bob 反交错滤镜添加失败(ret={ret})，当前 hwdec='{cur_hwdec}'。"
+                f"若为原生硬解(auto)，请在播放设置中改为 copy-back(auto-copy) 或软解(no)"
+            )
+        else:
+            self.logger.info("yadif bob 反交错滤镜已添加 (mode=1, 50i→50p)")
+
+    def _disable_deinterlace_filter(self):
+        """禁用反交错滤镜"""
+        if not self.mpv_handle or self._terminated:
+            return
+        try:
+            self.send_command(['vf', 'remove', '@iptv_deint'])
+            self.logger.info("反交错滤镜已移除")
+        except Exception:
+            pass
 
     # ---------- 画面旋转 / 镜像 / 裁剪（vf 滤镜） ----------
     def set_video_rotate(self, degree: int) -> bool:

@@ -259,6 +259,13 @@ class FavoritesController:
         menu = QMenu(list_widget)
         menu.setStyleSheet(self._get_menu_style())
 
+        # 播放
+        play_action = menu.addAction(tr('ctx_play_now', '播放'))
+        play_action.triggered.connect(lambda: self._play_channel_from_list(channel))
+
+        menu.addSeparator()
+
+        # 收藏
         is_fav = self.is_favorite(channel)
         if is_fav:
             fav_action = menu.addAction(tr('remove_from_favorites', '删除收藏'))
@@ -266,6 +273,19 @@ class FavoritesController:
         else:
             fav_action = menu.addAction(tr('add_to_favorites', '加入收藏'))
             fav_action.triggered.connect(lambda: self._do_add_favorite(channel))
+
+        # 订阅频道可以复制到本地
+        if source == 'subscription':
+            add_local_action = menu.addAction(tr('add_to_local', '添加到本地列表'))
+            add_local_action.triggered.connect(lambda: self._do_add_to_local(channel))
+
+        menu.addSeparator()
+
+        # 复制
+        copy_name_action = menu.addAction(tr('copy_channel_name', '复制频道名称'))
+        copy_name_action.triggered.connect(lambda: self._copy_text(channel.get('name', '')))
+        copy_url_action = menu.addAction(tr('copy_channel_url', '复制频道地址'))
+        copy_url_action.triggered.connect(lambda: self._copy_text(channel.get('url', '')))
 
         if source == 'local':
             menu.addSeparator()
@@ -285,16 +305,35 @@ class FavoritesController:
         menu.setStyleSheet(self._get_menu_style())
 
         item = list_widget.itemAt(pos)
+        has_item = False
         if item:
             idx = item.data(Qt.ItemDataRole.UserRole)
             favorites = self._service.get_favorites() if self._service else []
             if isinstance(idx, int) and 0 <= idx < len(favorites):
                 channel = favorites[idx]
+                has_item = True
+
+                # 播放
+                play_action = menu.addAction(tr('ctx_play_now', '播放'))
+                play_action.triggered.connect(lambda: self._play_channel_from_list(channel))
+
+                menu.addSeparator()
+
+                # 删除收藏
                 del_action = menu.addAction(tr('remove_from_favorites', '删除收藏'))
                 del_action.triggered.connect(lambda: self._do_remove_favorite(channel))
 
+                menu.addSeparator()
+
+                # 复制
+                copy_name_action = menu.addAction(tr('copy_channel_name', '复制频道名称'))
+                copy_name_action.triggered.connect(lambda: self._copy_text(channel.get('name', '')))
+                copy_url_action = menu.addAction(tr('copy_channel_url', '复制频道地址'))
+                copy_url_action.triggered.connect(lambda: self._copy_text(channel.get('url', '')))
+
         if self._service and self._service.get_favorites():
-            menu.addSeparator()
+            if has_item:
+                menu.addSeparator()
             clear_action = menu.addAction(tr('clear_favorites', '清空收藏'))
             clear_action.triggered.connect(self._do_clear_favorites)
 
@@ -311,10 +350,41 @@ class FavoritesController:
         menu = QMenu(list_widget)
         menu.setStyleSheet(self._get_menu_style())
 
-        clear_action = menu.addAction(tr('clear_history', '清空历史'))
-        clear_action.triggered.connect(self._do_clear_history)
+        item = list_widget.itemAt(pos)
+        has_item = False
+        if item:
+            idx = item.data(Qt.ItemDataRole.UserRole)
+            history = self._service.get_play_history() if self._service else []
+            if isinstance(idx, int) and 0 <= idx < len(history):
+                channel = history[idx]
+                has_item = True
 
-        menu.exec(list_widget.mapToGlobal(pos))
+                # 播放
+                play_action = menu.addAction(tr('ctx_play_now', '播放'))
+                play_action.triggered.connect(lambda: self._play_channel_from_list(channel))
+
+                menu.addSeparator()
+
+                # 删除单条历史
+                del_action = menu.addAction(tr('remove_from_history', '删除此历史记录'))
+                del_action.triggered.connect(lambda: self._do_remove_history(channel.get('url', '')))
+
+                menu.addSeparator()
+
+                # 复制
+                copy_name_action = menu.addAction(tr('copy_channel_name', '复制频道名称'))
+                copy_name_action.triggered.connect(lambda: self._copy_text(channel.get('name', '')))
+                copy_url_action = menu.addAction(tr('copy_channel_url', '复制频道地址'))
+                copy_url_action.triggered.connect(lambda: self._copy_text(channel.get('url', '')))
+
+        if self._service and self._service.get_play_history():
+            if has_item:
+                menu.addSeparator()
+            clear_action = menu.addAction(tr('clear_history', '清空历史'))
+            clear_action.triggered.connect(self._do_clear_history)
+
+        if menu.actions():
+            menu.exec(list_widget.mapToGlobal(pos))
 
     def _do_add_favorite(self, channel):
         if not self._service or not channel:
@@ -331,6 +401,37 @@ class FavoritesController:
         tr = self.window.language_manager.tr
         self.window.status_bar_show_message(tr('removed_from_favorites', '已从收藏夹移除'))
         self.populate_favorites_tab()
+
+    def _do_add_to_local(self, channel):
+        w = self.window
+        import copy
+        w._add_to_local_list(copy.deepcopy(channel))
+        tr = w.language_manager.tr
+        w.status_bar_show_message(tr('added_to_local', '已添加到本地列表'))
+
+    def _do_remove_history(self, url):
+        if not self._service or not url:
+            return
+        self._service.remove_from_history(url)
+        self.populate_history_tab()
+        tr = self.window.language_manager.tr
+        self.window.status_bar_show_message(tr('history_removed', '历史记录已删除'))
+
+    def _play_channel_from_list(self, channel):
+        w = self.window
+        if not channel:
+            return
+        w.current_channel = channel
+        w.update_channel_info_on_selection()
+        w.play_channel(channel)
+
+    def _copy_text(self, text):
+        if not text:
+            return
+        from PySide6.QtWidgets import QApplication
+        QApplication.clipboard().setText(text)
+        tr = self.window.language_manager.tr
+        self.window.status_bar_show_message(tr('copied_to_clipboard', '已复制到剪贴板'))
 
     def _do_delete_local_channel(self, idx):
         w = self.window

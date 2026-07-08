@@ -36,6 +36,7 @@ import com.iptv.scanner.editor.pro.data.UserPrefs
 import com.iptv.scanner.editor.pro.mpv.MpvController
 import com.iptv.scanner.editor.pro.player.CatchupHelper
 import com.iptv.scanner.editor.pro.player.CatchupProgram
+import com.iptv.scanner.editor.pro.player.ExoPlayerWrapper
 import com.iptv.scanner.editor.pro.player.FccHelper
 import com.iptv.scanner.editor.pro.player.FccService
 import com.iptv.scanner.editor.pro.player.PlayMode
@@ -43,6 +44,7 @@ import com.iptv.scanner.editor.pro.player.SubPlayer
 import com.iptv.scanner.editor.pro.player.SubPlayerState
 import com.iptv.scanner.editor.pro.player.PlaybackState
 import com.iptv.scanner.editor.pro.player.Player
+import com.iptv.scanner.editor.pro.data.SpeedConfig
 import com.iptv.scanner.editor.pro.player.PlayerCapabilities
 import com.iptv.scanner.editor.pro.player.PlayerType
 import com.iptv.scanner.editor.pro.player.ProgressHelper
@@ -98,24 +100,33 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val fccService = FccService()
 
     // -----------------------------------------------------------------
-    // 播放器架构：仅 MPV 内核（与 PC 端统一）
+    // 播放器架构：MPV / ExoPlayer / 系统解码 三内核可切换
     //
-    // - mpvSingleton：MpvController 单例
-    // - mpv：公共字段（类型为 Player 接口），保留字段名以避免大规模 UI 改动
-    //   所有 Player 接口方法都可通过 mpv.xxx 调用
-    // - playerType：固定为 MPV
-    // - playerCapabilities：MPV 能力（UI 据此决定哪些功能面板可用）
+    // - mpvSingleton：MpvController 单例（MPVLib.create 只能调一次，需复用）
+    // - exoWrapper：ExoPlayerWrapper 实例（EXO 硬解 / SYSTEM 软解）
+    // - mpv：公共字段（类型为 Player 接口），当前活跃的播放器实例
+    // - playerType：当前播放器类型（MPV / EXO / SYSTEM）
+    // - playerCapabilities：当前播放器能力（UI 据此决定哪些功能面板可用）
+    //
+    // 切换播放器类型时：
+    // 1. 停止当前播放器并 detach View
+    // 2. 切换 _player 到新播放器实例
+    // 3. MainPlayerScreen 根据 playerType 创建对应的 View（MPVView / PlayerView）
+    // 4. 新 View 的 factory 中调用 player.attachView(view) 绑定
     // -----------------------------------------------------------------
     private val mpvSingleton: MpvController = MpvController.getInstance()
+    private var exoWrapper: ExoPlayerWrapper? = null
 
     /**
-     * 持久化的播放器类型（固定为 MPV，保留字段以兼容 UI 代码）。
+     * 持久化的播放器类型（从 UserPrefs 读取，支持运行时切换）。
      */
-    private val _playerType = MutableStateFlow(PlayerType.MPV)
+    private val _playerType = MutableStateFlow(
+        PlayerType.fromName(userPrefs.getPlayerType())
+    )
     val playerType: StateFlow<PlayerType> = _playerType.asStateFlow()
 
     /**
-     * 当前活跃的 Player 实例（固定为 mpvSingleton）。
+     * 当前活跃的 Player 实例。
      */
     private val _player = MutableStateFlow<Player>(mpvSingleton)
 
@@ -127,16 +138,69 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             .stateIn(viewModelScope, SharingStarted.Eagerly, mpvSingleton.capabilities)
 
     /**
+     * 切换播放器类型（MPV / EXO / SYSTEM）。
+     *
+     * 切换流程：
+     * 1. 保存当前播放 URL（用于切换后恢复播放）
+     * 2. 停止并 detach 当前播放器
+     * 3. 创建/复用目标播放器实例
+     * 4. 更新 _playerType 和 _player
+     * 5. 持久化设置
+     * 6. 恢复播放（如果有当前频道）
+     */
+    fun switchPlayerType(newType: PlayerType) {
+        if (_playerType.value == newType) return
+        Log.i(TAG, "switchPlayerType: ${_playerType.value} -> $newType")
+
+        // 保存当前播放状态
+        val savedUrl = currentPlaybackUrl
+        val savedIdx = _currentIdx.value
+
+        // 停止当前播放器
+        _player.value.stop()
+        _player.value.detach()
+
+        // 切换到新播放器
+        val newPlayer: Player = when (newType) {
+            PlayerType.MPV -> {
+                mpvSingleton
+            }
+            PlayerType.EXO, PlayerType.SYSTEM -> {
+                exoWrapper ?: ExoPlayerWrapper(getApplication(), newType).also {
+                    exoWrapper = it
+                }
+            }
+        }
+
+        _playerType.value = newType
+        _player.value = newPlayer
+        userPrefs.setPlayerType(newType.name)
+
+        showOsd("播放器已切换到 ${newType.displayName}")
+
+        // 恢复播放
+        if (savedIdx >= 0 && savedUrl.isNotEmpty()) {
+            _player.value.playFile(savedUrl)
+        }
+    }
+
+    /**
      * 兼容方法：消费待恢复的播放状态（当前仅 MPV 单实例，始终返回 null）。
      * 保留方法签名以兼容 MainPlayerScreen 调用。
      */
     fun consumePendingRestore(): Pair<String, Double>? = null
 
     /**
-     * 兼容方法：释放旧播放器（当前仅 MPV 单实例，no-op）。
-     * 保留方法签名以兼容 MainPlayerScreen 调用。
+     * 释放旧播放器 View（切换播放器类型时由 MainPlayerScreen onRelease 调用）。
+     * 对于 ExoPlayer 需要真正 detach；MPV 单例只 detach 不销毁。
      */
-    fun detachOldPlayer() { /* no-op: 仅 MPV 单实例，无需切换 */ }
+    fun detachOldPlayer() {
+        // 由 MainPlayerScreen onRelease 回调中调用
+        // ExoPlayer 的 View 销毁时需要 detach
+        if (_playerType.value != PlayerType.MPV) {
+            _player.value.detach()
+        }
+    }
 
 
     // -----------------------------------------------------------------
@@ -225,6 +289,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _queue = MutableStateFlow<List<Int>>(emptyList())
     val queue: StateFlow<List<Int>> = _queue.asStateFlow()
+
+    // -----------------------------------------------------------------
+    // 超时换源 / 断线重连 / 倍速控制（与酷9对齐）
+    // -----------------------------------------------------------------
+
+    /** 超时换源定时器：播放超时后自动切到下一个源 */
+    private var timeoutSwitchJob: Job? = null
+
+    /** 超时换源档位（0-5），0=5s ... 5=30s */
+    private val _timeoutSwitchSource = MutableStateFlow(userPrefs.getTimeoutSwitchSource())
+    val timeoutSwitchSource: StateFlow<Int> = _timeoutSwitchSource.asStateFlow()
+
+    /** 断线重连定时器 */
+    private var reconnectJob: Job? = null
+
+    /** 断线重连档位（0-5），0=关闭 ... 5=20s */
+    private val _reconnectIndex = MutableStateFlow(userPrefs.getReconnectIndex())
+    val reconnectIndex: StateFlow<Int> = _reconnectIndex.asStateFlow()
+
+    /** 倍速双步进配置 */
+    private val _speedConfig = MutableStateFlow(userPrefs.getSpeedConfig())
+    val speedConfig: StateFlow<SpeedConfig> = _speedConfig.asStateFlow()
 
     // -----------------------------------------------------------------
     // Shuffle 模式（与 PC 端 FileQueueController.toggle_shuffle 对齐）
@@ -1025,6 +1111,9 @@ private var _channelInputJob: kotlinx.coroutines.Job? = null
         // MPV 支持全部协议，直接播放
         mpv.playFile(playUrl)
 
+        // 启动超时换源定时器（与酷9 LIVE_CONNECT_TIMEOUT 对齐）
+        startTimeoutSwitchSource(idx)
+
         // 显示 OSD
         if (!silent) {
             showOsd(channel.name, channel.group)
@@ -1048,6 +1137,246 @@ private var _channelInputJob: kotlinx.coroutines.Job? = null
         // 预取相邻频道的 DNS/TCP 连接（与 PC 端 _prefetch_adjacent_channels 对齐）
         // 在后台协程中预解析下一/上一频道的域名，减少切台时的 DNS 查询延迟
         prefetchAdjacentChannels(idx)
+    }
+
+    /**
+     * 启动超时换源定时器（与酷9 LIVE_CONNECT_TIMEOUT 对齐）。
+     *
+     * 播放开始后启动定时器，如果在超时时间内 fileLoaded 仍为 false，
+     * 则自动切换到下一个频道（源），避免用户长时间等待黑屏。
+     *
+     * @param idx 当前频道索引（用于日志）
+     */
+    private fun startTimeoutSwitchSource(idx: Int) {
+        timeoutSwitchJob?.cancel()
+        timeoutSwitchJob = viewModelScope.launch {
+            val timeoutMs = userPrefs.getTimeoutMs()
+            delay(timeoutMs)
+            // 超时后检查是否已加载
+            if (!mpv.fileLoaded.value) {
+                Log.w(TAG, "Timeout switch source: idx=$idx not loaded in ${timeoutMs}ms")
+                showOsd("超时换源", "当前源加载超时，自动切换")
+                nextChannel()
+            }
+        }
+    }
+
+    /**
+     * 启动断线重连（与酷9 RECONNECT_INDEX 对齐）。
+     *
+     * 播放出错或 EOF 时，根据重连档位延迟后重新加载当前 URL。
+     * 仅在直播模式下触发（回看/时移/本地视频不重连）。
+     */
+    fun startReconnect() {
+        val delayMs = userPrefs.getReconnectDelayMs()
+        if (delayMs <= 0) return  // 关闭重连
+        if (_playbackState.value.mode != PlayMode.LIVE) return  // 仅直播重连
+
+        reconnectJob?.cancel()
+        reconnectJob = viewModelScope.launch {
+            Log.i(TAG, "Reconnect in ${delayMs}ms")
+            delay(delayMs)
+            val url = currentPlaybackUrl
+            if (url.isNotEmpty() && _playbackState.value.mode == PlayMode.LIVE) {
+                Log.i(TAG, "Reconnecting: $url")
+                mpv.playFile(url)
+                showOsd("正在重连...")
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // 超时换源 / 断线重连 / 倍速控制 setter
+    // -----------------------------------------------------------------
+
+    /** 设置超时换源档位（0-5） */
+    fun setTimeoutSwitchSource(value: Int) {
+        _timeoutSwitchSource.value = value
+        userPrefs.setTimeoutSwitchSource(value)
+    }
+
+    /** 设置断线重连档位（0-5） */
+    fun setReconnectIndex(value: Int) {
+        _reconnectIndex.value = value
+        userPrefs.setReconnectIndex(value)
+    }
+
+    /**
+     * 倍速加速（双步进，与酷9 Speed_value 对齐）。
+     * 根据当前速度自动选择步进值：< 1.0 用慢放步进，>= 阈值用二级快放步进。
+     */
+    fun speedUp() {
+        val config = _speedConfig.value
+        val newSpeed = config.speedUp(mpv.speed.value)
+        mpv.setSpeed(newSpeed)
+        showOsd("倍速 ${"%.2f".format(newSpeed)}x")
+    }
+
+    /**
+     * 倍速减速（双步进）。
+     */
+    fun speedDown() {
+        val config = _speedConfig.value
+        val newSpeed = config.speedDown(mpv.speed.value)
+        mpv.setSpeed(newSpeed)
+        showOsd("倍速 ${"%.2f".format(newSpeed)}x")
+    }
+
+    /** 倍速恢复 1.0x */
+    fun speedReset() {
+        mpv.setSpeed(1.0)
+        showOsd("倍速 1.00x")
+    }
+
+    /** 设置倍速参数字符串（格式：min,max,slowStep,fastStep,fastStep2,threshold） */
+    fun setSpeedParams(params: String) {
+        userPrefs.setSpeedParams(params)
+        _speedConfig.value = userPrefs.getSpeedConfig()
+    }
+
+    // -----------------------------------------------------------------
+    // EPG 时区偏移（与酷9 TIME_ZONE_SELECT 对齐）
+    // -----------------------------------------------------------------
+
+    /** EPG 时区偏移档位（0-25） */
+    private val _epgTimezoneOffset = MutableStateFlow(userPrefs.getEpgTimezoneOffset())
+    val epgTimezoneOffset: StateFlow<Int> = _epgTimezoneOffset.asStateFlow()
+
+    /** 设置 EPG 时区偏移档位 */
+    fun setEpgTimezoneOffset(value: Int) {
+        _epgTimezoneOffset.value = value
+        userPrefs.setEpgTimezoneOffset(value)
+        // 清除 EPG 缓存，下次获取时使用新时区
+        epgCache.clear()
+        _currentEpg.value = emptyList()
+        fetchEpgForCurrent()
+    }
+
+    /**
+     * 将 EPG 时间戳按时区偏移调整（与酷9 XML 时间偏移对齐）。
+     * @param ts 原始时间戳（毫秒）
+     * @return 调整后的时间戳
+     */
+    fun adjustEpgTimestamp(ts: Long): Long {
+        val offsetHours = userPrefs.getEpgTimezoneOffsetHours()
+        if (offsetHours == 0) return ts
+        return ts + offsetHours * 3600_000L
+    }
+
+    // -----------------------------------------------------------------
+    // EPG 缓存定时策略（与酷9 EPGCACHE_SELECT 对齐）
+    // -----------------------------------------------------------------
+
+    /** EPG 缓存定时档位（0-11） */
+    private val _epgCacheSchedule = MutableStateFlow(userPrefs.getEpgCacheSchedule())
+    val epgCacheSchedule: StateFlow<Int> = _epgCacheSchedule.asStateFlow()
+
+    /** 设置 EPG 缓存定时档位 */
+    fun setEpgCacheSchedule(value: Int) {
+        _epgCacheSchedule.value = value
+        userPrefs.setEpgCacheSchedule(value)
+    }
+
+    // -----------------------------------------------------------------
+    // 画面锁定 / 换源不黑屏（与酷9 EYE_PROTECTION 对齐）
+    // -----------------------------------------------------------------
+
+    /** 画面锁定开关（true=换源保持画面，false=换源黑屏） */
+    private val _screenLock = MutableStateFlow(userPrefs.getScreenLock())
+    val screenLock: StateFlow<Boolean> = _screenLock.asStateFlow()
+
+    /** 设置画面锁定 */
+    fun setScreenLock(enabled: Boolean) {
+        _screenLock.value = enabled
+        userPrefs.setScreenLock(enabled)
+        // 对 MPV：通过 keep-open 属性控制
+        if (_playerType.value == PlayerType.MPV) {
+            mpvSingleton.setPropertyBoolean("keep-open", enabled)
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // 二级分组模式（与酷9 GROUP_PARS_SET_SELECT 对齐）
+    // -----------------------------------------------------------------
+
+    /** 分组模式（0-3） */
+    private val _groupMode = MutableStateFlow(userPrefs.getGroupMode())
+    val groupMode: StateFlow<Int> = _groupMode.asStateFlow()
+
+    /** 设置分组模式 */
+    fun setGroupMode(value: Int) {
+        _groupMode.value = value
+        userPrefs.setGroupMode(value)
+    }
+
+    // -----------------------------------------------------------------
+    // 开机自启动（与酷9 BOOT_START 对齐）
+    // -----------------------------------------------------------------
+
+    /** 开机自启动开关 */
+    private val _bootStart = MutableStateFlow(userPrefs.getBootStart())
+    val bootStart: StateFlow<Boolean> = _bootStart.asStateFlow()
+
+    /** 设置开机自启动 */
+    fun setBootStart(enabled: Boolean) {
+        _bootStart.value = enabled
+        userPrefs.setBootStart(enabled)
+    }
+
+    // -----------------------------------------------------------------
+    // 数字选台（与酷9 CHANNEL_NUMBER 对齐）
+    // -----------------------------------------------------------------
+
+    /** 当前数字选台输入缓存 */
+    private val _channelNumberInput = MutableStateFlow("")
+    val channelNumberInput: StateFlow<String> = _channelNumberInput.asStateFlow()
+
+    /** 数字选台超时定时器 */
+    private var channelNumberJob: Job? = null
+
+    /**
+     * 输入数字选台（TV 遥控器数字键 0-9）。
+     * 累积输入并显示在 OSD 上，2秒无新输入自动切台。
+     */
+    fun inputChannelNumber(digit: Int) {
+        val current = _channelNumberInput.value
+        // 最多 4 位数
+        val newInput = if (current.length >= 4) digit.toString() else current + digit.toString()
+        _channelNumberInput.value = newInput
+        showOsd("选台: $newInput")
+
+        // 重启 2 秒超时定时器
+        channelNumberJob?.cancel()
+        channelNumberJob = viewModelScope.launch {
+            delay(2000)
+            commitChannelNumber()
+        }
+    }
+
+    /**
+     * 确认数字选台（按确认键或超时后自动调用）。
+     * @return true 如果执行了切台（有有效输入）
+     */
+    fun commitChannelNumber(): Boolean {
+        val input = _channelNumberInput.value
+        if (input.isEmpty()) return false
+
+        channelNumberJob?.cancel()
+        _channelNumberInput.value = ""
+
+        val targetNum = input.toIntOrNull() ?: return false
+        if (targetNum <= 0) return false
+
+        // 频道列表按 1-based 索引（第 1 个频道 = 1）
+        val targetIdx = targetNum - 1
+        val channels = _channels.value
+        if (targetIdx in channels.indices) {
+            playChannel(targetIdx)
+            return true
+        } else {
+            showOsd("频道 $targetNum 不存在")
+            return false
+        }
     }
 
     /**
@@ -1528,6 +1857,12 @@ private var _channelInputJob: kotlinx.coroutines.Job? = null
     fun stopPlay() {
         Log.i(TAG, "stopPlay")
         fccService.onStop()
+        // 停止超时换源定时器
+        timeoutSwitchJob?.cancel()
+        timeoutSwitchJob = null
+        // 停止重连定时器
+        reconnectJob?.cancel()
+        reconnectJob = null
         mpv.stop()
         _playbackState.value = PlaybackState(mode = PlayMode.IDLE)
         _currentIdx.value = -1

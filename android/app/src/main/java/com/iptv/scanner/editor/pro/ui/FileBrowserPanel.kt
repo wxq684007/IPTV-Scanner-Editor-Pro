@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -171,9 +172,9 @@ fun FileBrowserPanel(viewModel: AppViewModel) {
         color = Color(0xF0161616),
         modifier = Modifier.fillMaxSize()
     ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            // 标题栏
-            Surface(
+Column(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
+// 标题栏
+Surface(
                 color = Color(0xFF1F1F1F),
                 modifier = Modifier.fillMaxWidth()
             ) {

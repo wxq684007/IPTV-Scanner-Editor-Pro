@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -207,10 +208,10 @@ fun MainMenuPanel(viewModel: AppViewModel) {
         color = Color(0xF0161616),
         modifier = Modifier.fillMaxSize()
     ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            // 标题栏
-            PanelHeader(
-                title = "主菜单",
+Column(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
+// 标题栏
+PanelHeader(
+    title = "主菜单",
                 subtitle = "功能入口",
                 onClose = { viewModel.toggleMenuPanel() }
             )

@@ -77,6 +77,8 @@ class QualityBarWidget(QWidget):
         self.setStyleSheet("background: transparent;")
         self.setMinimumHeight(BAR_HEIGHT)
         self.setSizePolicy(self.sizePolicy().Policy.Fixed, self.sizePolicy().Policy.Fixed)
+        # 设置 objectName 以便通过 findChild 查找并动态更新评分
+        self.setObjectName("quality_bar")
 
     def set_score(self, score, grade: str = ''):
         """设置评分。score 为 None 表示未检测，不显示评分条。"""

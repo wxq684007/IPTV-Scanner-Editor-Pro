@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -103,7 +104,7 @@ fun SourceManagerPanel(viewModel: AppViewModel) {
         modifier = Modifier.fillMaxSize()
     ) {
         Column(
-            modifier = Modifier.fillMaxSize().focusGroup().padding(16.dp)
+            modifier = Modifier.fillMaxSize().focusGroup().systemBarsPadding().padding(16.dp)
         ) {
             // 标题栏
             Row(
@@ -714,7 +715,7 @@ private fun LanAdminTokenInput(viewModel: AppViewModel) {
                 }
             }
             Text(
-                text = "设置一个好记的令牌方便 PC 浏览器输入，留空则自动生成",
+                text = "留空则自动生成 4 位数字令牌，也可自定义",
                 style = MaterialTheme.typography.labelSmall,
                 color = Color(0xFF666666),
                 modifier = Modifier.padding(top = 4.dp)

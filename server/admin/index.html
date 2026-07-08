@@ -661,7 +661,7 @@ textarea.form-input {
 .token-login-icon{font-size:36px;margin-bottom:10px}
 .token-login-card h2{font-size:18px;font-weight:700;color:#fff;margin-bottom:8px}
 .token-login-card p{font-size:13px;color:rgba(255,255,255,.5);margin-bottom:20px;line-height:1.5}
-.token-login-card input{width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);border-radius:8px;padding:12px 14px;color:#fff;font-size:14px;outline:none;text-align:center;letter-spacing:1px}
+.token-login-card input{width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);border-radius:8px;padding:12px 14px;color:#fff;font-size:20px;outline:none;text-align:center;letter-spacing:6px;font-weight:600}
 .token-login-card input:focus{border-color:var(--accent)}
 .token-login-btn{width:100%;margin-top:16px;background:var(--accent);border:none;border-radius:8px;padding:12px;color:#fff;font-size:14px;font-weight:600;cursor:pointer}
 .token-login-btn:active{opacity:.8}
@@ -682,6 +682,7 @@ textarea.form-input {
     <button class="nav-tab" onclick="switchTab('epg-data')">节目单</button>
     <button class="nav-tab" onclick="switchTab('remote')">遥控器</button>
     <button class="nav-tab" onclick="switchTab('status')">服务器状态</button>
+    <button class="nav-tab" onclick="switchTab('logs')">日志</button>
   </div>
   <div class="nav-status">
     <span class="status-dot" id="statusDot"></span>
@@ -992,6 +993,37 @@ textarea.form-input {
     </div>
   </div>
 
+  <!-- 日志面板 -->
+  <div class="panel" id="panel-logs">
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">实时日志</div>
+          <div class="card-subtitle" id="logMeta">应用运行日志（尾部 200 行）</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-dim)">
+            <input type="checkbox" id="logAutoScroll" checked style="width:18px;height:18px"> 自动滚动
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-dim)">
+            <input type="checkbox" id="logAutoRefresh" checked style="width:18px;height:18px"> 实时刷新
+          </label>
+          <select id="logLines" onchange="loadLogs()" style="background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:13px">
+            <option value="100">100 行</option>
+            <option value="200" selected>200 行</option>
+            <option value="500">500 行</option>
+            <option value="1000">1000 行</option>
+            <option value="2000">2000 行</option>
+          </select>
+          <button class="btn btn-outline" onclick="loadLogs()">刷新</button>
+          <button class="btn btn-outline" onclick="downloadLog()">下载完整日志</button>
+          <button class="btn btn-danger" onclick="clearLog()">清空</button>
+        </div>
+      </div>
+      <div id="logContent" style="background:#0a0a12;border:1px solid var(--border);border-radius:8px;padding:12px;font-family:'Cascadia Code',Consolas,'Courier New',monospace;font-size:12px;line-height:1.6;color:#a0ffa0;max-height:60vh;overflow-y:auto;white-space:pre-wrap;word-break:break-all">点击「刷新」或开启「实时刷新」查看日志...</div>
+    </div>
+  </div>
+
   <!-- 虚拟遥控器面板 -->
   <div class="panel" id="panel-remote">
     <div class="card">
@@ -1224,6 +1256,8 @@ function switchTab(name) {
   handlePlayerStatusPolling(name);
   // 节目单自动加载：进入 epg-data 自动加载频道列表
   handleEpgAutoLoad(name);
+  // 日志轮询：进入 logs 启动，离开停止
+  handleLogPolling(name);
 }
 
 // ====== HTTP 请求 ======
@@ -2355,6 +2389,96 @@ async function batchDeleteChannels() {
   });
 }
 
+// ====== 日志查看器 ======
+let _logTimer = null;
+
+async function loadLogs() {
+  const lines = document.getElementById('logLines')?.value || 200;
+  const data = await apiGet('/api/log/view?lines=' + lines);
+  if (!data || !data.success) {
+    const el = document.getElementById('logContent');
+    if (el) el.textContent = '日志加载失败或日志文件不存在';
+    return;
+  }
+  const d = data.data;
+  const el = document.getElementById('logContent');
+  if (!el) return;
+  // 渲染日志，按级别着色
+  const html = (d.lines || []).map(line => {
+    let color = '#a0ffa0';
+    if (line.includes(' - ERROR -')) color = '#ff6b6b';
+    else if (line.includes(' - WARNING -')) color = '#ffd93d';
+    else if (line.includes(' - DEBUG -')) color = '#6b9eff';
+    else if (line.includes(' - INFO -')) color = '#a0ffa0';
+    // HTML 转义
+    const escaped = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return '<span style="color:' + color + '">' + escaped + '</span>';
+  }).join('\n');
+  el.innerHTML = html || '(空)';
+  // 更新元信息
+  const meta = document.getElementById('logMeta');
+  if (meta) {
+    const sizeKB = d.size > 0 ? (d.size / 1024).toFixed(1) + ' KB' : '0 KB';
+    meta.textContent = `路径: ${d.path} | 大小: ${sizeKB} | 总行数: ${d.total_lines}${d.truncated ? ' (已截断)' : ''}`;
+  }
+  // 自动滚动到底部
+  if (document.getElementById('logAutoScroll')?.checked) {
+    el.scrollTop = el.scrollHeight;
+  }
+}
+
+function downloadLog() {
+  // 通过浏览器直接下载（带 auth header）
+  const url = API + '/api/log/download';
+  fetch(url, { headers: _AUTH_HEADERS })
+    .then(r => {
+      if (!r.ok) throw new Error('下载失败');
+      const cd = r.headers.get('Content-Disposition') || '';
+      const m = cd.match(/filename="([^"]+)"/);
+      const filename = m ? m[1] : 'app.log';
+      return r.blob().then(b => ({ blob: b, filename }));
+    })
+    .then(({ blob, filename }) => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      showToast('日志下载已开始', 'success');
+    })
+    .catch(e => showToast('下载失败: ' + e.message, 'error'));
+}
+
+async function clearLog() {
+  showConfirm('清空日志', '确定要清空日志文件吗？此操作不可撤销。', async () => {
+    const data = await apiPost('/api/log/clear', {});
+    if (data && data.success) {
+      showToast('日志已清空', 'success');
+      loadLogs();
+    } else {
+      showToast('清空失败', 'error');
+    }
+  });
+}
+
+function handleLogPolling(tabName) {
+  if (tabName === 'logs' && document.getElementById('logAutoRefresh')?.checked) {
+    if (!_logTimer) {
+      loadLogs();
+      _logTimer = setInterval(() => {
+        if (document.getElementById('logAutoRefresh')?.checked) {
+          loadLogs();
+        }
+      }, 3000);
+    }
+  } else {
+    if (_logTimer) {
+      clearInterval(_logTimer);
+      _logTimer = null;
+    }
+  }
+}
+
 // ====== 初始化 ======
 async function init() {
   await updateStatus();
@@ -2364,6 +2488,7 @@ async function init() {
   // 加载新增功能数据
   loadChannels(1);
   loadMappings();
+  loadLogs();
   // 每 30 秒刷新状态
   setInterval(updateStatus, 30000);
   // 每 60 秒刷新列表
@@ -2379,7 +2504,7 @@ init();
     <div class="token-login-icon">🔒</div>
     <h2>访问认证</h2>
     <p>此服务需要访问令牌。<br>请在 TV 应用端的局域网管理页面查看令牌并输入。</p>
-    <input type="text" id="tokenInput" placeholder="输入访问令牌" autocomplete="off" onkeydown="if(event.key==='Enter')_submitTokenLogin()">
+    <input type="text" id="tokenInput" placeholder="4 位数字" maxlength="4" inputmode="numeric" pattern="[0-9]*" autocomplete="off" onkeydown="if(event.key==='Enter')_submitTokenLogin()">
     <button class="token-login-btn" onclick="_submitTokenLogin()">确认连接</button>
     <div id="tokenLoginError" class="token-login-error"></div>
   </div>

@@ -304,6 +304,10 @@ def create_app() -> web.Application:
     # 文件分享与缓存清理
     app.router.add_post('/api/share/file', handle_share_file)
     app.router.add_post('/api/cache/clear', handle_cache_clear)
+    # 日志查看与下载
+    app.router.add_get('/api/log/view', handle_log_view)
+    app.router.add_get('/api/log/download', handle_log_download)
+    app.router.add_post('/api/log/clear', handle_log_clear)
     # 管理后台静态文件（局域网 Web 管理页面）
     _register_admin_routes(app)
     return app
@@ -1688,3 +1692,111 @@ async def handle_cache_clear(request):
     except Exception as e:
         logger.error(f"清空缓存失败: {e}")
         return _json_error(f'清空缓存失败: {e}', 500)
+
+
+# ===================== 日志查看与下载 =====================
+
+def _get_log_file_path():
+    """获取当前日志文件路径（与 LogManager 单例保持一致）"""
+    try:
+        from core.log_manager import LogManager
+        instance = LogManager()
+        return instance.log_file
+    except Exception:
+        pass
+    # fallback：与 LogManager._get_log_path 同逻辑
+    android_data = get_android_data_dir()
+    if android_data:
+        return os.path.join(android_data, 'app.log')
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'app.log')
+
+
+async def handle_log_view(request):
+    """查看日志（尾部 N 行）
+
+    Query params:
+      - lines: 尾部行数（默认 200，最大 2000）
+      - offset: 从文件末尾偏移的字节数（用于轮询增量）
+
+    返回 JSON: { path, size, lines: [...], total_lines, truncated }
+    """
+    try:
+        log_path = _get_log_file_path()
+        if not os.path.isfile(log_path):
+            return _json_error('日志文件不存在', 404)
+
+        max_lines = min(int(request.query.get('lines', 200)), 2000)
+        file_size = os.path.getsize(log_path)
+
+        # 读取尾部内容（最多 1MB，避免大文件内存爆炸）
+        read_bytes = min(file_size, 1024 * 1024)
+        with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
+            if read_bytes < file_size:
+                f.seek(file_size - read_bytes)
+            content = f.read()
+
+        all_lines = content.splitlines()
+        # 如果 seek 了，第一行可能不完整，跳过
+        if read_bytes < file_size and all_lines:
+            all_lines = all_lines[1:]
+
+        total_lines = len(all_lines)
+        tail_lines = all_lines[-max_lines:] if total_lines > max_lines else all_lines
+
+        return _json_success(
+            path=log_path,
+            size=file_size,
+            lines=tail_lines,
+            total_lines=total_lines,
+            truncated=total_lines > max_lines
+        )
+    except Exception as e:
+        logger.error(f"查看日志失败: {e}")
+        return _json_error(f'查看日志失败: {e}', 500)
+
+
+async def handle_log_download(request):
+    """下载完整日志文件"""
+    try:
+        log_path = _get_log_file_path()
+        if not os.path.isfile(log_path):
+            return _json_error('日志文件不存在', 404)
+
+        file_size = os.path.getsize(log_path)
+        with open(log_path, 'rb') as f:
+            content = f.read()
+
+        # 生成带时间戳的文件名
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f'app_{timestamp}.log'
+
+        return web.Response(
+            body=content,
+            content_type='application/octet-stream',
+            headers={
+                'Content-Disposition': f'attachment; filename="{filename}"',
+                'Content-Length': str(file_size),
+                'Cache-Control': 'no-cache',
+            }
+        )
+    except Exception as e:
+        logger.error(f"下载日志失败: {e}")
+        return _json_error(f'下载日志失败: {e}', 500)
+
+
+async def handle_log_clear(request):
+    """清空日志文件内容"""
+    try:
+        log_path = _get_log_file_path()
+        if not os.path.isfile(log_path):
+            return _json_error('日志文件不存在', 404)
+
+        # 清空文件内容（截断为 0 字节）
+        with open(log_path, 'w', encoding='utf-8') as f:
+            f.write('')
+
+        logger.info('日志文件已清空')
+        return _json_success()
+    except Exception as e:
+        logger.error(f"清空日志失败: {e}")
+        return _json_error(f'清空日志失败: {e}', 500)

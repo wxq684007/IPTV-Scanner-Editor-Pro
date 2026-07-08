@@ -3,12 +3,15 @@ package com.iptv.scanner.editor.pro.ui
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -38,6 +41,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iptv.scanner.editor.pro.data.UserPrefs
+import com.iptv.scanner.editor.pro.player.PlayerType
 import com.iptv.scanner.editor.pro.ui.theme.tvFocusBorder
 
 /**
@@ -55,6 +59,7 @@ import com.iptv.scanner.editor.pro.ui.theme.tvFocusBorder
  * - hwdec：硬件解码，auto-copy / mediacodec / no（必须与 vo 匹配）
  * - 重置：恢复默认值（vo=gpu + hwdec=auto-copy）
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PlayerSettingsPanel(viewModel: AppViewModel) {
     val currentVo by viewModel.currentVo.collectAsState()
@@ -78,6 +83,7 @@ fun PlayerSettingsPanel(viewModel: AppViewModel) {
             modifier = Modifier
                 .fillMaxSize()
                 .focusGroup()
+                .systemBarsPadding()
                 .padding(16.dp)
                 .verticalScroll(rememberScrollState())
         ) {
@@ -107,16 +113,200 @@ fun PlayerSettingsPanel(viewModel: AppViewModel) {
             Spacer(modifier = Modifier.height(16.dp))
 
             // -----------------------------------------------------------------
-            // 1. 视频输出（VO）选择
+            // 0. 播放器内核选择（MPV / ExoPlayer / 系统解码）
             // -----------------------------------------------------------------
+            SectionTitle("播放器内核")
+            Spacer(modifier = Modifier.height(4.dp))
+            SectionDesc("切换播放器内核。MPV 功能最完整，ExoPlayer 兼容性好，系统解码为 fallback")
+
             Spacer(modifier = Modifier.height(8.dp))
+
+            val currentPlayerType by viewModel.playerType.collectAsState()
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                FilterChip(
+                    selected = currentPlayerType == PlayerType.MPV,
+                    onClick = { viewModel.switchPlayerType(PlayerType.MPV) },
+                    label = { Text("MPV（推荐）") },
+                    modifier = Modifier.tvFocusBorder()
+                )
+                FilterChip(
+                    selected = currentPlayerType == PlayerType.EXO,
+                    onClick = { viewModel.switchPlayerType(PlayerType.EXO) },
+                    label = { Text("ExoPlayer 硬解") },
+                    modifier = Modifier.tvFocusBorder()
+                )
+                FilterChip(
+                    selected = currentPlayerType == PlayerType.SYSTEM,
+                    onClick = { viewModel.switchPlayerType(PlayerType.SYSTEM) },
+                    label = { Text("系统解码") },
+                    modifier = Modifier.tvFocusBorder()
+                )
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = currentPlayerType.description,
+                color = Color(0xFFB0BEC5),
+                fontSize = 12.sp,
+                modifier = Modifier.padding(horizontal = 4.dp)
+            )
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // -----------------------------------------------------------------
+            // 0.5 超时换源 / 断线重连 / 画面锁定 / 开机自启动
+            // -----------------------------------------------------------------
+            SectionTitle("播放增强")
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // 超时换源
+            val timeoutSwitch by viewModel.timeoutSwitchSource.collectAsState()
+            val reconnectIdx by viewModel.reconnectIndex.collectAsState()
+            val screenLocked by viewModel.screenLock.collectAsState()
+            val bootStart by viewModel.bootStart.collectAsState()
+
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                FilterChip(
+                    selected = false,
+                    onClick = { viewModel.setTimeoutSwitchSource((timeoutSwitch + 1) % 6) },
+                    label = { Text("超时换源: ${listOf("5s","8s","12s","15s","20s","30s")[timeoutSwitch]}") },
+                    modifier = Modifier.tvFocusBorder()
+                )
+                FilterChip(
+                    selected = false,
+                    onClick = { viewModel.setReconnectIndex((reconnectIdx + 1) % 6) },
+                    label = { Text("断线重连: ${listOf("关闭","3s","5s","10s","15s","20s")[reconnectIdx]}") },
+                    modifier = Modifier.tvFocusBorder()
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // 画面锁定 + 开机自启动
+            Surface(
+                color = Color(0xFF1E2720),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .tvFocusBorder()
+                            .focusable()
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "画面锁定（换源不黑屏）",
+                                color = Color(0xFF90CAF9),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "切换频道时保持上一帧画面，避免黑屏闪烁",
+                                color = Color(0xFFB0BEC5),
+                                fontSize = 11.sp
+                            )
+                        }
+                        Switch(
+                            checked = screenLocked,
+                            onCheckedChange = { viewModel.setScreenLock(it) }
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .tvFocusBorder()
+                            .focusable()
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "开机自启动",
+                                color = Color(0xFF90CAF9),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "设备开机后自动启动应用",
+                                color = Color(0xFFB0BEC5),
+                                fontSize = 11.sp
+                            )
+                        }
+                        Switch(
+                            checked = bootStart,
+                            onCheckedChange = { viewModel.setBootStart(it) }
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // -----------------------------------------------------------------
+            // 0.6 EPG 时区偏移 / EPG 缓存定时
+            // -----------------------------------------------------------------
+            SectionTitle("EPG 设置")
+            Spacer(modifier = Modifier.height(8.dp))
+
+            val epgTz by viewModel.epgTimezoneOffset.collectAsState()
+            val epgCache by viewModel.epgCacheSchedule.collectAsState()
+            val groupMd by viewModel.groupMode.collectAsState()
+
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                FilterChip(
+                    selected = false,
+                    onClick = { viewModel.setEpgTimezoneOffset((epgTz + 1) % 26) },
+                    label = { Text("时区: ${if (epgTz == 0) "默认" else "UTC${if (epgTz > 13) "-" else "+"}${if (epgTz > 13) (26 - epgTz) else epgTz}"}") },
+                    modifier = Modifier.tvFocusBorder()
+                )
+                FilterChip(
+                    selected = false,
+                    onClick = { viewModel.setEpgCacheSchedule((epgCache + 1) % 12) },
+                    label = { Text("缓存: ${listOf("关闭","1h","2h","3h","4h","6h","8h","12h","24h","48h","72h","7d")[epgCache]}") },
+                    modifier = Modifier.tvFocusBorder()
+                )
+                FilterChip(
+                    selected = false,
+                    onClick = { viewModel.setGroupMode((groupMd + 1) % 4) },
+                    label = { Text("分组: ${listOf("默认","二级分组","紧凑","展开")[groupMd]}") },
+                    modifier = Modifier.tvFocusBorder()
+                )
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // -----------------------------------------------------------------
+            // 1. 视频输出（VO）选择（仅 MPV 模式显示）
+            // -----------------------------------------------------------------
+            if (currentPlayerType == PlayerType.MPV) {
             SectionTitle("视频输出（VO）")
             Spacer(modifier = Modifier.height(4.dp))
             SectionDesc("决定画面如何渲染到屏幕。黑屏有声音时切换到 mediacodec_embed")
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
                 FilterChip(
                     selected = currentVo == "gpu",
                     onClick = { viewModel.setPlayerVo("gpu") },
@@ -167,7 +357,11 @@ fun PlayerSettingsPanel(viewModel: AppViewModel) {
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
                 when (currentVo) {
                     "gpu", "gpu-next" -> {
                         // vo=gpu / gpu-next 时：auto-copy（兼容好）/ auto（4K HDR 优化）/ no（软解）
@@ -380,7 +574,11 @@ fun PlayerSettingsPanel(viewModel: AppViewModel) {
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
                 FilterChip(
                     selected = logLevel == "error",
                     onClick = { viewModel.setLogLevel("error") },
@@ -502,6 +700,8 @@ fun PlayerSettingsPanel(viewModel: AppViewModel) {
             }
 
             Spacer(modifier = Modifier.height(20.dp))
+
+            } // end if (MPV mode)
 
             // -----------------------------------------------------------------
             // 提示
