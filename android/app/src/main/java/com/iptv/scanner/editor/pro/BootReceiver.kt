@@ -38,7 +38,7 @@ class BootReceiver : BroadcastReceiver() {
         }
 
         try {
-            val launchIntent = Intent(context, MainActivity::class.java).apply {
+            val launchIntent = Intent(context, MainActivityCompose::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }

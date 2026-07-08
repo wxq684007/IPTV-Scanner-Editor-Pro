@@ -101,7 +101,6 @@ class ExoPlayerWrapper(
         supportsSpeedControl = true,
         supportsTrackList = true,
         supportsAddSubtitleFile = true,
-        supportsSubVisibility = true,
         supportsSubDelay = false,
         supportsSubScale = false,
         supportsSubPos = false,
@@ -260,8 +259,8 @@ class ExoPlayerWrapper(
 
     override fun seekRelative(seconds: Double) {
         val p = player ?: return
-        val target = (p.currentPosition + seconds * 1000).coerceAtLeast(0)
-            .coerceAtMost(p.duration.coerceAtLeast(0))
+        val target = (p.currentPosition + seconds * 1000.0).coerceAtLeast(0.0)
+            .coerceAtMost(p.duration.coerceAtLeast(0L).toDouble())
         p.seekTo(target.toLong())
     }
 
@@ -328,7 +327,8 @@ class ExoPlayerWrapper(
     override fun cycleSub() {
         val p = player ?: return
         // 切换字幕轨开关
-        val subEnabled = p.trackSelectionParameters.trackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT).not()
+        val subEnabled = p.trackSelectionParameters.disabledTrackTypes
+            .contains(androidx.media3.common.C.TRACK_TYPE_TEXT).not()
         p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, subEnabled)
             .build()
@@ -356,9 +356,26 @@ class ExoPlayerWrapper(
             .build()
     }
 
+    override fun setSubDelay(delaySec: Double) {
+        // ExoPlayer 不支持字幕延迟设置
+    }
+
+    override fun adjustSubDelay(delta: Double) {
+        // ExoPlayer 不支持字幕延迟调整
+    }
+
+    override fun setSubScale(scale: Double) {
+        // ExoPlayer 不支持字幕缩放
+    }
+
+    override fun setSubPos(pos: Int) {
+        // ExoPlayer 不支持字幕位置设置
+    }
+
     override fun toggleSubVisibility() {
         val p = player ?: return
-        val currentlyVisible = !p.trackSelectionParameters.trackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT)
+        val currentlyVisible = !p.trackSelectionParameters.disabledTrackTypes
+            .contains(androidx.media3.common.C.TRACK_TYPE_TEXT)
         setSubVisibility(!currentlyVisible)
     }
 
