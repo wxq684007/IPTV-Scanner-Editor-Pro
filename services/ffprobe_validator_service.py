@@ -242,8 +242,6 @@ class FfprobeStreamValidator:
             '-print_format', 'json',
             '-show_format',
             '-show_streams',
-            '-show_frames',
-            '-select_streams', 'v:0',
             '-analyzeduration', str(timeout * 1000000),
             '-probesize', '5242880',
             '-timeout', str(timeout * 1000000),

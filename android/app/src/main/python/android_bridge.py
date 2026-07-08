@@ -1367,6 +1367,7 @@ def start_admin_server(port=8080):
     """
     global _admin_server_thread, _admin_server_url, _admin_server_port
     global _admin_server_running, _admin_loop, _admin_server_error, _admin_server_task
+    global _admin_auth_token
 
     if _admin_server_running:
         return _ok({'url': _admin_server_url, 'port': _admin_server_port,
@@ -1404,7 +1405,6 @@ def start_admin_server(port=8080):
         return _err(f'获取局域网 IP 失败: {e}')
 
     # 生成认证 token（首次启动时生成，之后复用）
-    global _admin_auth_token
     if not _admin_auth_token:
         _admin_auth_token = secrets.token_urlsafe(16)
         _log(f'Admin server auth token generated: {_admin_auth_token[:8]}...')
