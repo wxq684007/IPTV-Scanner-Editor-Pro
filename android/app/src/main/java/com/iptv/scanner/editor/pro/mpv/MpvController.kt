@@ -109,6 +109,13 @@ class MpvController : MPVLib.EventObserver, Player {
      */
     var onVoFallback: ((String, String) -> Unit)? = null
 
+/**
+ * 文件加载出错回调（由 MPV_EVENT_END_FILE with error 触发）。
+ * AppViewModel 注册此回调以在文件加载出错时立即换源，
+ * 而不必等待超时定时器触发（默认 5-30s 太慢，坏流可能在几秒内耗尽内存）。
+ */
+var onFileError: (() -> Unit)? = null
+
     private val _speed = MutableStateFlow(1.0)
     override val speed: StateFlow<Double> = _speed.asStateFlow()
 
@@ -486,7 +493,7 @@ class MpvController : MPVLib.EventObserver, Player {
                     MPVLib.setPropertyString("user-agent", "VLC/3.0.18Libmpv")
                     MPVLib.setPropertyString("cache", "yes")
                     MPVLib.setPropertyString("demuxer-lavf-format", "")
-                    MPVLib.setPropertyString("cache-secs", "3600")
+                    MPVLib.setPropertyString("cache-secs", "60")
                     if (transport == "udp") {
                         // RTSP over UDP：小 probe 快速识别，低 readahead
                         MPVLib.setPropertyString("demuxer-lavf-probesize", "500000")
@@ -517,18 +524,18 @@ class MpvController : MPVLib.EventObserver, Player {
                         MPVLib.setPropertyString("demuxer-lavf-analyzeduration", "1")
                         // FCC 代理已预缓冲流数据，无需大 readahead，减少移动端内存压力
                         MPVLib.setPropertyString("demuxer-readahead-secs", "10")
-                        MPVLib.setPropertyString("cache-secs", "600")
+                        MPVLib.setPropertyString("cache-secs", "60")
                     } else {
                         // 非 FCC 直播流需要足够 probe 识别编码（如 CAVS）
                         MPVLib.setPropertyString("demuxer-lavf-probesize", "5000000")
                         MPVLib.setPropertyString("demuxer-lavf-analyzeduration", "5")
-                        MPVLib.setPropertyString("demuxer-readahead-secs", "30")
-                        MPVLib.setPropertyString("cache-secs", "3600")
+                        MPVLib.setPropertyString("demuxer-readahead-secs", "15")
+                        MPVLib.setPropertyString("cache-secs", "120")
                     }
                     MPVLib.setPropertyString("cache", "yes")
                     MPVLib.setPropertyString("force-seekable", "yes")
                     MPVLib.setPropertyString("demuxer-seekable-cache", "yes")
-                    Log.i(TAG, "TS/UDP/RTP options: probesize=${if (isFcc) "2M" else "5M"}, readahead=${if (isFcc) "10s" else "30s"}, fcc=$isFcc")
+                    Log.i(TAG, "TS/UDP/RTP options: probesize=${if (isFcc) "2M" else "5M"}, readahead=${if (isFcc) "10s" else "15s"}, fcc=$isFcc")
                 }
                 else -> {
                     // 通用网络流：与 PC 端默认分支对齐
@@ -538,16 +545,16 @@ class MpvController : MPVLib.EventObserver, Player {
                         MPVLib.setPropertyString("demuxer-lavf-probesize", "2000000")
                         MPVLib.setPropertyString("demuxer-lavf-analyzeduration", "1")
                         MPVLib.setPropertyString("demuxer-readahead-secs", "10")
-                        MPVLib.setPropertyString("cache-secs", "600")
+                        MPVLib.setPropertyString("cache-secs", "60")
                     } else {
                         MPVLib.setPropertyString("demuxer-lavf-probesize", "5000000")
                         MPVLib.setPropertyString("demuxer-lavf-analyzeduration", "5")
-                        MPVLib.setPropertyString("demuxer-readahead-secs", "30")
-                        MPVLib.setPropertyString("cache-secs", "3600")
+                        MPVLib.setPropertyString("demuxer-readahead-secs", "15")
+                        MPVLib.setPropertyString("cache-secs", "120")
                     }
                     MPVLib.setPropertyString("cache", "yes")
                     MPVLib.setPropertyString("force-seekable", "yes")
-                    Log.i(TAG, "Generic stream options: probesize=${if (isFcc) "2M" else "5M"}, readahead=${if (isFcc) "10s" else "30s"}, fcc=$isFcc")
+                    Log.i(TAG, "Generic stream options: probesize=${if (isFcc) "2M" else "5M"}, readahead=${if (isFcc) "10s" else "15s"}, fcc=$isFcc")
                 }
             }
         } catch (e: Throwable) {
@@ -1098,7 +1105,13 @@ class MpvController : MPVLib.EventObserver, Player {
                 _eofReached.value = false
             }
             MPVLib.MpvEvent.MPV_EVENT_END_FILE -> {
-                // 文件结束（eof 或切换）：UI 自行根据 eof-reached 判断
+                // 文件结束：可能是正常 eof、切换频道、或加载出错。
+                // 如果文件从未成功加载（_fileLoaded=false），说明加载失败，
+                // 立即通知 AppViewModel 换源，防止坏流消耗内存导致 OOM 崩溃。
+                if (!_fileLoaded.value) {
+                    Log.w(TAG, "MPV_EVENT_END_FILE: file failed to load (never got FILE_LOADED), notifying error")
+                    onFileError?.invoke()
+                }
             }
             MPVLib.MpvEvent.MPV_EVENT_SHUTDOWN -> {
                 Log.w(TAG, "MPV_EVENT_SHUTDOWN: mpv core has shut down, marking instance as dead")

@@ -234,6 +234,8 @@ class ScanChannelDialog(FloatingDialog):
                     QtWidgets.QListView,
                     QtWidgets.QAbstractSlider,
                     QtWidgets.QAbstractSpinBox,
+                    QtWidgets.QPlainTextEdit,
+                    QtWidgets.QTextEdit,
                 )
                 w = widget
                 while w:
@@ -2258,13 +2260,49 @@ class ScanChannelDialog(FloatingDialog):
                 self._empty_stack.setCurrentIndex(0)
 
     def _setup_shortcuts(self):
-        """设置快捷键"""
-        from PySide6.QtGui import QKeySequence
-        from PySide6.QtGui import QShortcut
-        QShortcut(QKeySequence("Ctrl+S"), self, self._on_save_m3u_clicked)
-        QShortcut(QKeySequence("Ctrl+F"), self, self._focus_search)
-        QShortcut(QKeySequence("Ctrl+A"), self, self._select_all_channels)
-        QShortcut(QKeySequence("Delete"), self, self._delete_selected_channels)
+        """设置快捷键
+
+        注意：Ctrl+S/Ctrl+F/Ctrl+A/Delete 不使用 QShortcut，
+        因为 QShortcut 会在文本控件之前消费按键事件，导致编辑框无法输入。
+        改用 keyPressEvent 处理，让文本控件优先处理按键。
+        """
+        pass
+
+    def keyPressEvent(self, event):
+        """处理快捷键：当焦点不在文本输入控件时才响应快捷键。
+
+        当焦点在 QLineEdit/QPlainTextEdit 等文本控件上时，按键事件
+        会被文本控件优先处理（accept），不会传播到本方法，
+        因此不会干扰用户在编辑框中的正常输入和删除操作。
+        """
+        key = event.key()
+        mods = event.modifiers()
+
+        # Ctrl+S: 保存 M3U
+        if mods & QtCore.Qt.KeyboardModifier.ControlModifier and key == QtCore.Qt.Key.Key_S:
+            self._on_save_m3u_clicked()
+            event.accept()
+            return
+
+        # Ctrl+F: 聚焦搜索框
+        if mods & QtCore.Qt.KeyboardModifier.ControlModifier and key == QtCore.Qt.Key.Key_F:
+            self._focus_search()
+            event.accept()
+            return
+
+        # Ctrl+A: 全选频道（焦点在文本输入框时由文本控件自行处理，不会到达此处）
+        if mods & QtCore.Qt.KeyboardModifier.ControlModifier and key == QtCore.Qt.Key.Key_A:
+            self._select_all_channels()
+            event.accept()
+            return
+
+        # Delete: 删除选中频道（焦点在文本输入框时由文本控件自行处理，不会到达此处）
+        if key == QtCore.Qt.Key.Key_Delete:
+            self._delete_selected_channels()
+            event.accept()
+            return
+
+        super().keyPressEvent(event)
 
     def _is_focused_on_text_input(self) -> bool:
         """判断当前焦点是否在文本输入控件上（QLineEdit/QPlainTextEdit/QComboBox editable）。

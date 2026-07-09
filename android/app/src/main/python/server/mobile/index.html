@@ -113,8 +113,25 @@ html,body{width:100%;height:100%;overflow:hidden;background:transparent;color:#e
 .panel-search input:focus{border-color:var(--accent)}
 .panel-search input::placeholder{color:#555}
 .panel-group-filter{padding:0 12px 8px;flex-shrink:0}
+/* TV 模式：保留原生 select（遥控器友好） */
 .panel-group-filter select{width:100%;background:rgba(255,255,255,.06);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-size:13px;outline:none;-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='%23888'><path d='M7 10l5 5 5-5z'/></svg>");background-repeat:no-repeat;background-position:right 10px center;padding-right:30px}
 .panel-group-filter select:focus{border-color:var(--accent)}
+/* 手机模式：可搜索分类标签云 */
+.gf-trigger{display:none;width:100%;background:rgba(255,255,255,.06);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-size:13px;outline:none;cursor:pointer;text-align:left;align-items:center;justify-content:space-between;gap:6px}
+.gf-trigger:active{background:rgba(255,255,255,.1)}
+.gf-trigger .gf-label{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gf-trigger .gf-arrow{flex-shrink:0;color:var(--text-dim);transition:transform .2s}
+.gf-trigger.open .gf-arrow{transform:rotate(180deg)}
+.gf-popup{display:none;margin-top:6px;background:rgba(20,20,22,.98);border:1px solid var(--border);border-radius:8px;padding:8px;position:relative;z-index:10}
+.gf-popup.open{display:block}
+.gf-search{width:100%;background:rgba(255,255,255,.06);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-size:12px;outline:none;margin-bottom:6px}
+.gf-search:focus{border-color:var(--accent)}
+.gf-search::placeholder{color:#555}
+.gf-chips{display:flex;flex-wrap:wrap;gap:5px;max-height:180px;overflow-y:auto;-webkit-overflow-scrolling:touch;scrollbar-width:thin}
+.gf-chip{flex:0 0 auto;background:rgba(255,255,255,.06);border:1px solid var(--border);border-radius:16px;padding:5px 12px;color:var(--text-dim);font-size:12px;cursor:pointer;white-space:nowrap;-webkit-tap-highlight-color:transparent}
+.gf-chip:active{background:rgba(255,255,255,.12)}
+.gf-chip.active{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+.gf-count{font-size:10px;color:var(--text-faint);margin-left:4px}
 
 .panel-tabs{display:flex;border-bottom:1px solid var(--border);padding:0 8px;flex-shrink:0;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
 .panel-tabs::-webkit-scrollbar{display:none}
@@ -292,9 +309,19 @@ html,body{width:100%;height:100%;overflow:hidden;background:transparent;color:#e
   </div>
   <div class="panel-search"><input id="searchInput" placeholder="搜索频道..."></div>
   <div class="panel-group-filter" id="groupFilterBar" style="display:none">
+    <!-- TV 模式：原生 select（遥控器友好） -->
     <select id="groupFilterSelect" onchange="onGroupFilterChange(this.value)">
       <option value="">全部频道</option>
     </select>
+    <!-- 手机模式：可搜索分类标签云 -->
+    <button class="gf-trigger" id="gfTrigger" onclick="toggleGroupPicker()">
+      <span class="gf-label" id="gfLabel">全部频道</span>
+      <svg class="gf-arrow" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
+    </button>
+    <div class="gf-popup" id="gfPopup">
+      <input class="gf-search" id="gfSearch" placeholder="搜索分类..." oninput="filterGroupChips()">
+      <div class="gf-chips" id="gfChips"></div>
+    </div>
   </div>
   <div class="panel-body" id="channelList"></div>
 </div>
@@ -1755,23 +1782,116 @@ function switchChTab(tab, btn){
   renderChannelList($('#searchInput').value);
 }
 
-/* 更新分组筛选下拉框：订阅/本地 tab 显示，其他 tab 隐藏 */
+/* 更新分组筛选：订阅/本地 tab 显示，其他 tab 隐藏
+   TV 模式用原生 select（遥控器友好），手机模式用可搜索标签云 */
 function updateGroupFilter(){
   const bar = $('#groupFilterBar');
   const sel = $('#groupFilterSelect');
+  const trigger = $('#gfTrigger');
+  const popup = $('#gfPopup');
   if(!bar || !sel) return;
   const showGroups = (state.chTab==='sub' || state.chTab==='local');
   if(!showGroups){ bar.style.display='none'; return; }
-  /* 重建选项：第一项始终是"全部频道"，后续按 state.groups 顺序（M3U 出现顺序） */
+  bar.style.display = 'block';
+
+  /* TV 模式：显示 select，隐藏标签云 */
+  if(state.tvMode){
+    sel.style.display='block';
+    if(trigger) trigger.style.display='none';
+    if(popup) popup.classList.remove('open');
+    const cur = state.selectedGroup || '';
+    let html = '<option value="">全部频道</option>';
+    for(const g of state.groups){
+      if(!g) continue;
+      html += `<option value="${esc(g)}" ${g===cur?'selected':''}>${esc(g)}</option>`;
+    }
+    sel.innerHTML = html;
+    return;
+  }
+
+  /* 手机模式：隐藏 select，显示标签云触发按钮 */
+  sel.style.display='none';
+  if(trigger) trigger.style.display='flex';
+  if(popup) popup.classList.remove('open');
+  updateGroupPicker();
+}
+
+/* 手机模式：更新标签云内容 + 触发按钮文字 */
+function updateGroupPicker(){
+  const trigger = $('#gfTrigger');
+  const label = $('#gfLabel');
+  const chipsEl = $('#gfChips');
+  if(!trigger || !chipsEl) return;
   const cur = state.selectedGroup || '';
-  let html = '<option value="">全部频道</option>';
+  if(label) label.textContent = cur || '全部频道';
+  if(trigger.classList.contains('open')){
+    trigger.classList.remove('open');
+  }
+  /* 统计每个分组的频道数 */
+  const counts = {};
+  for(const c of state.channels){
+    const g = c.group || '';
+    if(g) counts[g] = (counts[g]||0)+1;
+  }
+  let html = `<div class="gf-chip ${!cur?'active':''}" data-group="">全部频道<span class="gf-count">${state.channels.length}</span></div>`;
   for(const g of state.groups){
     if(!g) continue;
-    html += `<option value="${esc(g)}" ${g===cur?'selected':''}>${esc(g)}</option>`;
+    const cnt = counts[g]||0;
+    html += `<div class="gf-chip ${g===cur?'active':''}" data-group="${esc(g)}">${esc(g)}<span class="gf-count">${cnt}</span></div>`;
   }
-  sel.innerHTML = html;
-  bar.style.display = 'block';
+  chipsEl.innerHTML = html;
+  /* 事件委托：点击 chip 选择分组 */
+  chipsEl.querySelectorAll('.gf-chip').forEach(chip=>{
+    chip.addEventListener('click', ()=>selectGroup(chip.dataset.group||''));
+  });
+  /* 清空搜索 */
+  const search = $('#gfSearch');
+  if(search) search.value='';
 }
+
+/* 手机模式：展开/折叠标签云 */
+function toggleGroupPicker(){
+  const trigger = $('#gfTrigger');
+  const popup = $('#gfPopup');
+  if(!trigger || !popup) return;
+  const isOpen = popup.classList.contains('open');
+  if(isOpen){
+    popup.classList.remove('open');
+    trigger.classList.remove('open');
+  } else {
+    popup.classList.add('open');
+    trigger.classList.add('open');
+    /* 展开时自动滚动到当前选中项 */
+    setTimeout(()=>{
+      const active = popup.querySelector('.gf-chip.active');
+      if(active) active.scrollIntoView({block:'nearest',behavior:'smooth'});
+      const search = $('#gfSearch');
+      if(search) search.focus();
+    },50);
+  }
+}
+
+/* 手机模式：搜索过滤标签云 */
+function filterGroupChips(){
+  const q = ($('#gfSearch')?.value || '').toLowerCase();
+  const chips = $$('#gfChips .gf-chip');
+  for(const chip of chips){
+    const text = chip.textContent.toLowerCase();
+    chip.style.display = text.includes(q) ? '' : 'none';
+  }
+}
+
+/* 手机模式：选择分组并关闭标签云 */
+function selectGroup(g){
+  state.selectedGroup = g || '';
+  const popup = $('#gfPopup');
+  const trigger = $('#gfTrigger');
+  if(popup) popup.classList.remove('open');
+  if(trigger) trigger.classList.remove('open');
+  updateGroupPicker();
+  renderChannelList($('#searchInput').value);
+}
+
 function onGroupFilterChange(v){
   state.selectedGroup = v || '';
   renderChannelList($('#searchInput').value);
@@ -2056,6 +2176,7 @@ function openTVMode(){
     renderChannelList();
     renderEPGList();
     updateCtrlInfo();
+    updateGroupFilter();
     /* 高亮频道列表焦点 */
     highlightTVFocus('channels');
     clearTimeout(state.hideControlsTimer);
@@ -2074,6 +2195,7 @@ function closeTVMode(){
   $('#topBar').classList.remove('show');
   if(!state.funcPanelOpen) $('#panelOverlay').classList.remove('show');
   state.panelOpen = null;
+  updateGroupFilter();
   /* 移除焦点高亮 */
   document.querySelectorAll('.tv-focused').forEach(el => el.classList.remove('tv-focused'));
 }

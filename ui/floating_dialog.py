@@ -529,6 +529,7 @@ class FloatingDialog(QDialog):
                     QtWidgets.QAbstractSlider,
                     QtWidgets.QAbstractSpinBox,
                     QtWidgets.QTextEdit,
+                    QtWidgets.QPlainTextEdit,
                 )
                 w = widget
                 while w:

@@ -269,9 +269,15 @@ def _setup_android_logging():
         _log('Android logging via print fallback OK')
 
     # --- file handler (app.log) ---
+    # 注意：不在此处创建 RotatingFileHandler！
+    # LogManager（core/log_manager.py）在 server.context 导入时会创建自己的
+    # RotatingFileHandler 写入同一个 app.log 文件。如果此处也创建一个，
+    # LogManager 初始化时会删除 app.log 再重新创建，导致此处的 handler
+    # 指向已删除的文件，所有通过 root logger 的日志（如 server.context）全部丢失。
+    # 正确做法：在 init_context() 中 server.context 导入后，将 LogManager 的
+    # file handler 添加到 root logger，使所有 logger 共享同一个 handler。
     root = logging.getLogger()
     root.setLevel(_current_log_level)
-    _add_file_handler(root)
 
 
 def set_log_level(level_str='info'):
@@ -608,7 +614,32 @@ def init_context(ext_files_dir='', files_dir='', log_level='info'):
                 _log(f'init_context: config_dir={config_dir}')
 
             from server.context import ServerContext
+
+            # 在 ServerContext.get_instance() 之前，先将 LogManager 的 file handler
+            # 添加到 root logger，使 get_instance() 内部的日志（如"从缓存加载了 N 个频道"）
+            # 也能写入 app.log。LogManager 在 server.context 导入时已初始化，此时
+            # handler 已挂在 'IPTVScanner' logger 上，共享到 root logger 后所有子 logger
+            # 的日志通过传播机制都能写入 app.log。
+            try:
+                from core.log_manager import global_logger as _glm
+                _glm_logger = _glm.get_logger()
+                if _glm_logger.handlers:
+                    _glm_handler = _glm_logger.handlers[0]
+                    # 将 handler 从 IPTVScanner logger 移到 root logger，
+                    # 使所有 logger（IPTVScanner, server.context 等）的消息
+                    # 通过传播到 root 统一写入 app.log + logcat，且不重复。
+                    _glm_logger.removeHandler(_glm_handler)
+                    root = logging.getLogger()
+                    if not any(h is _glm_handler for h in root.handlers):
+                        root.addHandler(_glm_handler)
+                    _log('Moved LogManager file handler to root logger (app.log)')
+                else:
+                    _log('LogManager has no file handler, skipping move', 'W')
+            except Exception as _e:
+                _log(f'Failed to move LogManager handler: {_e}', 'W')
+
             ServerContext.get_instance(main_window=None)
+
             _log('init_context: ServerContext initialized (standalone mode)')
             _inited = True
             return 'OK'

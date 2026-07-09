@@ -492,12 +492,29 @@ val logLevel: StateFlow<String> = _logLevel.asStateFlow()
         // 注册 MPV 黑屏 fallback 回调：当 vo=gpu 渲染黑屏自动 fallback 到 mediacodec_embed 时，
         // 同步更新 UI 状态（_currentVo / _currentHwdec），使设置面板的选中项正确显示。
         // 不持久化（仅本次会话），避免误判永久化。
-        mpvSingleton.onVoFallback = { vo, hwdec ->
-            _currentVo.value = vo
-            _currentHwdec.value = hwdec
-            Log.i(TAG, "onVoFallback: UI updated vo=$vo, hwdec=$hwdec (session only)")
-        }
-    }
+mpvSingleton.onVoFallback = { vo, hwdec ->
+_currentVo.value = vo
+_currentHwdec.value = hwdec
+Log.i(TAG, "onVoFallback: UI updated vo=$vo, hwdec=$hwdec (session only)")
+}
+
+// 注册文件加载错误回调：当 mpv 报告文件加载失败时立即换源，
+// 不必等待超时定时器（5-30s），防止坏流在几秒内耗尽 native 内存导致 OOM 崩溃。
+mpvSingleton.onFileError = {
+Log.w(TAG, "onFileError: file failed to load, triggering immediate switch")
+timeoutSwitchJob?.cancel()
+consecutiveTimeoutCount++
+val maxConsecutive = minOf(10, maxOf(3, _channels.value.size / 3))
+if (consecutiveTimeoutCount > maxConsecutive) {
+Log.w(TAG, "onFileError: stopped after $consecutiveTimeoutCount consecutive errors")
+consecutiveTimeoutCount = 0
+showOsd("自动换源已停止", "连续加载失败，请检查网络或切换播放器内核")
+} else {
+showOsd("加载失败", "当前频道无法播放，自动切换")
+nextChannel()
+}
+}
+}
     val hardwareDecode: StateFlow<Boolean> = _hardwareDecode.asStateFlow()
 
     // 局域网管理服务器

@@ -81,10 +81,10 @@ class EventHandler:
 
     def _is_input_widget_focused(self) -> bool:
         """判断当前焦点是否在输入控件上（编辑框、文本框等）"""
-        from PySide6.QtWidgets import QApplication, QLineEdit, QTextEdit, QComboBox, QSpinBox
+        from PySide6.QtWidgets import QApplication, QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QSpinBox
         focus_widget = QApplication.focusWidget()
         if focus_widget:
-            if isinstance(focus_widget, (QLineEdit, QTextEdit, QSpinBox)):
+            if isinstance(focus_widget, (QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox)):
                 return True
             if isinstance(focus_widget, QComboBox) and focus_widget.isEditable():
                 return True

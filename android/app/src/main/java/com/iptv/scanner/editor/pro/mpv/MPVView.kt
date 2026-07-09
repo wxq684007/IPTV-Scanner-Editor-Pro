@@ -111,8 +111,11 @@ class MPVView @JvmOverloads constructor(
         MPVLib.setOptionString("video-sync", "audio")
         MPVLib.setOptionString("cache-pause-initial", "no")
 
-        MPVLib.setOptionString("demuxer-max-bytes", "128MiB")
-        MPVLib.setOptionString("demuxer-max-back-bytes", "64MiB")
+        // 缓存大小：Android TV 内存有限（通常 1-2GB），过大的 demuxer 缓存在播放坏流时
+        // 会导致 native 内存耗尽 → malloc 返回 null → SIGABRT 崩溃。
+        // 32MiB 前向 + 8MiB 后向足够流畅播放，同时将 OOM 风险降到最低。
+        MPVLib.setOptionString("demuxer-max-bytes", "32MiB")
+        MPVLib.setOptionString("demuxer-max-back-bytes", "8MiB")
         MPVLib.setOptionString("demuxer-readahead-secs", "10")
         MPVLib.setOptionString("demuxer-seekable-cache", "yes")
         MPVLib.setOptionString("force-seekable", "yes")
@@ -127,6 +130,9 @@ class MPVView @JvmOverloads constructor(
         MPVLib.setOptionString("network-timeout", "8")
         MPVLib.setOptionString("source-timeout", "8")
         MPVLib.setOptionString("stream-open-timeout", "8")
+        // demuxer 读取超时：lavf 读取数据超时后触发 end-file 事件，
+        // 防止坏流时 demuxer 无限重试消耗内存。
+        MPVLib.setOptionString("demuxer-read-timeout", "5")
 
         MPVLib.setOptionString("stream-lavf-o", "verify=1")
         MPVLib.setOptionString("tls-verify", "yes")
