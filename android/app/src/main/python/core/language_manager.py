@@ -167,6 +167,7 @@ BUILTIN_TRANSLATIONS = {
         'stream_name_hint': '留空则自动命名',
         'm3u_download_failed': 'M3U列表下载失败',
         'm3u_loaded_n_channels': '已加载 {n} 个频道',
+        'invalid_url_prompt': '输入的地址格式不正确，请检查是否包含完整的URL\n（例如 http://example.com/playlist.m3u）',
         'cancel': '取消',
         'ok': '确定',
         'close_confirm_title': '关闭确认',
@@ -879,7 +880,17 @@ BUILTIN_TRANSLATIONS = {
         'demuxer_readahead_secs_override_label': 'Demuxer 预读时长 (s):',
         'demuxer_readahead_secs_override_placeholder': '0 = 自动（按流类型：HLS=120s, TS=300s 等）',
         'demuxer_readahead_secs_override_desc': '覆盖 demuxer 预读秒数。留 0 保持自动值'
-                                               '（HLS/HTTP=120s, TS=300s, 网络挂载盘=30s 等）。',
+        '（HLS/HTTP=120s, TS=300s, 网络挂载盘=30s 等）。',
+        'probesize_override_label': 'Probesize (字节):',
+        'probesize_override_placeholder': '0 = 自动（直播=5MB, FCC=2MB）',
+        'probesize_override_desc': '覆盖 demuxer 探测大小（字节）。留 0 保持自动值'
+        '（直播=5MB, FCC=2MB）。如果流加载失败并出现 “unspecified pixel format” '
+        '警告，请增大此值（如 10000000）。',
+        'analyzeduration_override_label': 'Analyzeduration (秒):',
+        'analyzeduration_override_placeholder': '0 = 自动（直播=5s, FCC=2s）',
+        'analyzeduration_override_desc': '覆盖 demuxer 分析时长（秒）。留 0 保持自动值'
+        '（直播=5s, FCC=2s）。如果流加载缓慢或出现损坏包警告，请增大此值。',
+        'screenshot_no_video': '当前频道无视频画面，无法截图',
         'ctx_hdr_mode': 'HDR 模式',
         'hdr_current_video': '当前视频',
         'osd_hdr_mode': 'HDR 模式',
@@ -1351,6 +1362,10 @@ BUILTIN_TRANSLATIONS = {
         'stream_name_hint': 'Leave empty for auto name',
         'm3u_download_failed': 'M3U list download failed',
         'm3u_loaded_n_channels': 'Loaded {n} channels',
+        'invalid_url_prompt': (
+            'The URL format is invalid. Please make sure it contains '
+            'a complete URL\n(e.g. http://example.com/playlist.m3u)'
+        ),
         'cancel': 'Cancel',
         'ok': 'OK',
         'close_confirm_title': 'Close Confirmation',
@@ -2064,7 +2079,18 @@ BUILTIN_TRANSLATIONS = {
         'demuxer_readahead_secs_override_label': 'Demuxer Readahead (s):',
         'demuxer_readahead_secs_override_placeholder': '0 = auto (per stream type: HLS=120s, TS=300s, ...)',
         'demuxer_readahead_secs_override_desc': 'Overrides the demuxer readahead in seconds. Leave 0 to keep '
-                                               'the auto value (120s for HLS/HTTP, 300s for TS, 30s for network drives, etc.).',
+        'the auto value (120s for HLS/HTTP, 300s for TS, 30s for network drives, etc.).',
+        'probesize_override_label': 'Probesize (bytes):',
+        'probesize_override_placeholder': '0 = auto (5MB for live, 2MB for FCC)',
+        'probesize_override_desc': 'Overrides the demuxer probe size in bytes. Leave 0 for auto '
+        '(5MB for live streams, 2MB for FCC). Increase if streams '
+        'fail to load with unspecified pixel format warnings.',
+        'analyzeduration_override_label': 'Analyzeduration (seconds):',
+        'analyzeduration_override_placeholder': '0 = auto (5s for live, 2s for FCC)',
+        'analyzeduration_override_desc': 'Overrides the demuxer analysis duration in seconds. Leave 0 for auto '
+        '(5s for live, 2s for FCC). Increase if streams take too long '
+        'to load or fail with corrupt packet warnings.',
+        'screenshot_no_video': 'No video frame for current channel, cannot take screenshot',
         'ctx_hdr_mode': 'HDR Mode',
         'hdr_current_video': 'Current',
         'osd_hdr_mode': 'HDR Mode',

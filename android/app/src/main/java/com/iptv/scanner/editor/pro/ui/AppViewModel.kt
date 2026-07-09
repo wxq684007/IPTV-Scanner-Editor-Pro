@@ -498,10 +498,10 @@ _currentHwdec.value = hwdec
 Log.i(TAG, "onVoFallback: UI updated vo=$vo, hwdec=$hwdec (session only)")
 }
 
-// 注册文件加载错误回调：当 mpv 报告文件加载失败时立即换源，
-// 不必等待超时定时器（5-30s），防止坏流在几秒内耗尽 native 内存导致 OOM 崩溃。
+// 注册文件加载错误回调：当 mpv 报告文件加载失败时换源，
+// 添加短暂延迟避免坏流导致 mpv 核心状态未清理就加载下一个流。
 mpvSingleton.onFileError = {
-Log.w(TAG, "onFileError: file failed to load, triggering immediate switch")
+Log.w(TAG, "onFileError: file failed to load, triggering switch after delay")
 timeoutSwitchJob?.cancel()
 consecutiveTimeoutCount++
 val maxConsecutive = minOf(10, maxOf(3, _channels.value.size / 3))
@@ -511,7 +511,11 @@ consecutiveTimeoutCount = 0
 showOsd("自动换源已停止", "连续加载失败，请检查网络或切换播放器内核")
 } else {
 showOsd("加载失败", "当前频道无法播放，自动切换")
+// 延迟 1 秒再切换，给 mpv 核心时间清理旧流的 demuxer 状态
+viewModelScope.launch {
+delay(1000)
 nextChannel()
+}
 }
 }
 }
@@ -1224,12 +1228,13 @@ private var _channelInputJob: kotlinx.coroutines.Job? = null
                 // 场景：坏流的 demuxer 线程卡在网络读取上，stop 命令虽然被接受，
                 // 但无法真正中断阻塞的 I/O 调用。后续 loadfile 命令在旧 demuxer
                 // 未释放时被发送，新流也无法加载——导致所有后续频道都无法播放。
-                // forceRecreate() 发送 quit 命令关闭整个 mpv 核心，下次 playFile()
-                // 时 ensureInstanceAlive() 会检测到 forceRecreatePending 标志并重建核心。
+                // forceRecreate() 通过 stop + playlist-clear 重置 mpv 内部状态（不终止核心），
+                // 下次 playFile() 时 ensureInstanceAlive() 检测到 forceRecreatePending 标志后
+                // 直接返回（核心仍存活，idle=yes 保证不会自动 shutdown）。
                 if (consecutiveTimeoutCount >= 2 && _playerType.value == PlayerType.MPV) {
-                    Log.w(TAG, "Timeout switch: forcing mpv core recreation (consecutive=$consecutiveTimeoutCount)")
+                    Log.w(TAG, "Timeout switch: forcing mpv state reset (consecutive=$consecutiveTimeoutCount)")
                     mpvSingleton.forceRecreate()
-                    // 等待 quit 命令生效，让 mpv 核心有时间关闭
+                    // 短暂等待 stop + playlist-clear 生效，让 demuxer 有时间释放
                     delay(500)
                 } else {
                     mpv.stop()

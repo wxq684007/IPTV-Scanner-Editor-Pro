@@ -57,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iptv.scanner.editor.pro.data.IptvEpgProgram
 import com.iptv.scanner.editor.pro.ui.theme.tvFocusBorder
+import com.iptv.scanner.editor.pro.ui.theme.tvTextField
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -166,7 +167,8 @@ fun EpgPanel(viewModel: AppViewModel) {
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                    .tvTextField(),
                 shape = RoundedCornerShape(8.dp),
                 singleLine = true
             )

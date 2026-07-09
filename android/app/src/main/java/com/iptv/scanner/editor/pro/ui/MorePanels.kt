@@ -86,6 +86,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iptv.scanner.editor.pro.data.MappingEntry
 import com.iptv.scanner.editor.pro.ui.theme.tvFocusBorder
+import com.iptv.scanner.editor.pro.ui.theme.tvTextField
 import org.json.JSONArray
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -273,9 +274,9 @@ fun OpenUrlDialog(viewModel: AppViewModel) {
                 OutlinedTextField(
                     value = url,
                     onValueChange = { url = it },
-                    placeholder = { Text("https://example.com/stream.m3u8") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+placeholder = { Text("https://example.com/stream.m3u8") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().tvTextField()
                 )
             }
         },
@@ -1774,7 +1775,7 @@ fun MappingPanel(viewModel: AppViewModel) {
             value = searchQuery,
             onValueChange = { searchQuery = it },
             label = { Text("搜索（标准名 / 原始名 / 分组）") },
-            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).tvTextField(),
             singleLine = true
         )
 
@@ -1883,25 +1884,25 @@ private fun AddMappingDialog(
                 OutlinedTextField(
                     value = rawName, onValueChange = { rawName = it },
                     label = { Text("原始频道名") },
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).tvTextField(),
                     singleLine = true
                 )
                 OutlinedTextField(
                     value = standardName, onValueChange = { standardName = it },
                     label = { Text("标准频道名") },
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).tvTextField(),
                     singleLine = true
                 )
                 OutlinedTextField(
                     value = logoUrl, onValueChange = { logoUrl = it },
                     label = { Text("Logo URL（可选）") },
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).tvTextField(),
                     singleLine = true
                 )
                 OutlinedTextField(
                     value = groupName, onValueChange = { groupName = it },
                     label = { Text("分组名（可选）") },
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).tvTextField(),
                     singleLine = true
                 )
             }
@@ -2116,7 +2117,7 @@ fun NetworkPanel(viewModel: AppViewModel) {
         OutlinedTextField(
             value = referer, onValueChange = { referer = it },
             label = { Text("如 https://example.com/") },
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().tvTextField(),
             singleLine = true
         )
 
@@ -2125,7 +2126,7 @@ fun NetworkPanel(viewModel: AppViewModel) {
         OutlinedTextField(
             value = proxy, onValueChange = { proxy = it },
             label = { Text("如 socks5://127.0.0.1:1080") },
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().tvTextField(),
             singleLine = true
         )
 
@@ -2134,7 +2135,7 @@ fun NetworkPanel(viewModel: AppViewModel) {
         OutlinedTextField(
             value = headers, onValueChange = { headers = it },
             label = { Text("User-Agent: Mozilla/5.0\nAuthorization: Bearer xxx") },
-            modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp).tvTextField(),
             maxLines = 5
         )
 
@@ -2303,7 +2304,8 @@ fun SubtitleSearchPanel(viewModel: AppViewModel) {
             },
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 6.dp),
+                .padding(horizontal = 12.dp, vertical = 6.dp)
+                .tvTextField(),
             shape = RoundedCornerShape(8.dp),
             singleLine = true
         )
@@ -2548,7 +2550,7 @@ fun ScanPanel(viewModel: AppViewModel) {
             placeholder = { Text("http://192.168.1.[1-255]:8080") },
             singleLine = true,
             enabled = !running,
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth().tvTextField()
         )
         DescText("支持 [1-255] 范围表达式，扫描该范围内所有 IP 的指定端口")
 

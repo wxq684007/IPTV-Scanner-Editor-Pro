@@ -11,8 +11,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.dp
 
 /**
@@ -74,4 +81,50 @@ fun Modifier.tvFocusable(cornerRadius: Int = 8): Modifier = composed {
                 Modifier
             }
         )
+}
+
+/**
+ * TV 端 TextField 焦点导航 Modifier。
+ *
+ * 解决 OutlinedTextField / BasicTextField 获得焦点后 D-pad 上下键被
+ * 文本光标移动消费、导致焦点无法移出输入框的问题（"焦点陷阱"）。
+ *
+ * 行为：
+ * - DPAD_UP：移动焦点到上一个可聚焦元素，成功则消费事件
+ * - DPAD_DOWN：移动焦点到下一个可聚焦元素，成功则消费事件
+ * - DPAD_LEFT/RIGHT：不拦截，保留文本光标左右移动功能
+ * - 其他按键（含软键盘输入）：不拦截
+ *
+ * 如果 moveFocus 返回 false（方向上没有更多可聚焦元素），
+ * 也消费事件以防 TextField 内部将 DPAD_UP/DOWN 误解为光标移动。
+ *
+ * 用法：
+ * ```
+ * OutlinedTextField(
+ *     value = text,
+ *     onValueChange = { text = it },
+ *     modifier = Modifier.fillMaxWidth().tvTextField(),
+ *     ...
+ * )
+ * ```
+ */
+fun Modifier.tvTextField(): Modifier = composed {
+    val focusManager = LocalFocusManager.current
+    this.onPreviewKeyEvent { event ->
+        if (event.type == KeyEventType.KeyDown) {
+            when (event.key) {
+                Key.DirectionUp -> {
+                    focusManager.moveFocus(FocusDirection.Up)
+                    true
+                }
+                Key.DirectionDown -> {
+                    focusManager.moveFocus(FocusDirection.Down)
+                    true
+                }
+                else -> false
+            }
+        } else {
+            false
+        }
+    }
 }

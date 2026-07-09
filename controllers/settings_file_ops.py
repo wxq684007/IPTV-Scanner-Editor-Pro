@@ -524,6 +524,51 @@ class SettingsFileOperations:
                "the auto value (120s for HLS/HTTP, 300s for TS, 30s for network drives, etc.).")
         )
 
+        # probesize / analyzeduration 覆盖
+        probesize_edit = QLineEdit()
+        probesize_edit.setObjectName("probesize_override_edit")
+        probesize_edit.setPlaceholderText(
+            tr("probesize_override_placeholder", "0 = auto (5MB for live, 2MB for FCC, ...)")
+        )
+        probesize_val = playback_settings.get('probesize_override', 0)
+        try:
+            probesize_val = int(float(probesize_val))
+        except (TypeError, ValueError):
+            probesize_val = 0
+        if probesize_val > 0:
+            probesize_edit.setText(str(probesize_val))
+        self._add_form_row_with_desc(
+            layout,
+            tr("probesize_override_label", "Probesize (bytes):"),
+            probesize_edit,
+            tr("probesize_override_desc",
+               "Overrides the demuxer probe size in bytes. Leave 0 for auto "
+               "(5MB for live streams, 2MB for FCC). Increase if streams "
+               "fail to load with 'unspecified pixel format' warnings.")
+        )
+
+        analyzeduration_edit = QLineEdit()
+        analyzeduration_edit.setObjectName("analyzeduration_override_edit")
+        analyzeduration_edit.setPlaceholderText(
+            tr("analyzeduration_override_placeholder", "0 = auto (5s for live, 2s for FCC, ...)")
+        )
+        analyzeduration_val = playback_settings.get('analyzeduration_override', 0)
+        try:
+            analyzeduration_val = float(analyzeduration_val)
+        except (TypeError, ValueError):
+            analyzeduration_val = 0
+        if analyzeduration_val > 0:
+            analyzeduration_edit.setText(str(analyzeduration_val))
+        self._add_form_row_with_desc(
+            layout,
+            tr("analyzeduration_override_label", "Analyzeduration (seconds):"),
+            analyzeduration_edit,
+            tr("analyzeduration_override_desc",
+               "Overrides the demuxer analysis duration in seconds. Leave 0 for auto "
+               "(5s for live, 2s for FCC). Increase if streams take too long "
+               "to load or fail with corrupt packet warnings.")
+        )
+
         group.setLayout(layout)
         return group
 
@@ -748,6 +793,16 @@ class SettingsFileOperations:
         settings['cache_secs_override'] = _parse_positive_int("cache_secs_override_edit")
         settings['demuxer_max_bytes_mib_override'] = _parse_positive_int("demuxer_max_bytes_override_edit")
         settings['demuxer_readahead_secs_override'] = _parse_positive_int("demuxer_readahead_secs_override_edit")
+        settings['probesize_override'] = _parse_positive_int("probesize_override_edit")
+        analyzeduration_edit = dialog.findChild(QLineEdit, "analyzeduration_override_edit")
+        if analyzeduration_edit:
+            text = analyzeduration_edit.text().strip()
+            try:
+                settings['analyzeduration_override'] = float(text) if text else 0
+            except (TypeError, ValueError):
+                settings['analyzeduration_override'] = 0
+        else:
+            settings['analyzeduration_override'] = 0
         return settings
 
     def _save_intervals(self, dialog):
@@ -1466,14 +1521,31 @@ class SettingsFileOperations:
         maybe_m3u = path_lower.endswith(('.m3u', '.m3u8', '.txt'))
 
         if maybe_m3u or force_as_playlist:
+            # URL 基本格式校验：必须包含协议scheme（如 http://、https://），
+            # 或者是本地文件路径（以 / 或盘符开头）。
+            # 避免用户误粘贴非URL内容（如命令行）后直接报底层异常。
+            if '://' not in url and not (
+                    url.startswith('/') or (len(url) >= 2 and url[1] == ':' and url[0].isalpha())):
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    w, tr("open_stream", "打开串流"),
+                    tr("invalid_url_prompt",
+                       "输入的地址格式不正确，请检查是否包含完整的URL\n"
+                       "（例如 http://example.com/playlist.m3u）")
+                )
+                return
+
             content = ''
             try:
                 import requests
                 config = w.config
                 timeout = int(config.get_value('Network', 'timeout', '30') or 30)
+                from utils.general_utils import sanitize_http_header_value
                 headers = {}
-                user_agent = config.get_value('Network', 'user_agent', '')
-                referer = config.get_value('Network', 'referer', '')
+                user_agent = sanitize_http_header_value(
+                    config.get_value('Network', 'user_agent', ''))
+                referer = sanitize_http_header_value(
+                    config.get_value('Network', 'referer', ''))
                 if user_agent:
                     headers['User-Agent'] = user_agent
                 if referer:

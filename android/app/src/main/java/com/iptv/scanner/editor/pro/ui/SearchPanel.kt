@@ -46,6 +46,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iptv.scanner.editor.pro.ui.theme.tvFocusBorder
+import com.iptv.scanner.editor.pro.ui.theme.tvTextField
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -134,7 +135,7 @@ fun SearchPanel(viewModel: AppViewModel) {
                         }
                     }
                 },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().tvTextField(),
                 shape = RoundedCornerShape(8.dp),
                 singleLine = true
             )

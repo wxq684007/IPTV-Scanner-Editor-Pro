@@ -16,10 +16,22 @@ _app_build_date = 'unknown'
 _admin_auth_token = ''
 
 
+# android_bridge 专用 logger：消息通过传播到 root logger 写入 app.log
+_ab_logger = logging.getLogger('android_bridge')
+
+
 def _log(msg, level='I'):
-    """统一日志输出：Chaquopy 会把 print() 重定向到 logcat 的 python 标签"""
+    """统一日志输出：同时写入 logcat（via print）和 app.log（via logging）
+
+    Chaquopy 会把 print() 重定向到 logcat 的 python 标签，
+    logging 模块的消息通过 root logger 的 handler 写入 app.log 文件。
+    """
     elapsed = time.time() - _t0
     print(f'[{level}][{elapsed:6.2f}s] {msg}', flush=True)
+    # 同步写入 app.log（level 映射：I→INFO, W→WARNING, E→ERROR, D→DEBUG）
+    py_level = {'I': logging.INFO, 'W': logging.WARNING,
+                'E': logging.ERROR, 'D': logging.DEBUG}.get(level, logging.INFO)
+    _ab_logger.log(py_level, msg)
 
 
 def _setup_android_paths(ext_files_dir='', files_dir=''):
@@ -632,6 +644,8 @@ def init_context(ext_files_dir='', files_dir='', log_level='info'):
                     root = logging.getLogger()
                     if not any(h is _glm_handler for h in root.handlers):
                         root.addHandler(_glm_handler)
+                    # 同步 file handler 的日志级别（LogManager 创建时可能用了不同级别）
+                    _glm_handler.setLevel(_current_log_level)
                     _log('Moved LogManager file handler to root logger (app.log)')
                 else:
                     _log('LogManager has no file handler, skipping move', 'W')
@@ -766,6 +780,7 @@ def get_groups_json():
 def add_channel(url, name, group=''):
     """添加频道到列表末尾。返回 {idx} 或 {error}"""
     try:
+        _log(f'add_channel: name={name}, url={url}, group={group}')
         ctx = _get_ctx()
         if ctx is None:
             return _err('not inited')
@@ -789,6 +804,7 @@ def add_channel(url, name, group=''):
 def update_channel(idx, json_data):
     """更新频道字段。json_data 是 JSON 字符串，键为字段名。返回 {ok} 或 {error}"""
     try:
+        _log(f'update_channel: idx={idx}')
         ctx = _get_ctx()
         if ctx is None:
             return _err('not inited')
@@ -807,6 +823,7 @@ def update_channel(idx, json_data):
 def delete_channel(idx):
     """删除指定索引的频道。返回 {ok} 或 {error}"""
     try:
+        _log(f'delete_channel: idx={idx}')
         ctx = _get_ctx()
         if ctx is None:
             return _err('not inited')
@@ -969,6 +986,7 @@ def import_config(json_data):
 def add_source(url, name=''):
     """添加订阅源。返回 {ok}"""
     try:
+        _log(f'add_source: url={url}, name={name}')
         ctx = _get_ctx()
         if ctx is None:
             return _err('not inited')
@@ -983,6 +1001,7 @@ def add_source(url, name=''):
             'last_update': None,
         })
         config.save_playlist_sources(sources)
+        _log(f'add_source: done, total sources={len(sources)}')
         return _ok({'ok': True, 'count': len(sources)})
     except Exception as e:
         return _err(str(e))
@@ -991,6 +1010,7 @@ def add_source(url, name=''):
 def delete_source(idx):
     """删除订阅源。返回 {ok}"""
     try:
+        _log(f'delete_source: idx={idx}')
         ctx = _get_ctx()
         if ctx is None:
             return _err('not inited')
@@ -1032,10 +1052,12 @@ def update_source(idx, json_data):
 def reload_sources(url=''):
     """触发订阅源重载（异步，立即返回 True/False）。url 空则加载所有已配置源。"""
     try:
+        _log(f'reload_sources: url={url or "(all)"}')
         ctx = _get_ctx()
         if ctx is None:
             return _err('not inited')
         result = ctx.reload_sources(url)
+        _log(f'reload_sources: started={result}')
         return _ok({'started': bool(result)})
     except Exception as e:
         return _err(str(e))
@@ -1075,6 +1097,7 @@ def get_epg_sources_json():
 def add_epg_source(url, name=''):
     """添加 EPG 订阅源并触发重载。返回 {ok}"""
     try:
+        _log(f'add_epg_source: url={url}, name={name}')
         ctx = _get_ctx()
         if ctx is None:
             return _err('not inited')
@@ -1101,6 +1124,7 @@ def add_epg_source(url, name=''):
 def delete_epg_source(idx):
     """删除 EPG 订阅源。返回 {ok}"""
     try:
+        _log(f'delete_epg_source: idx={idx}')
         ctx = _get_ctx()
         if ctx is None:
             return _err('not inited')
@@ -1216,6 +1240,7 @@ def start_scan(base_url, timeout=10, threads=4):
     返回 {started} 或 {error}
     """
     try:
+        _log(f'start_scan: base_url={base_url}, timeout={timeout}, threads={threads}')
         ctx = _get_ctx()
         if ctx is None:
             return _err('not inited')
@@ -1227,6 +1252,7 @@ def start_scan(base_url, timeout=10, threads=4):
             timeout=int(timeout),
             threads=int(threads),
         )
+        _log(f'start_scan: started={result}')
         return _ok({'started': bool(result)})
     except Exception as e:
         return _err(str(e))
@@ -1235,6 +1261,7 @@ def start_scan(base_url, timeout=10, threads=4):
 def stop_scan():
     """请求停止扫描（异步）。返回 {ok}"""
     try:
+        _log('stop_scan requested')
         ctx = _get_ctx()
         if ctx is None:
             return _err('not inited')

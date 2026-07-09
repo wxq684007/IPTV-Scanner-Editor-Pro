@@ -95,6 +95,8 @@ def _load_playback_settings():
         'demuxer_readahead_secs_override': 0,
         'demuxer_max_bytes_mib_override': 0,
         'deinterlace': 'no',
+        'probesize_override': 0,
+        'analyzeduration_override': 0,
     }
     try:
         from core.config_manager import ConfigManager
@@ -717,6 +719,12 @@ class MpvPlayerController(QObject):
 
     @staticmethod
     def _check_path_reachability_sync(url):
+        """快速检查 HTTP/HTTPS 主机是否可达。
+
+        返回 None 表示可达或无法判断，返回错误字符串表示不可达。
+        注意：此检查仅用于快速过滤完全不可达的地址（如 DNS 解析失败），
+        不应阻止慢响应服务器播放——mpv 内部 network-timeout 会处理。
+        """
         if not url:
             return None
         u = url.lower()
@@ -746,6 +754,11 @@ class MpvPlayerController(QObject):
         return None
 
     def _check_path_reachability(self, url):
+        """异步检查网络可达性。
+
+        返回 None 表示可达或检查超时（继续尝试播放），
+        返回错误字符串表示确定不可达（如 DNS 解析失败）。
+        """
         if not url or not url.lower().startswith(('http://', 'https://')):
             return None
         result: list = [None]
@@ -1096,6 +1109,17 @@ class MpvPlayerController(QObject):
 
         settings = self._playback_settings
 
+        # 用户自定义 probesize/analyzeduration 覆盖（0 表示使用各流类型的自动值）
+        _probe_override = int(settings.get('probesize_override', 0) or 0)
+        _analyze_override = float(settings.get('analyzeduration_override', 0) or 0)
+
+        def _probe(probesize, analyzeduration):
+            """应用用户覆盖值（如果已配置）"""
+            p = str(_probe_override) if _probe_override > 0 else str(probesize)
+            a = str(_analyze_override) if _analyze_override > 0 else str(analyzeduration)
+            self._set_mpv_string('demuxer-lavf-probesize', p)
+            self._set_mpv_string('demuxer-lavf-analyzeduration', a)
+
         is_vod = ('playseek' in u or 'starttime=' in u or 'endtime=' in u or
                   'catchup' in u or 'timeshift' in u or 'playback' in u)
 
@@ -1112,23 +1136,20 @@ class MpvPlayerController(QObject):
             self._set_cache_param('cache-secs', str(cache_secs))
             self._set_mpv_string('demuxer-lavf-format', '')
             if rtsp_transport == 'udp':
-                self._set_mpv_string('demuxer-lavf-probesize', '500000')
-                self._set_mpv_string('demuxer-lavf-analyzeduration', '1')
+                _probe(500000, 1)
                 self._set_cache_param('demuxer-max-bytes', f'{max_bytes_mib}MiB')
                 self._set_mpv_string('demuxer-max-back-bytes', f'{max_bytes_mib}MiB')
                 self._set_cache_param('demuxer-readahead-secs', '5')
                 self._set_mpv_string('force-seekable', 'no')
                 self.logger.debug(f"[mpv] rtsp-udp-live cache={cache_secs} transport={rtsp_transport}")
             elif is_vod:
-                self._set_mpv_string('demuxer-lavf-probesize', '5000000')
-                self._set_mpv_string('demuxer-lavf-analyzeduration', '5')
+                _probe(5000000, 5)
                 self._set_mpv_string('force-seekable', 'yes')
                 self.logger.debug(f"[mpv] rtsp-vod cache={cache_secs} transport={rtsp_transport}")
             else:
                 # 直播流需要足够的探测数据让 demuxer 识别编码格式（如 CAVS）
                 # probesize=32 太少会导致 CAVS 流无法被识别（track-list 为空）
-                self._set_mpv_string('demuxer-lavf-probesize', '5000000')
-                self._set_mpv_string('demuxer-lavf-analyzeduration', '5')
+                _probe(5000000, 5)
                 self.logger.debug(f"[mpv] rtsp-tcp-live cache={cache_secs} transport={rtsp_transport}")
             return
 
@@ -1137,20 +1158,17 @@ class MpvPlayerController(QObject):
             self._set_mpv_string('demuxer', 'lavf')
             self._set_mpv_string('demuxer-lavf-format', 'mpegts')
             if is_vod:
-                self._set_mpv_string('demuxer-lavf-probesize', '5000000')
-                self._set_mpv_string('demuxer-lavf-analyzeduration', '5')
+                _probe(5000000, 5)
                 self._set_mpv_string('force-seekable', 'yes')
             elif is_fcc:
                 # FCC 快速换台：rtp2httpd 代理已预加入组播，流数据即时可用。
                 # probesize 2MB 足够识别各种编码，analyzeduration 2s 进一步减少首帧等待。
                 # （probesize 500KB 太小会导致部分频道无法识别编码 → 不出画面）
-                self._set_mpv_string('demuxer-lavf-probesize', '2000000')
-                self._set_mpv_string('demuxer-lavf-analyzeduration', '2')
+                _probe(2000000, 2)
             else:
                 # 非 FCC 直播流需要足够的探测数据让 demuxer 识别编码格式（如 CAVS）
                 # probesize=32 太少会导致 CAVS 流无法被识别（track-list 为空）
-                self._set_mpv_string('demuxer-lavf-probesize', '5000000')
-                self._set_mpv_string('demuxer-lavf-analyzeduration', '5')
+                _probe(5000000, 5)
             self._set_mpv_string('demuxer-lavf-buffersize', '128000')
             self._set_mpv_string('cache', 'yes')
             self._set_mpv_string('force-seekable', 'yes')
@@ -1173,6 +1191,9 @@ class MpvPlayerController(QObject):
             self._set_mpv_string('demuxer-max-back-bytes', f'{max_bytes_mib}MiB')
             self._set_mpv_string('force-seekable', 'yes')
             self._set_cache_param('demuxer-readahead-secs', '120')
+            # HLS 流也需要设置 probesize/analyzeduration，否则使用 mpv 默认值
+            # 可能导致部分 HLS 流（含损坏分片）无法正确识别编码
+            _probe(5000000, 5)
 
             if settings.get('hls_start_at_live_edge', False):
                 self._set_mpv_string('hls-playlist-start', 'no')
@@ -1185,13 +1206,11 @@ class MpvPlayerController(QObject):
         self._set_mpv_string('demuxer-lavf-format', '')
         if is_fcc and not is_vod:
             # FCC 频道：适度降低探测参数加速首帧（保留足够数据兼容各种编码）
-            self._set_mpv_string('demuxer-lavf-probesize', '2000000')
-            self._set_mpv_string('demuxer-lavf-analyzeduration', '2')
+            _probe(2000000, 2)
         else:
             # 显式设置 probesize/analyzeduration，确保 CAVS 等编码能被 demuxer 正确识别
             # （mpv 默认值可能因版本/平台不同而不一致）
-            self._set_mpv_string('demuxer-lavf-probesize', '5000000')
-            self._set_mpv_string('demuxer-lavf-analyzeduration', '5')
+            _probe(5000000, 5)
         self._set_mpv_string('cache', 'yes')
         self._set_cache_param('cache-secs', str(cache_secs))
         self._set_cache_param('demuxer-max-bytes', f'{max_bytes_mib}MiB')
@@ -1391,9 +1410,13 @@ class MpvPlayerController(QObject):
 
             reachability = self._check_path_reachability(url)
             if reachability is not None:
-                self.logger.warning(f"路径不可达，取消播放: {reachability}")
-                self._safe_emit(self.play_error, reachability)
-                return False
+                # 预检查失败不阻止播放：某些服务器响应慢或有地域限制，
+                # Python socket 检查可能超时，但 mpv 内部网络栈（network-timeout=30s）
+                # 可以成功连接。仅记录警告，让 mpv 自行尝试。
+                self.logger.warning(
+                    f"预检查提示可能不可达（不阻止播放）: {reachability}，"
+                    f"交给 mpv 尝试连接"
+                )
 
             if not self.mpv_handle:
                 self.logger.error("mpv播放器未初始化")
@@ -1999,7 +2022,11 @@ class MpvPlayerController(QObject):
                 demuxer = get_str('demuxer') or ''
                 v_format = get_str('video-format') or ''
                 a_format = get_str('audio-format') or ''
-                self.logger.info(f"demuxer: {demuxer}, video-format: {v_format}, audio-format: {a_format}")
+                self.logger.info(
+                    f"demuxer: {demuxer}, video-format: {v_format}, "
+                    f"audio-format: {a_format} "
+                    f"(demuxer probing in progress, info may update later)"
+                )
 
                 track_list_str = get_str('track-list') or ''
                 if track_list_str and not getattr(self, '_track_list_logged', False):
@@ -2127,8 +2154,31 @@ class MpvPlayerController(QObject):
 
         QTimer.singleShot(3000, self._capture_thumbnail)
 
+    def _has_video_track(self):
+        """检查当前播放的流是否包含真实视频轨（非 albumart）。
+
+        用于截图前判断：纯音频频道（如电视伴音）没有视频帧，
+        screenshot-to-file 会失败并产生 ERROR 日志。
+        """
+        try:
+            track_list_str = self._get_mpv_property_string('track-list') or ''
+            if not track_list_str:
+                return False
+            import json
+            tracks = json.loads(track_list_str)
+            for t in tracks:
+                if t.get('type') == 'video' and not t.get('albumart', False):
+                    return True
+            return False
+        except Exception:
+            return False
+
     def _capture_thumbnail(self):
         if not self.is_playing or not self.current_url:
+            return
+        # 纯音频频道（如电视伴音）没有视频帧，截图必然失败
+        if not self._has_video_track():
+            self.logger.debug("纯音频频道，跳过缩略图截图")
             return
         try:
             import hashlib

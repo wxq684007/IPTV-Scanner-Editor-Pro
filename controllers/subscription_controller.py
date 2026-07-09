@@ -88,9 +88,12 @@ class SubscriptionController:
         config = ConfigManager()
         timeout = int(config.get_value('Network', 'timeout', '30') or 30)
 
+        from utils.general_utils import sanitize_http_header_value
         headers = {}
-        user_agent = config.get_value('Network', 'user_agent', '')
-        referer = config.get_value('Network', 'referer', '')
+        user_agent = sanitize_http_header_value(
+            config.get_value('Network', 'user_agent', ''))
+        referer = sanitize_http_header_value(
+            config.get_value('Network', 'referer', ''))
         if user_agent:
             headers['User-Agent'] = user_agent
         if referer:

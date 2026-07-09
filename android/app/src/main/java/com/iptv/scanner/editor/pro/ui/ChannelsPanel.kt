@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.sp
 import com.iptv.scanner.editor.pro.data.IptvChannel
 import com.iptv.scanner.editor.pro.ui.AppViewModel.ChannelTab
 import com.iptv.scanner.editor.pro.ui.theme.tvFocusBorder
+import com.iptv.scanner.editor.pro.ui.theme.tvTextField
 
 /**
  * 频道列表面板：5 个 tab + 搜索 + 分组过滤 + LazyColumn。
@@ -126,7 +127,8 @@ fun ChannelsPanel(viewModel: AppViewModel) {
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                    .tvTextField(),
                 shape = RoundedCornerShape(8.dp),
                 singleLine = true
             )

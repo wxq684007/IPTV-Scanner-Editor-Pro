@@ -727,6 +727,9 @@ class ConfigManager(Singleton):
             'cache_secs_override': 0,
             'demuxer_readahead_secs_override': 0,
             'demuxer_max_bytes_mib_override': 0,
+            # demuxer 探测参数覆盖：0 表示使用自动值（按流类型自动选择）
+            'probesize_override': 0,
+            'analyzeduration_override': 0,
         }
         if settings:
             defaults.update(settings)
@@ -776,6 +779,9 @@ class ConfigManager(Singleton):
             'cache_secs_override': 0,
             'demuxer_readahead_secs_override': 0,
             'demuxer_max_bytes_mib_override': 0,
+            # demuxer 探测参数覆盖：0 表示使用自动值（按流类型自动选择）
+            'probesize_override': 0,
+            'analyzeduration_override': 0,
         }
         result = {}
         need_save = False

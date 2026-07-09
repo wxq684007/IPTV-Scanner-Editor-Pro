@@ -147,6 +147,34 @@ def is_valid_url(url: str) -> bool:
     return any(url.startswith(scheme) for scheme in valid_schemes)
 
 
+def sanitize_http_header_value(value: str) -> str:
+    """清除 HTTP 头值中的非 ASCII 字符。
+
+    requests 库使用 latin-1 编码 header 值，如果配置的 User-Agent 或
+    Referer 包含中文等非 latin-1 字符，会导致
+    ``'latin-1' codec can't encode characters in position 0-1`` 错误。
+
+    本函数将非 ASCII 字符替换为空字符串，并记录警告日志。
+    """
+    if not value:
+        return value
+    try:
+        value.encode('latin-1')
+        return value
+    except UnicodeEncodeError:
+        # 保留所有 latin-1 可编码字符，丢弃其余字符
+        sanitized = value.encode('latin-1', errors='ignore').decode('latin-1')
+        if sanitized != value:
+            try:
+                from core.log_manager import global_logger as logger
+                logger.warning(
+                    f"HTTP头值包含非ASCII字符，已清洗: 原始值前30字符={repr(value[:30])}"
+                )
+            except Exception:
+                pass
+        return sanitized
+
+
 def format_file_size(size_bytes: float) -> str:
     """格式化文件大小"""
     if size_bytes == 0:

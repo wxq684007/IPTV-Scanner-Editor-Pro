@@ -174,6 +174,12 @@ class MediaController:
         pc = self.window.player_controller
         if not pc or not pc.is_playing:
             return
+        # 纯音频频道没有视频帧，截图会失败
+        if hasattr(pc, '_has_video_track') and not pc._has_video_track():
+            self.window.status_bar_show_message(
+                self.window.language_manager.tr('screenshot_no_video',
+                                                '当前频道无视频画面，无法截图'))
+            return
         try:
             from datetime import datetime
             from PySide6.QtWidgets import QApplication

@@ -80,8 +80,17 @@ class MPVView @JvmOverloads constructor(
         }
 
         // 首次创建或 shutdown 后重建：MPVLib.create + 完整初始化
-        Log.i(TAG, "initialize: creating new native mpv instance")
-        MPVLib.create(context)
+        // 关键：如果 native 句柄已存在（keep-alive 策略下 destroy 永不调用），
+        // 跳过 create() 直接 init()，避免 "mpv is already initialized" 错误导致 native 崩溃。
+        // 场景：mpv 核心 shutdown 后 markInstanceDead() 重置 nativeInstanceCreated=false，
+        // 但 native 句柄仍然存在，ensureInstanceAlive() 走重建路径时需要跳过 create()。
+        if (nativeHandleCreated) {
+            Log.i(TAG, "initialize: native handle already exists, skipping create() (init only)")
+        } else {
+            Log.i(TAG, "initialize: creating new native mpv instance")
+            MPVLib.create(context)
+            nativeHandleCreated = true
+        }
 
         MPVLib.setOptionString("config", "yes")
         MPVLib.setOptionString("config-dir", configDir)
@@ -145,9 +154,14 @@ class MPVView @JvmOverloads constructor(
         // libmpv 的 mpv_set_option_string() 只在 mpv_initialize() 之前有效，
         // init() 之后调用会静默失败（返回错误码但代码未检查），导致选项从未生效。
         // - force-window=no：无文件时不创建视频窗口（避免空窗口占用 GPU 资源）
-        // - idle=once：播放结束后保持 mpv 实例存活（配合 keep-open=yes）
+        // - idle=yes：mpv 核心永不自动退出，即使文件加载失败也保持存活。
+        //   原来用 idle=once，但文件加载失败后核心会自动 shutdown（触发
+        //   MPV_EVENT_SHUTDOWN），而 keep-alive 策略下无法重新 create() 或
+        //   init()（native 句柄已存在且无法被 destroy），导致应用崩溃。
+        //   idle=yes 确保核心在任何情况下都不会自动关闭，从根本上避免
+        //   需要重建核心的场景。
         MPVLib.setOptionString("force-window", "no")
-        MPVLib.setOptionString("idle", "once")
+        MPVLib.setOptionString("idle", "yes")
 
         MPVLib.init()
 
@@ -327,25 +341,37 @@ class MPVView @JvmOverloads constructor(
      * @return true 如果核心存活（原本就活着或成功重建），false 如果无法重建
      */
     private fun ensureInstanceAlive(): Boolean {
-        // 检查强制重建标志：连续超时后 forceRecreate() 设置此标志
+        // 检查强制重建标志：forceRecreate() 已通过 stop+playlist-clear 重置状态
         if (forceRecreatePending) {
             forceRecreatePending = false
-            Log.i(TAG, "ensureInstanceAlive: forceRecreatePending=true, forcing core recreation")
-            nativeInstanceCreated = false
-            nativeInstanceAlive = false
-            // 继续走到下面的重建逻辑
-        } else if (nativeInstanceCreated && nativeInstanceAlive) {
+            Log.i(TAG, "ensureInstanceAlive: forceRecreatePending=true, state already reset by forceRecreate()")
+            // idle=yes 确保核心仍然存活，forceRecreate 只做了状态重置（stop + playlist-clear），
+            // 不需要重建核心。如果核心确实已 shutdown（极端情况），下面的检查会处理。
+        }
+        // 核心存活检查：如果核心已创建且活跃，直接返回
+        if (nativeInstanceCreated && nativeInstanceAlive) {
             return true
         } else if (nativeInstanceCreated) {
             // nativeInstanceCreated=true 但 nativeInstanceAlive=false：
             // 实例存在但未活跃（destroy() 后状态），surfaceCreated 会恢复
             return true
         }
-        // 核心 shutdown 后需要重建
+        // 核心 shutdown 后需要重建（idle=yes 下不应发生，此处为安全兜底）
+        // 安全检查：如果 native 句柄已存在（keep-alive），不要尝试在已终止的句柄上
+        // 调用 setOptionString/init —— libmpv 的 mpv_initialize() 只能调用一次，
+        // 在已终止的句柄上调用会导致 native 崩溃（SIGABRT）。
+        // 此时返回 false，让 playFile 跳过本次播放，避免崩溃。
+        if (nativeHandleCreated) {
+            Log.e(TAG, "ensureInstanceAlive: core has shutdown but native handle still exists (keep-alive). " +
+                "Cannot safely re-initialize. Returning false to avoid native crash.")
+            return false
+        }
         val configDir = savedConfigDir ?: return false
         val cacheDir = savedCacheDir ?: return false
         Log.i(TAG, "ensureInstanceAlive: re-creating mpv instance after shutdown")
         try {
+            // nativeInstanceCreated 为 false（首次创建或 native 句柄不存在），
+            // 走完整初始化路径：create() + setOptionString + init() + observeProperties()。
             initialize(configDir, cacheDir, vo = voInUse, hwdec = savedHwdec)
             // 重新 attach surface（initialize 中已 addCallback，但 surface 可能已存在）
             val s = holder.surface
@@ -360,6 +386,9 @@ class MPVView @JvmOverloads constructor(
             return true
         } catch (e: Throwable) {
             Log.e(TAG, "ensureInstanceAlive: re-create failed", e)
+            // 恢复状态：重建失败时标记为死亡，下次 playFile 会再次尝试
+            nativeInstanceCreated = false
+            nativeInstanceAlive = false
             return false
         }
     }
@@ -438,9 +467,31 @@ class MPVView @JvmOverloads constructor(
          * native mpv 实例是否已创建（MPVLib.create 至少调用过一次）。
          * 一旦为 true 永远为 true（keep-alive 策略不 destroy）。
          * initialize() 用此标志判断是首次创建还是复用。
+         *
+         * 注意：markInstanceDead() 会将此标志重置为 false，表示 mpv 核心已 shutdown
+         * 需要 ensureInstanceAlive() 重建。但底层 native 句柄仍然存在（keep-alive 不
+         * 调用 MPVLib.destroy()），重建时应跳过 create() 直接 init()。
+         * 参见 [nativeHandleCreated]。
          */
         @Volatile
         private var nativeInstanceCreated = false
+
+        /**
+         * native mpv 句柄是否已创建（MPVLib.create() 调用成功后置 true，永不重置）。
+         *
+         * 与 [nativeInstanceCreated] 的区别：
+         * - nativeInstanceCreated 会被 markInstanceDead() 重置（表示核心需重建）
+         * - nativeHandleCreated 永不重置（表示 native 句柄存在，重建时跳过 create）
+         *
+         * 根因修复：keep-alive 策略下 MPVLib.destroy() 永不调用，native 句柄一直存在。
+         * 当 mpv 核心 shutdown 后 markInstanceDead() 重置 nativeInstanceCreated=false，
+         * ensureInstanceAlive() 误以为需要重新 create()，但 MPVLib.create() 检测到
+         * 句柄已存在会报 "mpv is already initialized" 错误，后续 init() 在异常状态下
+         * 执行导致 native 崩溃（SIGABRT/SIGSEGV）。
+         * 修复：用 nativeHandleCreated 标志跳过 create()，直接 init() 重新初始化核心。
+         */
+        @Volatile
+        private var nativeHandleCreated = false
 
         @Volatile
         private var activeGeneration: Int = 0
@@ -455,27 +506,28 @@ class MPVView @JvmOverloads constructor(
     }
 
     /**
-     * 强制重建 mpv 核心。
+     * 强制重置 mpv 核心状态（不终止核心）。
      *
      * 用于连续超时换源场景：当 stop 命令无法清除卡死的 demuxer 时，
-     * 发送 quit 命令关闭整个 mpv 核心，下次 playFile 时 ensureInstanceAlive()
-     * 会检测到 forceRecreatePending 标志并强制重建核心。
+     * 通过 stop + playlist-clear + vo 重置来强制清除内部状态。
      *
-     * 注意：quit 是异步的，mpv 核心会在后台线程执行关闭。
-     * forceRecreatePending 标志确保即使 MPV_EVENT_SHUTDOWN 尚未到达，
-     * ensureInstanceAlive() 也能正确处理。
+     * 关键变更：不再发送 quit 命令！
+     * 原实现发送 quit 终止 mpv 核心，然后尝试通过 ensureInstanceAlive() 重建。
+     * 但 keep-alive 策略下 native 句柄无法被 destroy()（会 SIGSEGV），
+     * 而 MPVLib.create() 检测到句柄已存在会拒绝创建（"mpv is already initialized"），
+     * 导致 init() 在已终止的句柄上执行 → native 崩溃。
+     *
+     * 配合 idle=yes，mpv 核心永不自动关闭，forceRecreate 只需重置状态而非重建核心。
+     * demuxer-read-timeout=5 确保卡死的 demuxer 最终会超时释放。
      */
     fun forceRecreate() {
-        Log.w(TAG, "forceRecreate: forcing mpv core recreation (quit + recreate)")
+        Log.w(TAG, "forceRecreate: resetting mpv state (stop + playlist-clear, no quit)")
         forceRecreatePending = true
         try {
-            MPVLib.command(arrayOf("quit"))
+            MPVLib.command(arrayOf("stop"))
+            MPVLib.command(arrayOf("playlist-clear"))
         } catch (e: Throwable) {
-            Log.w(TAG, "forceRecreate: quit command failed: ${e.message}, marking dead directly")
-            // quit 失败说明核心可能已经死了，直接标记
-            nativeInstanceCreated = false
-            nativeInstanceAlive = false
-            forceRecreatePending = false
+            Log.w(TAG, "forceRecreate: reset commands failed: ${e.message}")
         }
     }
 }

@@ -248,8 +248,8 @@ class UserPrefs private constructor() {
     // 播放超时后自动切换到下一个源
     // -----------------------------------------------------------------
 
-    /** 获取超时换源档位（0-5），默认 1（10秒） */
-    fun getTimeoutSwitchSource(): Int = prefs.getInt(KEY_TIMEOUT_SWITCH_SOURCE, DEFAULT_TIMEOUT_SWITCH_SOURCE)
+/** 获取超时换源档位（0-5），默认 2（15秒） */
+fun getTimeoutSwitchSource(): Int = prefs.getInt(KEY_TIMEOUT_SWITCH_SOURCE, DEFAULT_TIMEOUT_SWITCH_SOURCE)
 
     fun setTimeoutSwitchSource(value: Int) {
         prefs.edit().putInt(KEY_TIMEOUT_SWITCH_SOURCE, value).apply()
@@ -928,7 +928,7 @@ class UserPrefs private constructor() {
 
         // 超时换源
         private const val KEY_TIMEOUT_SWITCH_SOURCE = "timeout_switch_source"
-        private const val DEFAULT_TIMEOUT_SWITCH_SOURCE = 1
+        private const val DEFAULT_TIMEOUT_SWITCH_SOURCE = 2
 
         // 断线重连
         private const val KEY_RECONNECT_INDEX = "reconnect_index"

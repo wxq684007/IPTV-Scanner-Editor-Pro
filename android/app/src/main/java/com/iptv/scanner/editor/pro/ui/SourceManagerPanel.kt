@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -18,9 +17,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -66,6 +65,7 @@ import androidx.compose.ui.unit.sp
 import com.iptv.scanner.editor.pro.data.IptvEpgSource
 import com.iptv.scanner.editor.pro.data.IptvSource
 import com.iptv.scanner.editor.pro.ui.theme.tvFocusBorder
+import com.iptv.scanner.editor.pro.ui.theme.tvTextField
 
 /**
  * 订阅源管理面板（全屏覆盖）。
@@ -104,7 +104,7 @@ fun SourceManagerPanel(viewModel: AppViewModel) {
         modifier = Modifier.fillMaxSize()
     ) {
         Column(
-            modifier = Modifier.fillMaxSize().focusGroup().systemBarsPadding().padding(16.dp)
+            modifier = Modifier.fillMaxSize().focusGroup().verticalScroll(rememberScrollState()).systemBarsPadding().padding(16.dp)
         ) {
             // 标题栏
             Row(
@@ -266,17 +266,17 @@ fun SourceManagerPanel(viewModel: AppViewModel) {
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // 列表
+            // 列表（使用 Column 而非 LazyColumn，因为外层已用 verticalScroll）
             when (sourceTab) {
                 AppViewModel.SourceTab.PLAYLIST -> {
                     if (sources.isEmpty()) {
                         EmptyHint("暂无频道订阅源，点击上方输入框添加")
                     } else {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            itemsIndexed(sources) { idx, source ->
+                            sources.forEachIndexed { idx, source ->
                                 SourceItem(
                                     source = source,
                                     index = idx,
@@ -291,11 +291,11 @@ fun SourceManagerPanel(viewModel: AppViewModel) {
                     if (epgSources.isEmpty()) {
                         EmptyHint("暂无 EPG 订阅源，点击上方输入框添加")
                     } else {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize(),
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            itemsIndexed(epgSources) { idx, source ->
+                            epgSources.forEachIndexed { idx, source ->
                                 EpgSourceItem(
                                     source = source,
                                     index = idx,
@@ -327,7 +327,7 @@ private fun AddSourceRow(placeholder: String, onAdd: (url: String, name: String)
             value = url,
             onValueChange = { url = it },
             placeholder = { Text(placeholder, color = Color(0xFF888888)) },
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).tvTextField(),
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
             shape = RoundedCornerShape(8.dp)
@@ -336,7 +336,7 @@ private fun AddSourceRow(placeholder: String, onAdd: (url: String, name: String)
             value = name,
             onValueChange = { name = it },
             placeholder = { Text("名称（可选）", color = Color(0xFF888888)) },
-            modifier = Modifier.width(120.dp),
+            modifier = Modifier.width(120.dp).tvTextField(),
             singleLine = true,
             shape = RoundedCornerShape(8.dp)
         )
@@ -698,7 +698,7 @@ private fun LanAdminTokenInput(viewModel: AppViewModel) {
                     value = tokenInput,
                     onValueChange = { tokenInput = it },
                     placeholder = { Text("留空自动生成", color = Color(0xFF888888), fontSize = 12.sp) },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).tvTextField(),
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
                     shape = RoundedCornerShape(8.dp)

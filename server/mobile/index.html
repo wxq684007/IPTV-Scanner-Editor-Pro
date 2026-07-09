@@ -116,22 +116,24 @@ html,body{width:100%;height:100%;overflow:hidden;background:transparent;color:#e
 /* TV 模式：保留原生 select（遥控器友好） */
 .panel-group-filter select{width:100%;background:rgba(255,255,255,.06);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-size:13px;outline:none;-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='%23888'><path d='M7 10l5 5 5-5z'/></svg>");background-repeat:no-repeat;background-position:right 10px center;padding-right:30px}
 .panel-group-filter select:focus{border-color:var(--accent)}
-/* 手机模式：可搜索分类标签云 */
-.gf-trigger{display:none;width:100%;background:rgba(255,255,255,.06);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-size:13px;outline:none;cursor:pointer;text-align:left;align-items:center;justify-content:space-between;gap:6px}
-.gf-trigger:active{background:rgba(255,255,255,.1)}
-.gf-trigger .gf-label{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.gf-trigger .gf-arrow{flex-shrink:0;color:var(--text-dim);transition:transform .2s}
-.gf-trigger.open .gf-arrow{transform:rotate(180deg)}
-.gf-popup{display:none;margin-top:6px;background:rgba(20,20,22,.98);border:1px solid var(--border);border-radius:8px;padding:8px;position:relative;z-index:10}
-.gf-popup.open{display:block}
-.gf-search{width:100%;background:rgba(255,255,255,.06);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-size:12px;outline:none;margin-bottom:6px}
-.gf-search:focus{border-color:var(--accent)}
-.gf-search::placeholder{color:#555}
-.gf-chips{display:flex;flex-wrap:wrap;gap:5px;max-height:180px;overflow-y:auto;-webkit-overflow-scrolling:touch;scrollbar-width:thin}
-.gf-chip{flex:0 0 auto;background:rgba(255,255,255,.06);border:1px solid var(--border);border-radius:16px;padding:5px 12px;color:var(--text-dim);font-size:12px;cursor:pointer;white-space:nowrap;-webkit-tap-highlight-color:transparent}
-.gf-chip:active{background:rgba(255,255,255,.12)}
+
+/* 手机模式：左侧纵向分类栏 + 右侧频道列表（主从布局） */
+.ch-layout{flex:1;display:flex;overflow:hidden;min-height:0}
+.ch-sidebar{width:110px;flex-shrink:0;border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.ch-sidebar-search{padding:6px;flex-shrink:0}
+.ch-sidebar-search input{width:100%;background:rgba(255,255,255,.06);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:11px;outline:none}
+.ch-sidebar-search input:focus{border-color:var(--accent)}
+.ch-sidebar-search input::placeholder{color:#555}
+.ch-sidebar-list{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;scrollbar-width:thin;padding:2px 4px 8px}
+.ch-sidebar-list::-webkit-scrollbar{width:3px}
+.ch-sidebar-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.15);border-radius:2px}
+/* 分类项：纵向全宽列表，易于触控 */
+.gf-chip{display:flex;align-items:center;justify-content:space-between;gap:4px;background:rgba(255,255,255,.04);border:1px solid transparent;border-radius:6px;padding:8px 10px;color:var(--text-dim);font-size:12px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:3px;-webkit-tap-highlight-color:transparent;transition:background .15s,border-color .15s}
+.gf-chip:active{background:rgba(255,255,255,.1)}
 .gf-chip.active{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
-.gf-count{font-size:10px;color:var(--text-faint);margin-left:4px}
+.gf-chip .gf-chip-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gf-count{font-size:10px;color:var(--text-faint);flex-shrink:0}
+.gf-chip.active .gf-count{color:var(--accent)}
 
 .panel-tabs{display:flex;border-bottom:1px solid var(--border);padding:0 8px;flex-shrink:0;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
 .panel-tabs::-webkit-scrollbar{display:none}
@@ -256,6 +258,74 @@ html,body{width:100%;height:100%;overflow:hidden;background:transparent;color:#e
   .btn-row{gap:6px}
 }
 
+/* ======================== 横屏优化 ======================== */
+@media(orientation:landscape) and (max-height:500px){
+  /* 频道面板：加宽，充分利用横向空间 */
+  #panelChannels{width:80%;max-width:520px}
+  /* EPG 面板：加宽 */
+  #panelEPG{width:70%;max-width:480px}
+  /* 分类侧边栏：横屏加宽 */
+  .ch-sidebar{width:130px}
+  /* 控制面板：降低最大高度，避免遮挡画面 */
+  #panelControls{max-height:50vh}
+  /* 功能面板：降低最大高度 */
+  #panelFunc{max-height:55vh}
+  /* 标题栏更紧凑 */
+  .panel-titlebar{padding:6px 12px}
+  .panel-titlebar .title{font-size:13px}
+  .panel-titlebar .close-btn{font-size:18px;padding:2px 6px}
+  /* 搜索栏更紧凑 */
+  .panel-search{padding:4px 10px}
+  .panel-search input{padding:7px 10px;font-size:12px}
+  /* Tab 栏更紧凑 */
+  .panel-tabs{padding:0 6px}
+  .panel-tab{padding:7px 10px;font-size:11px}
+  /* 频道项更紧凑 */
+  .ch-item{padding:6px 12px;font-size:12px}
+  .ch-sidebar-search{padding:4px}
+  .ch-sidebar-search input{padding:5px 6px;font-size:10px}
+  .gf-chip{padding:6px 8px;font-size:11px;margin-bottom:2px}
+  /* 控制面板按钮行更紧凑 */
+  .ctrl-media-row{padding:3px 4px!important}
+  .ctrl-info-row{padding:4px 4px!important}
+  .ctrl-control-row{padding:4px 0!important;gap:4px!important}
+  .bb-btn{width:34px;height:34px}
+  .bb-btn svg{width:16px;height:16px}
+  .bb-time{font-size:10px}
+  .bb-vol{width:50px}
+  /* OSD 更紧凑 */
+  #osd{padding:10px 16px}
+  #osd .ch-name{font-size:15px}
+  #osd .ch-group{font-size:11px}
+  #osd .ch-extra{font-size:10px}
+  /* 顶栏更紧凑 */
+  #topBar{height:40px;padding:0 8px;gap:6px}
+  #topBar .tb-btn{width:32px;height:32px}
+  #topBar .tb-btn svg{width:18px;height:18px}
+  #topBar .tb-title{font-size:12px}
+  #topBar .tb-status{font-size:10px;padding:1px 4px}
+  /* EPG 列表更紧凑 */
+  .epg-item{padding:6px 12px}
+  .epg-time{font-size:11px}
+  .epg-title{font-size:12px}
+  .epg-desc{font-size:11px}
+  /* 菜单列表项更紧凑 */
+  .list-item{padding:7px 4px}
+  .list-item .li-title{font-size:12px}
+  .list-item .li-sub{font-size:10px}
+  .menu-section{padding:0 4px;margin:6px 0 4px}
+  /* Splash 更紧凑 */
+  #splashScreen .splash-logo{width:64px;height:64px}
+  #splashScreen h1{font-size:18px}
+}
+
+/* 横屏大屏（平板横屏）：面板更宽，控制面板可以双列 */
+@media(orientation:landscape) and (min-width:768px){
+  #panelChannels{width:50%;max-width:600px}
+  #panelEPG{width:45%;max-width:560px}
+  .ch-sidebar{width:140px}
+}
+
 /* Token 登录覆盖层 */
 .token-login-overlay{position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.88);display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .3s}
 .token-login-overlay.show{opacity:1;pointer-events:auto}
@@ -313,17 +383,15 @@ html,body{width:100%;height:100%;overflow:hidden;background:transparent;color:#e
     <select id="groupFilterSelect" onchange="onGroupFilterChange(this.value)">
       <option value="">全部频道</option>
     </select>
-    <!-- 手机模式：可搜索分类标签云 -->
-    <button class="gf-trigger" id="gfTrigger" onclick="toggleGroupPicker()">
-      <span class="gf-label" id="gfLabel">全部频道</span>
-      <svg class="gf-arrow" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
-    </button>
-    <div class="gf-popup" id="gfPopup">
-      <input class="gf-search" id="gfSearch" placeholder="搜索分类..." oninput="filterGroupChips()">
-      <div class="gf-chips" id="gfChips"></div>
-    </div>
   </div>
-  <div class="panel-body" id="channelList"></div>
+  <!-- 手机模式：左侧纵向分类栏 + 右侧频道列表 -->
+  <div class="ch-layout" id="chLayout">
+    <div class="ch-sidebar" id="chSidebar" style="display:none">
+      <div class="ch-sidebar-search"><input id="gfSearch" placeholder="搜索分类..." oninput="filterGroupChips()"></div>
+      <div class="ch-sidebar-list" id="gfChips"></div>
+    </div>
+    <div class="panel-body" id="channelList"></div>
+  </div>
 </div>
 
 <div id="panelEPG" class="floating-panel">
@@ -1783,22 +1851,24 @@ function switchChTab(tab, btn){
 }
 
 /* 更新分组筛选：订阅/本地 tab 显示，其他 tab 隐藏
-   TV 模式用原生 select（遥控器友好），手机模式用可搜索标签云 */
+   TV 模式用原生 select（遥控器友好），手机模式用纵向分类栏 */
 function updateGroupFilter(){
   const bar = $('#groupFilterBar');
   const sel = $('#groupFilterSelect');
-  const trigger = $('#gfTrigger');
-  const popup = $('#gfPopup');
+  const sidebar = $('#chSidebar');
   if(!bar || !sel) return;
   const showGroups = (state.chTab==='sub' || state.chTab==='local');
-  if(!showGroups){ bar.style.display='none'; return; }
-  bar.style.display = 'block';
+  if(!showGroups){
+    bar.style.display='none';
+    if(sidebar) sidebar.style.display='none';
+    return;
+  }
 
-  /* TV 模式：显示 select，隐藏标签云 */
+  /* TV 模式：显示 select，隐藏侧边栏 */
   if(state.tvMode){
+    bar.style.display='block';
     sel.style.display='block';
-    if(trigger) trigger.style.display='none';
-    if(popup) popup.classList.remove('open');
+    if(sidebar) sidebar.style.display='none';
     const cur = state.selectedGroup || '';
     let html = '<option value="">全部频道</option>';
     for(const g of state.groups){
@@ -1809,35 +1879,29 @@ function updateGroupFilter(){
     return;
   }
 
-  /* 手机模式：隐藏 select，显示标签云触发按钮 */
+  /* 手机模式：隐藏 select，显示纵向分类栏 */
+  bar.style.display='none';
   sel.style.display='none';
-  if(trigger) trigger.style.display='flex';
-  if(popup) popup.classList.remove('open');
+  if(sidebar) sidebar.style.display='flex';
   updateGroupPicker();
 }
 
-/* 手机模式：更新标签云内容 + 触发按钮文字 */
+/* 手机模式：更新纵向分类栏内容 */
 function updateGroupPicker(){
-  const trigger = $('#gfTrigger');
-  const label = $('#gfLabel');
   const chipsEl = $('#gfChips');
-  if(!trigger || !chipsEl) return;
+  if(!chipsEl) return;
   const cur = state.selectedGroup || '';
-  if(label) label.textContent = cur || '全部频道';
-  if(trigger.classList.contains('open')){
-    trigger.classList.remove('open');
-  }
   /* 统计每个分组的频道数 */
   const counts = {};
   for(const c of state.channels){
     const g = c.group || '';
     if(g) counts[g] = (counts[g]||0)+1;
   }
-  let html = `<div class="gf-chip ${!cur?'active':''}" data-group="">全部频道<span class="gf-count">${state.channels.length}</span></div>`;
+  let html = `<div class="gf-chip ${!cur?'active':''}" data-group=""><span class="gf-chip-name">全部频道</span><span class="gf-count">${state.channels.length}</span></div>`;
   for(const g of state.groups){
     if(!g) continue;
     const cnt = counts[g]||0;
-    html += `<div class="gf-chip ${g===cur?'active':''}" data-group="${esc(g)}">${esc(g)}<span class="gf-count">${cnt}</span></div>`;
+    html += `<div class="gf-chip ${g===cur?'active':''}" data-group="${esc(g)}"><span class="gf-chip-name">${esc(g)}</span><span class="gf-count">${cnt}</span></div>`;
   }
   chipsEl.innerHTML = html;
   /* 事件委托：点击 chip 选择分组 */
@@ -1847,31 +1911,14 @@ function updateGroupPicker(){
   /* 清空搜索 */
   const search = $('#gfSearch');
   if(search) search.value='';
+  /* 滚动到当前选中项 */
+  setTimeout(()=>{
+    const active = chipsEl.querySelector('.gf-chip.active');
+    if(active) active.scrollIntoView({block:'nearest',behavior:'smooth'});
+  },50);
 }
 
-/* 手机模式：展开/折叠标签云 */
-function toggleGroupPicker(){
-  const trigger = $('#gfTrigger');
-  const popup = $('#gfPopup');
-  if(!trigger || !popup) return;
-  const isOpen = popup.classList.contains('open');
-  if(isOpen){
-    popup.classList.remove('open');
-    trigger.classList.remove('open');
-  } else {
-    popup.classList.add('open');
-    trigger.classList.add('open');
-    /* 展开时自动滚动到当前选中项 */
-    setTimeout(()=>{
-      const active = popup.querySelector('.gf-chip.active');
-      if(active) active.scrollIntoView({block:'nearest',behavior:'smooth'});
-      const search = $('#gfSearch');
-      if(search) search.focus();
-    },50);
-  }
-}
-
-/* 手机模式：搜索过滤标签云 */
+/* 手机模式：搜索过滤分类栏 */
 function filterGroupChips(){
   const q = ($('#gfSearch')?.value || '').toLowerCase();
   const chips = $$('#gfChips .gf-chip');
@@ -1881,14 +1928,16 @@ function filterGroupChips(){
   }
 }
 
-/* 手机模式：选择分组并关闭标签云 */
+/* 手机模式：选择分组并更新侧边栏高亮 */
 function selectGroup(g){
   state.selectedGroup = g || '';
-  const popup = $('#gfPopup');
-  const trigger = $('#gfTrigger');
-  if(popup) popup.classList.remove('open');
-  if(trigger) trigger.classList.remove('open');
-  updateGroupPicker();
+  /* 更新侧边栏高亮 */
+  const chipsEl = $('#gfChips');
+  if(chipsEl){
+    chipsEl.querySelectorAll('.gf-chip').forEach(chip=>{
+      chip.classList.toggle('active', (chip.dataset.group||'') === (g||''));
+    });
+  }
   renderChannelList($('#searchInput').value);
 }
 
