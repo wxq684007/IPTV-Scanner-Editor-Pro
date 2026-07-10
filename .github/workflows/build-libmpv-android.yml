@@ -395,36 +395,25 @@ jobs:
           # 修复4：在 cavs_decode_one_frame 中添加 p->Frame NULL 检查。
           # 使用 Python 脚本可靠地找到函数并在其 body 开头插入 NULL 检查。
           # sed 方法失败因为 if (!param->seq_header_flag) 模式可能不匹配实际源码。
-          python3 -c "
-          import re
+          cat > /tmp/fix_frame_null.py << 'PYEOF'
           with open('libavcodec/libcavs.c','r') as f:
               content = f.read()
-          # 查找 cavs_decode_one_frame 函数定义
-          # 函数签名: int cavs_decode_one_frame( void *p_decoder, ... )
-          # 找到函数体开头的 { ，在其后插入 NULL 检查
           marker = 'cavs_decode_one_frame'
           idx = content.find(marker)
           if idx == -1:
               print('ERROR: cavs_decode_one_frame not found in libcavs.c')
               exit(1)
-          # 从 idx 开始找第一个 { (函数体开始)
           brace_idx = content.find('{', idx)
           if brace_idx == -1:
               print('ERROR: could not find opening brace for cavs_decode_one_frame')
               exit(1)
-          # 在 { 后插入 NULL 检查
-          null_check = '''
-    if(!p->Frame) {
-        p->Frame = (frame_pack*)cavs_malloc(sizeof(frame_pack));
-        memset(p->Frame, 0, sizeof(frame_pack));
-        p->Frame->p_start = (uint8_t*)cavs_malloc(MAX_CODED_FRAME_SIZE * sizeof(uint8_t));
-        memset(p->Frame->p_start, 0, MAX_CODED_FRAME_SIZE);
-    }'''
+          null_check = '\n    if(!p->Frame) {\n        p->Frame = (frame_pack*)cavs_malloc(sizeof(frame_pack));\n        memset(p->Frame, 0, sizeof(frame_pack));\n        p->Frame->p_start = (uint8_t*)cavs_malloc(MAX_CODED_FRAME_SIZE * sizeof(uint8_t));\n        memset(p->Frame->p_start, 0, MAX_CODED_FRAME_SIZE);\n    }\n'
           content = content[:brace_idx+1] + null_check + content[brace_idx+1:]
           with open('libavcodec/libcavs.c','w') as f:
               f.write(content)
           print('SUCCESS: p->Frame NULL check inserted into cavs_decode_one_frame')
-          "
+          PYEOF
+          python3 /tmp/fix_frame_null.py
           echo "=== Verify: p->Frame NULL check ==="
           grep -n 'if(!p->Frame)' libavcodec/libcavs.c | head -5
 
