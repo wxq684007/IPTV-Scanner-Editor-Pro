@@ -392,31 +392,34 @@ jobs:
             grep -n 'b_accelerate' libavcodec/libcavs.c | head -10
           fi
 
-          # 修复4：直接在 cavs_topfield_pack / cavs_botfield_pack / cavs_frame_pack /
-          # cavs_field_pack 函数开头添加 field/frame NULL 检查。
-          # 这些函数访问 field->slice[0].i_startcode，如果 field 为 NULL 则 SIGSEGV
-          # （偏移 ~4MB = m_buf 大小）。直接在入口处 return 0 避免崩溃。
-          # 同时在 cavs_decode_one_frame 开头添加 p->Frame NULL 检查。
-          # 使用 sed 的 s 命令在函数签名行后插入 NULL 检查。
-          if grep -q 'cavs_topfield_pack' libavcodec/libcavs.c; then
-            sed -i 's/uint32_t cavs_topfield_pack(InputStream\* p, frame_pack\* field)/uint32_t cavs_topfield_pack(InputStream* p, frame_pack* field)\n{\n    if(!field) return 0;/' libavcodec/libcavs.c
-            sed -i 's/uint32_t cavs_topfield_pack( InputStream\*p, frame_pack \*field )/uint32_t cavs_topfield_pack( InputStream*p, frame_pack *field )\n{\n    if(!field) return 0;/' libavcodec/libcavs.c
-            echo "=== Patched: cavs_topfield_pack NULL check ==="
+          # 修复4：在 cavs_topfield_pack / cavs_botfield_pack / cavs_frame_pack /
+          # cavs_field_pack 函数体开头添加 field/frame NULL 检查。
+          # 使用 sed a 命令在函数签名行后追加 NULL 检查。
+          # 注意：函数签名行不包含 {，{ 在下一行，所以用 a 追加到签名行后。
+          # 用 grep 找到函数签名行号，然后用 sed 在该行后插入。
+          LINENUM=$(grep -n 'cavs_topfield_pack.*InputStream.*frame_pack' libavcodec/libcavs.c | head -1 | cut -d: -f1)
+          if [ -n "$LINENUM" ]; then
+            NEXTLINE=$((LINENUM + 1))
+            sed -i "${NEXTLINE}a\\    if(!field) return 0;" libavcodec/libcavs.c
+            echo "=== Patched: cavs_topfield_pack NULL check at line $NEXTLINE ==="
           fi
-          if grep -q 'cavs_botfield_pack' libavcodec/libcavs.c; then
-            sed -i 's/uint32_t cavs_botfield_pack(InputStream\* p, frame_pack\* field)/uint32_t cavs_botfield_pack(InputStream* p, frame_pack* field)\n{\n    if(!field) return 0;/' libavcodec/libcavs.c
-            sed -i 's/uint32_t cavs_botfield_pack( InputStream\*p, frame_pack \*field )/uint32_t cavs_botfield_pack( InputStream*p, frame_pack *field )\n{\n    if(!field) return 0;/' libavcodec/libcavs.c
-            echo "=== Patched: cavs_botfield_pack NULL check ==="
+          LINENUM=$(grep -n 'cavs_botfield_pack.*InputStream.*frame_pack' libavcodec/libcavs.c | head -1 | cut -d: -f1)
+          if [ -n "$LINENUM" ]; then
+            NEXTLINE=$((LINENUM + 1))
+            sed -i "${NEXTLINE}a\\    if(!field) return 0;" libavcodec/libcavs.c
+            echo "=== Patched: cavs_botfield_pack NULL check at line $NEXTLINE ==="
           fi
-          if grep -q 'cavs_frame_pack' libavcodec/libcavs.c; then
-            sed -i 's/uint32_t cavs_frame_pack(InputStream\* p, frame_pack\* frame)/uint32_t cavs_frame_pack(InputStream* p, frame_pack* frame)\n{\n    if(!frame) return 0;/' libavcodec/libcavs.c
-            sed -i 's/uint32_t cavs_frame_pack( InputStream\*p, frame_pack \*frame )/uint32_t cavs_frame_pack( InputStream*p, frame_pack *frame )\n{\n    if(!frame) return 0;/' libavcodec/libcavs.c
-            echo "=== Patched: cavs_frame_pack NULL check ==="
+          LINENUM=$(grep -n 'cavs_frame_pack.*InputStream.*frame_pack' libavcodec/libcavs.c | head -1 | cut -d: -f1)
+          if [ -n "$LINENUM" ]; then
+            NEXTLINE=$((LINENUM + 1))
+            sed -i "${NEXTLINE}a\\    if(!frame) return 0;" libavcodec/libcavs.c
+            echo "=== Patched: cavs_frame_pack NULL check at line $NEXTLINE ==="
           fi
-          if grep -q 'cavs_field_pack' libavcodec/libcavs.c; then
-            sed -i 's/uint32_t cavs_field_pack(InputStream\* p, frame_pack\* frame)/uint32_t cavs_field_pack(InputStream* p, frame_pack* frame)\n{\n    if(!frame) return 0;/' libavcodec/libcavs.c
-            sed -i 's/uint32_t cavs_field_pack( InputStream\*p, frame_pack \*field )/uint32_t cavs_field_pack( InputStream*p, frame_pack *field )\n{\n    if(!field) return 0;/' libavcodec/libcavs.c
-            echo "=== Patched: cavs_field_pack NULL check ==="
+          LINENUM=$(grep -n 'cavs_field_pack.*InputStream.*frame_pack' libavcodec/libcavs.c | head -1 | cut -d: -f1)
+          if [ -n "$LINENUM" ]; then
+            NEXTLINE=$((LINENUM + 1))
+            sed -i "${NEXTLINE}a\\    if(!field) return 0;" libavcodec/libcavs.c
+            echo "=== Patched: cavs_field_pack NULL check at line $NEXTLINE ==="
           fi
           # 同时在 cavs_decode_one_frame 开头添加 p->Frame NULL 检查
           sed -i '/if (!param->seq_header_flag)/i\    if(!p->Frame){p->Frame=(frame_pack*)cavs_malloc(sizeof(frame_pack));memset(p->Frame,0,sizeof(frame_pack));p->Frame->p_start=(uint8_t*)cavs_malloc(MAX_CODED_FRAME_SIZE*sizeof(uint8_t));memset(p->Frame->p_start,0,MAX_CODED_FRAME_SIZE);}' libavcodec/libcavs.c
