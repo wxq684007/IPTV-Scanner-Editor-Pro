@@ -1058,6 +1058,21 @@ private var _channelInputJob: kotlinx.coroutines.Job? = null
             // 已经在播放（可能被其他逻辑触发），不重复恢复
             return
         }
+        if (!userPrefs.isAutoResumeOnStart()) {
+            Log.i(TAG, "restoreLastChannel: auto-resume disabled by user, skipping")
+            return
+        }
+        // 外部标志文件：如果存在则跳过自动续播（用于测试/调试）
+        try {
+            val extDir = android.os.Environment.getExternalStorageDirectory()
+            val flagFile = java.io.File(extDir, "Android/data/com.iptv.scanner.editor.pro/files/ISEP/skip_auto_resume")
+            if (flagFile.exists()) {
+                Log.i(TAG, "restoreLastChannel: skip_auto_resume flag file exists, skipping")
+                return
+            }
+        } catch (e: Exception) {
+            // 忽略文件检查错误
+        }
         val channels = _channels.value
         if (channels.isEmpty()) return
 
@@ -1448,6 +1463,16 @@ private var _channelInputJob: kotlinx.coroutines.Job? = null
     fun setBootStart(enabled: Boolean) {
         _bootStart.value = enabled
         userPrefs.setBootStart(enabled)
+    }
+
+    /** 启动自动续播开关 */
+    private val _autoResume = MutableStateFlow(userPrefs.isAutoResumeOnStart())
+    val autoResume: StateFlow<Boolean> = _autoResume.asStateFlow()
+
+    /** 设置启动自动续播 */
+    fun setAutoResume(enabled: Boolean) {
+        _autoResume.value = enabled
+        userPrefs.setAutoResumeOnStart(enabled)
     }
 
     // -----------------------------------------------------------------
@@ -5496,6 +5521,19 @@ showOsd("播放器设置", "日志等级: $levelName")
                 if (mute != null) {
                     mpv.setMute(mute)
                     Log.i(TAG, "Remote set mute: $mute")
+                }
+            } else if (cmd.startsWith("play_url:")) {
+                // 直接播放指定 URL（用于测试）
+                val url = cmd.removePrefix("play_url:")
+                if (url.isNotEmpty()) {
+                    Log.i(TAG, "Remote play_url: $url")
+                    _currentIdx.value = -1
+                    _playbackState.value = PlaybackState(mode = PlayMode.LIVE)
+                    currentPlaybackUrl = url
+                    currentPlaybackName = "TEST: $url"
+                    mpv.playFile(url)
+                    startTimeoutSwitchSource(-1)
+                    showOsd("测试播放", url)
                 }
             } else {
                 Log.w(TAG, "未知遥控命令: $cmd")

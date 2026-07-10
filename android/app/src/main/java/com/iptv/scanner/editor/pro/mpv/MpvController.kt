@@ -526,16 +526,18 @@ var onFileError: (() -> Unit)? = null
                         MPVLib.setPropertyString("demuxer-readahead-secs", "10")
                         MPVLib.setPropertyString("cache-secs", "60")
                     } else {
-                        // 非 FCC 直播流需要足够 probe 识别编码（如 CAVS）
-                        MPVLib.setPropertyString("demuxer-lavf-probesize", "5000000")
-                        MPVLib.setPropertyString("demuxer-lavf-analyzeduration", "5")
+                        // 非 FCC 直播流：probesize 2MB 足够识别 H.264/H.265/CAVS 等编码
+                        // 注意：Android ARM64 的 CAVS 解码器（libcavsdec）在缺少序列头时
+                        // 可能 SIGSEGV，这是 llawsxx/FFmpeg patch 的 ARM64 特有 bug
+                        MPVLib.setPropertyString("demuxer-lavf-probesize", "2000000")
+                        MPVLib.setPropertyString("demuxer-lavf-analyzeduration", "1")
                         MPVLib.setPropertyString("demuxer-readahead-secs", "15")
                         MPVLib.setPropertyString("cache-secs", "120")
                     }
                     MPVLib.setPropertyString("cache", "yes")
                     MPVLib.setPropertyString("force-seekable", "yes")
                     MPVLib.setPropertyString("demuxer-seekable-cache", "yes")
-                    Log.i(TAG, "TS/UDP/RTP options: probesize=${if (isFcc) "2M" else "5M"}, readahead=${if (isFcc) "10s" else "15s"}, fcc=$isFcc")
+                    Log.i(TAG, "TS/UDP/RTP options: probesize=${if (isFcc) "2M" else "2M"}, readahead=${if (isFcc) "10s" else "15s"}, fcc=$isFcc")
                 }
                 else -> {
                     // 通用网络流：与 PC 端默认分支对齐

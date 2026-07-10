@@ -300,6 +300,21 @@ jobs:
             { echo "ERROR: Failed to add AV_CODEC_ID_DRA to codec_id.h"; exit 1; }
           echo "=== AV_CODEC_ID_DRA added to codec_id.h ==="
 
+          # 修复 ARM64 崩溃：ff_libcavs_init() 在调用 cavs_decoder_create() 前
+          # 未初始化 h->param（除了 b_accelerate=1），导致 ARM64 上 SIGSEGV。
+          # 原因：cavs_decoder_param_init() 只在 cavs_decode_frame 收到序列头时调用，
+          # 但 cavs_decoder_create() 在 init 阶段就需要 param 中的 i_thread_num 等字段。
+          # 修复：在 cavs_decoder_create() 前调用 cavs_decoder_param_init()。
+          # PC(x86_64/GCC) 碰巧不崩溃，但 Android(ARM64/Clang) 会崩溃。
+          if grep -q 'cavs_decoder_create' libavcodec/libcavsdec.c && \
+             ! grep -B5 'cavs_decoder_create' libavcodec/libcavsdec.c | grep -q 'cavs_decoder_param_init'; then
+            sed -i '/h->param.b_accelerate = 1;/i\    cavs_decoder_param_init( h );' libavcodec/libcavsdec.c
+            echo "=== Patched libcavsdec.c: added cavs_decoder_param_init before cavs_decoder_create ==="
+            grep -B3 -A2 'cavs_decoder_create' libavcodec/libcavsdec.c | head -10
+          else
+            echo "=== cavs_decoder_param_init already present or cavs_decoder_create not found, skipping ==="
+          fi
+
           # 验证 patch 应用结果
           echo "=== Verify CAVS files exist ==="
           ls -la libavcodec/libcavs* libavcodec/libcavsdec* libavcodec/dradec* 2>/dev/null || \

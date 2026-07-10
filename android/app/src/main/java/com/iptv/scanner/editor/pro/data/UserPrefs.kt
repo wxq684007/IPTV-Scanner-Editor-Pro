@@ -117,6 +117,13 @@ class UserPrefs private constructor() {
         prefs.edit().putString(KEY_LAST_CHANNEL_URL, url).apply()
     }
 
+    /** 启动时是否自动续播上次频道（默认开启） */
+    fun isAutoResumeOnStart(): Boolean = prefs.getBoolean(KEY_AUTO_RESUME, DEFAULT_AUTO_RESUME)
+
+    fun setAutoResumeOnStart(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_AUTO_RESUME, enabled).apply()
+    }
+
     // -----------------------------------------------------------------
     // 批量恢复（备份恢复时一次性写入，替代逐条 add）
     // -----------------------------------------------------------------
@@ -916,6 +923,9 @@ fun getTimeoutSwitchSource(): Int = prefs.getInt(KEY_TIMEOUT_SWITCH_SOURCE, DEFA
         private const val MAX_HISTORY = 100
         // 上次播放的频道 URL（启动时按 URL 查找频道恢复播放，URL 比 idx 更稳健）
         private const val KEY_LAST_CHANNEL_URL = "last_channel_url"
+        // 启动自动续播开关（默认开启）
+        private const val KEY_AUTO_RESUME = "auto_resume_on_start"
+        private const val DEFAULT_AUTO_RESUME = true
 
         // 播放器设置 key
         private const val KEY_VO = "player_vo"

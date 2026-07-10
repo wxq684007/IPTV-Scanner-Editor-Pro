@@ -169,6 +169,7 @@ fun PlayerSettingsPanel(viewModel: AppViewModel) {
             val reconnectIdx by viewModel.reconnectIndex.collectAsState()
             val screenLocked by viewModel.screenLock.collectAsState()
             val bootStart by viewModel.bootStart.collectAsState()
+            val autoResume by viewModel.autoResume.collectAsState()
 
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
@@ -249,6 +250,33 @@ fun PlayerSettingsPanel(viewModel: AppViewModel) {
                         Switch(
                             checked = bootStart,
                             onCheckedChange = { viewModel.setBootStart(it) }
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .tvFocusBorder()
+                            .focusable()
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "启动自动续播",
+                                color = Color(0xFF90CAF9),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "打开应用时自动播放上次频道",
+                                color = Color(0xFFB0BEC5),
+                                fontSize = 11.sp
+                            )
+                        }
+                        Switch(
+                            checked = autoResume,
+                            onCheckedChange = { viewModel.setAutoResume(it) }
                         )
                     }
                 }
