@@ -320,6 +320,18 @@ jobs:
             echo "=== cavs_decoder_param_init already present or cavs_decoder_create not found, skipping ==="
           fi
 
+          # 修复 ARM64 解码崩溃：b_accelerate=1 启用加速路径，使用 cavs_threadpool_run
+          # 在 ARM64 上 get_mb_p_aec_opt 函数访问无效内存（fault addr 0x100000a87）。
+          # 将 b_accelerate 设为 0 走非加速路径，避免 threadpool 路径崩溃。
+          if grep -q 'b_accelerate.*=.*1' libavcodec/libcavsdec.c; then
+            sed -i 's/h->param\.b_accelerate\s*=\s*1/h->param.b_accelerate = 0/g' libavcodec/libcavsdec.c
+            echo "=== Patched libcavsdec.c: b_accelerate 1 → 0 (non-accelerated path) ==="
+            grep -n 'b_accelerate' libavcodec/libcavsdec.c | head -5
+          else
+            echo "=== b_accelerate=1 not found ==="
+            grep -n 'b_accelerate' libavcodec/libcavsdec.c | head -10
+          fi
+
           # 修复 ARM64 多线程崩溃：cavs_decoder_param_init() 设置 i_thread_num=64，
           # CAVS 解码器在 ARM64 上使用 64 线程时会在 cavs_threadpool_thread 中崩溃
           # (get_mb_p_aec_opt → cavs_get_slice_aec → field_decode_aec_threads_far)。
