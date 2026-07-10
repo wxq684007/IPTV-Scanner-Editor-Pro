@@ -13,8 +13,8 @@ def _setup_android_paths():
         files_dir = app.getFilesDir().getAbsolutePath()
         os.environ.setdefault('IPTV_DATA_DIR', files_dir)
         sys.path.insert(0, files_dir)
-    except Exception:
-        pass
+    except Exception as e:
+        logging.getLogger('android_bridge').warning(f'_setup_android_paths 失败: {e}')
 
 
 def _setup_android_logging():
@@ -38,8 +38,8 @@ def _setup_android_logging():
         root = logging.getLogger()
         if not any(isinstance(h, AndroidLogHandler) for h in root.handlers):
             root.addHandler(AndroidLogHandler())
-    except Exception:
-        pass
+    except Exception as e:
+        logging.getLogger('android_bridge').warning(f'_setup_android_logging 失败: {e}')
 
 
 def _find_mobile_dir():
@@ -49,8 +49,8 @@ def _find_mobile_dir():
         mobile_dir = os.path.join(server_dir, 'mobile')
         if os.path.isdir(mobile_dir):
             return mobile_dir
-    except Exception:
-        pass
+    except Exception as e:
+        logging.getLogger('android_bridge').debug(f'_find_mobile_dir 通过 server 模块查找失败: {e}')
     this_dir = os.path.dirname(os.path.abspath(__file__))
     for candidate in [
         os.path.join(this_dir, 'server', 'mobile'),
@@ -62,10 +62,12 @@ def _find_mobile_dir():
 
 
 _server_started = False
+_server_loop = None
+_server_runner = None
 
 
 def start_server(host='127.0.0.1', port=8080):
-    global _server_started
+    global _server_started, _server_loop, _server_runner
     if _server_started:
         return
     _server_started = True
@@ -101,9 +103,12 @@ def start_server(host='127.0.0.1', port=8080):
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    _server_loop = loop
 
     async def _run():
+        global _server_runner
         runner = web.AppRunner(app)
+        _server_runner = runner
         await runner.setup()
         site = web.TCPSite(runner, host, port)
         await site.start()
@@ -115,6 +120,7 @@ def start_server(host='127.0.0.1', port=8080):
             pass
         finally:
             await runner.cleanup()
+            _server_runner = None
 
     try:
         loop.run_until_complete(_run())
@@ -122,10 +128,27 @@ def start_server(host='127.0.0.1', port=8080):
         pass
     finally:
         loop.close()
+        _server_loop = None
 
 
 def stop_server():
-    pass
+    """停止 Android 端服务器
+
+    Android 端运行在独立事件循环中，通过取消 _run() 协程来优雅停止。
+    如果循环未运行则不做操作。
+    """
+    global _server_started, _server_loop, _server_runner
+    if not _server_started:
+        return
+    _server_started = False
+    try:
+        if _server_runner:
+            loop = _server_loop
+            if loop and loop.is_running():
+                import asyncio
+                asyncio.run_coroutine_threadsafe(_server_runner.cleanup(), loop)
+    except Exception as e:
+        logging.getLogger('android_bridge').warning(f'stop_server 失败: {e}')
 
 
 _MIME_TYPES = {
@@ -145,12 +168,17 @@ _MIME_TYPES = {
 
 
 def _register_mobile_routes(app, base_dir):
+    base_dir_real = os.path.realpath(base_dir)
+
     async def _handle_mobile(request):
         from aiohttp import web
         rel_path = request.match_info.get('path', 'index.html')
         if not rel_path or rel_path.endswith('/'):
             rel_path += 'index.html'
-        file_path = os.path.join(base_dir, rel_path)
+        # 安全：防止路径穿越（../../../etc/passwd 等）
+        file_path = os.path.realpath(os.path.join(base_dir, rel_path))
+        if not file_path.startswith(base_dir_real + os.sep):
+            return web.Response(text='403: Forbidden', status=403)
         if not os.path.isfile(file_path):
             return web.Response(text='404: Not Found', status=404)
         ext = os.path.splitext(rel_path)[1].lower()

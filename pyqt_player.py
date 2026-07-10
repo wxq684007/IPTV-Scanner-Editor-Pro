@@ -564,24 +564,42 @@ class IPTVPlayer(
     def _init_controllers(self):
         """初始化所有业务控制器"""
         logger.debug("初始化业务控制器...")
-        self.window_ctrl = WindowController(self)
-        self.playback_ctrl = PlaybackController(self)
-        self.epg_ctrl = EPGController(self)
-        self.channel_ctrl = ChannelController(self)
-        self.settings_ops = SettingsFileOperations(self)
-        self.event_handler = EventHandler(self)
-        self.ui_ctrl = UIController(self)
-        self.subscription_ctrl = SubscriptionController(self)
-        self.subscription_ui_ctrl = SubscriptionUIController(self)
-        self.catchup_ctrl = CatchupController(self)
-        self.pip_ctrl = PipController(self)
-        self.media_ctrl = MediaController(self)
-        self.update_ctrl = UpdateController(self)
-        from controllers.multi_screen_controller import MultiScreenController
-        self.multi_screen_ctrl = MultiScreenController(self)
-        self.favorites_ctrl = FavoritesController(self)
-        self.epg_reminder_ctrl = EpgReminderController(self)
+        _init_errors = []
 
+        def _safe_init(attr_name, cls, *args):
+            try:
+                setattr(self, attr_name, cls(self))
+            except Exception as e:
+                logger.error(f"初始化 {attr_name} 失败: {e}")
+                setattr(self, attr_name, None)
+                _init_errors.append(attr_name)
+
+        _safe_init('window_ctrl', WindowController)
+        _safe_init('playback_ctrl', PlaybackController)
+        _safe_init('epg_ctrl', EPGController)
+        _safe_init('channel_ctrl', ChannelController)
+        _safe_init('settings_ops', SettingsFileOperations)
+        _safe_init('event_handler', EventHandler)
+        _safe_init('ui_ctrl', UIController)
+        _safe_init('subscription_ctrl', SubscriptionController)
+        _safe_init('subscription_ui_ctrl', SubscriptionUIController)
+        _safe_init('catchup_ctrl', CatchupController)
+        _safe_init('pip_ctrl', PipController)
+        _safe_init('media_ctrl', MediaController)
+        _safe_init('update_ctrl', UpdateController)
+        try:
+            from controllers.multi_screen_controller import MultiScreenController
+            self.multi_screen_ctrl = MultiScreenController(self)
+        except Exception as e:
+            logger.error(f"初始化多画面控制器失败: {e}")
+            self.multi_screen_ctrl = None
+            _init_errors.append("多画面")
+        _safe_init('favorites_ctrl', FavoritesController)
+        _safe_init('epg_reminder_ctrl', EpgReminderController)
+
+        if _init_errors:
+            failed_names = "、".join(_init_errors)
+            logger.warning(f"部分控制器初始化失败: {failed_names}")
         logger.debug("业务控制器初始化完成")
 
     def _init_basic_ui(self):
@@ -840,6 +858,7 @@ class IPTVPlayer(
         self.player_controller.file_loaded.connect(self.media_ctrl.apply_audio_eq_on_load)
 
         # 初始化文件队列控制器（在 player_controller 创建后）
+        _init_errors = []
         try:
             from controllers.file_queue_controller import FileQueueController
             self.file_queue_ctrl = FileQueueController(self)
@@ -847,6 +866,7 @@ class IPTVPlayer(
         except Exception as e:
             logger.error(f"初始化文件队列控制器失败: {e}")
             self.file_queue_ctrl = None
+            _init_errors.append("文件队列")
 
         # 初始化断点续播控制器（在 player_controller 创建后）
         try:
@@ -855,6 +875,7 @@ class IPTVPlayer(
         except Exception as e:
             logger.error(f"初始化断点续播控制器失败: {e}")
             self.resume_ctrl = None
+            _init_errors.append("断点续播")
 
         # 初始化播放设置持久化控制器（按 URL 保存音量/字幕轨/音轨/比例/翻转/旋转等）
         try:
@@ -863,6 +884,7 @@ class IPTVPlayer(
         except Exception as e:
             logger.error(f"初始化播放设置持久化控制器失败: {e}")
             self.playback_settings_ctrl = None
+            _init_errors.append("播放设置")
 
         # 初始化跳过片头片尾控制器（仅本地视频文件生效）
         try:
@@ -871,6 +893,7 @@ class IPTVPlayer(
         except Exception as e:
             logger.error(f"初始化跳过片头片尾控制器失败: {e}")
             self.skip_intro_outro_ctrl = None
+            _init_errors.append("跳过片头片尾")
 
         # 初始化动态裁剪黑边服务
         try:
@@ -879,6 +902,7 @@ class IPTVPlayer(
         except Exception as e:
             logger.error(f"初始化动态裁剪黑边服务失败: {e}")
             self.autocrop_service = None
+            _init_errors.append("裁剪黑边")
 
         # 初始化撤销/重做栈
         try:
@@ -887,6 +911,7 @@ class IPTVPlayer(
         except Exception as e:
             logger.error(f"初始化撤销/重做栈失败: {e}")
             self.undo_stack = None
+            _init_errors.append("撤销/重做")
 
         # 初始化切片导出 + GIF 制作服务
         try:
@@ -895,6 +920,7 @@ class IPTVPlayer(
         except Exception as e:
             logger.error(f"初始化切片导出服务失败: {e}")
             self.clip_export_service = None
+            _init_errors.append("切片导出")
 
         # 初始化书签与章节控制器（在 player_controller 创建后）
         try:
@@ -903,6 +929,12 @@ class IPTVPlayer(
         except Exception as e:
             logger.error(f"初始化书签与章节控制器失败: {e}")
             self.bookmark_ctrl = None
+            _init_errors.append("书签")
+
+        # 如果有控制器初始化失败，在状态栏提示用户
+        if _init_errors:
+            failed_names = "、".join(_init_errors)
+            self.status_bar_show_message(f"部分功能初始化失败: {failed_names}（详见日志）")
 
         from services.logo_cache_service import LogoCacheService
         self._logo_cache_service = LogoCacheService(self)
@@ -1042,11 +1074,12 @@ class IPTVPlayer(
 if __name__ == "__main__":
 
     def _suppress_qfont_pointsize_warning(msg_type, context, msg):
-        if msg_type == msg_type.Warning and 'setPointSize' in msg and 'Point size <= 0' in msg:
+        from PySide6.QtCore import QtMsgType
+        if msg_type == QtMsgType.QtWarningMsg and 'setPointSize' in msg and 'Point size <= 0' in msg:
             return
-        if msg_type == msg_type.Warning:
+        if msg_type == QtMsgType.QtWarningMsg:
             sys.stderr.write(f"Qt Warning: {msg}\n")
-        elif msg_type == msg_type.Critical:
+        elif msg_type == QtMsgType.QtCritical:
             sys.stderr.write(f"Qt Critical: {msg}\n")
 
     from PySide6.QtCore import qInstallMessageHandler

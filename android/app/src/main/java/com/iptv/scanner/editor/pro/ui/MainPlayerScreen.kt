@@ -101,6 +101,9 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
     val epgTimelineOpen by viewModel.epgTimelineOpen.collectAsState()
     val searchPanelOpen by viewModel.searchPanelOpen.collectAsState()
     val streamQualityPanelOpen by viewModel.streamQualityPanelOpen.collectAsState()
+    val exitConfirmOpen by viewModel.exitConfirmOpen.collectAsState()
+    val openUrlDialogOpen by viewModel.openUrlDialogOpen.collectAsState()
+    val updateDialogOpen by viewModel.updateDialogOpen.collectAsState()
     val triggeredReminder by viewModel.triggeredReminder.collectAsState()
     val osd by viewModel.osd.collectAsState()
 
@@ -147,8 +150,7 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
         16f / 9f  // 默认 16:9（未加载时）
     }
 
-    // 是否有任何面板打开（控制层在面板打开时自动隐藏）
-    // 注意：openUrlDialogOpen 不计入，因为 AlertDialog 有独立 scrim，不需要隐藏控制层
+    // 是否有任何面板或对话框打开（控制层在面板/对话框打开时自动隐藏）
     val anyPanelOpen = channelsPanelOpen || epgPanelOpen || menuPanelOpen ||
             tvUnifiedPanelOpen ||
             sourceManagerOpen || playerSettingsOpen ||
@@ -156,7 +158,8 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
             playbackPanelOpen || screenshotPanelOpen || viewSettingsOpen || aboutPanelOpen ||
             mappingPanelOpen || avSyncPanelOpen || networkPanelOpen || toolsPanelOpen || scanPanelOpen ||
             reminderPanelOpen || resumePanelOpen || bookmarkPanelOpen ||
-            epgTimelineOpen || searchPanelOpen || streamQualityPanelOpen
+            epgTimelineOpen || searchPanelOpen || streamQualityPanelOpen ||
+            exitConfirmOpen || openUrlDialogOpen || updateDialogOpen
     // 控制层是否应该显示
     val showControls = controlsVisible && !anyPanelOpen
 

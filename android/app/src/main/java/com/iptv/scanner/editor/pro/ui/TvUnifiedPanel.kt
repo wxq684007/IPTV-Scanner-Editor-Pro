@@ -1066,7 +1066,15 @@ private fun EpgListColumn(
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
-    val now = remember { System.currentTimeMillis() }
+
+    // 每秒刷新 now，确保 LIVE 徽章和过去节目灰显随时间自动更新
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(1_000L)
+            now = System.currentTimeMillis()
+        }
+    }
 
     // 自动滚动到当前直播节目（居中显示）
     LaunchedEffect(epg) {
@@ -1287,8 +1295,16 @@ private fun EpgDescColumn(
             Box(
                 modifier = Modifier.fillMaxSize().padding(12.dp)
             ) {
+                // 每秒刷新 now，确保当前节目描述随时间自动更新
+                var now by remember { mutableStateOf(System.currentTimeMillis()) }
+                LaunchedEffect(Unit) {
+                    while (true) {
+                        kotlinx.coroutines.delay(1_000L)
+                        now = System.currentTimeMillis()
+                    }
+                }
+
                 // 优先使用用户选中的节目，否则自动查找当前正在播出的节目
-                val now = System.currentTimeMillis()
                 val currentProg = selectedProgram ?: epg.find { p ->
                     p.startTs * 1000L <= now && now <= p.stopTs * 1000L
                 }

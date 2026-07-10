@@ -71,8 +71,6 @@ fun ControlPanel(viewModel: AppViewModel) {
     val paused by mpv.paused.collectAsState()
     val muted by mpv.muted.collectAsState()
     val volume by mpv.volume.collectAsState()
-    val timePos by mpv.timePos.collectAsState()
-    val duration by mpv.duration.collectAsState()
     val videoWidth by mpv.videoWidth.collectAsState()
     val videoHeight by mpv.videoHeight.collectAsState()
     val mediaTitle by mpv.mediaTitle.collectAsState()
@@ -98,7 +96,8 @@ fun ControlPanel(viewModel: AppViewModel) {
         }
     }
 
-    val isTV = viewModel.uiMode.value.isTV
+    val uiMode by viewModel.uiMode.collectAsState()
+    val isTV = uiMode.isTV
 
     Surface(
         color = Color(0xCC000000),
@@ -130,9 +129,7 @@ fun ControlPanel(viewModel: AppViewModel) {
                 channel = currentChannel,
                 mediaTitle = mediaTitle,
                 program = currentProgram.value,
-                playbackState = playbackState,
-                videoWidth = videoWidth,
-                videoHeight = videoHeight
+                playbackState = playbackState
             )
 
             // 节目描述（有的话单独一行显示，TV 端更易读）
@@ -212,8 +209,9 @@ private fun MediaBadgesRow(
     val videoCodec = remember(tick, fileLoaded) { mpv.getPropertyString("video-codec") ?: "" }
     val audioCodec = remember(tick, fileLoaded) { mpv.getPropertyString("audio-codec") ?: "" }
     val hwdec = remember(tick, fileLoaded) { mpv.getPropertyString("hwdec-current") ?: "" }
+    // 注意：mpv-android 不支持 estimated-vfps 属性（桌面版才有），仅用 container-fps
     val fps = remember(tick, fileLoaded) {
-        mpv.getPropertyDouble("container-fps") ?: mpv.getPropertyDouble("estimated-vf-fps") ?: 0.0
+        mpv.getPropertyDouble("container-fps") ?: 0.0
     }
     val gamma = remember(tick, fileLoaded) { mpv.getPropertyString("video-params/gamma") ?: "" }
     val isHdr = gamma == "pq" || gamma == "hlg"
@@ -227,9 +225,10 @@ private fun MediaBadgesRow(
     val audioSamplerate = remember(tick, fileLoaded) { mpv.getPropertyInt("audio-params/samplerate") ?: 0 }
     val audioBitrate = remember(tick, fileLoaded) { mpv.getPropertyDouble("audio-bitrate") ?: 0.0 }
     val fileFormat = remember(tick, fileLoaded) { mpv.getPropertyString("file-format") ?: "" }
-    val protocol = remember(tick, fileLoaded) { mpv.getPropertyString("protocol") ?: "" }
+    // 注意：mpv-android 不支持 protocol 和 demuxer-bitrate 属性（桌面版才有）。
+    // 移除每秒轮询这两个属性，避免 native 层每秒产生 2 条 "property not found" 错误日志。
+    // 协议信息已通过 file-format 体现（如 hls、mpegts 等）。
     val cacheDuration = remember(tick, fileLoaded) { mpv.getPropertyDouble("demuxer-cache-duration") ?: 0.0 }
-    val demuxerBitrate = remember(tick, fileLoaded) { mpv.getPropertyDouble("demuxer-bitrate") ?: 0.0 }
     val bufferingState = remember(tick, fileLoaded) { mpv.getPropertyInt("cache-buffering-state") ?: -1 }
 
     // 视频徽章（对齐 PC 端 ctrlVideoInfo）
@@ -268,12 +267,9 @@ private fun MediaBadgesRow(
     // 网络徽章（对齐 PC 端 ctrlNetworkInfo）
     val networkInfo = buildString {
         if (fileFormat.isNotEmpty()) append("格式: $fileFormat | ")
-        if (protocol.isNotEmpty()) append("协议: $protocol | ")
         val totalBr = videoBitrate + audioBitrate
         if (totalBr > 0) {
             append("码率: ${formatBitrate(totalBr)} | ")
-        } else if (demuxerBitrate > 0) {
-            append("码率: ${formatBitrate(demuxerBitrate)} | ")
         }
         if (cacheDuration > 0) append("缓存: ${"%.1f".format(cacheDuration)}s")
     }.trimEnd(' ', '|', ' ')
@@ -346,9 +342,7 @@ private fun ProgramInfoRow(
     channel: com.iptv.scanner.editor.pro.data.IptvChannel?,
     mediaTitle: String,
     program: com.iptv.scanner.editor.pro.data.IptvEpgProgram?,
-    playbackState: com.iptv.scanner.editor.pro.player.PlaybackState,
-    videoWidth: Int,
-    videoHeight: Int
+    playbackState: com.iptv.scanner.editor.pro.player.PlaybackState
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),

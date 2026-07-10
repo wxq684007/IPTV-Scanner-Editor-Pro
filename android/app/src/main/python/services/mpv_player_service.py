@@ -37,7 +37,17 @@ from services.mpv_common import (
 
 try:
     import mpv
-except Exception:
+except ImportError as _e:
+    import logging as _logging
+    _logging.getLogger('services.mpv_player_service').warning(
+        f"python-mpv 模块导入失败（非致命，libmpv 直接调用仍可用）: {_e}"
+    )
+    mpv = None
+except Exception as _e:
+    import logging as _logging
+    _logging.getLogger('services.mpv_player_service').warning(
+        f"python-mpv 模块导入异常: {_e}"
+    )
     mpv = None
 
 VIDEO_CODEC_MAP = {
@@ -103,8 +113,11 @@ def _load_playback_settings():
         config = ConfigManager()
         s = config.load_playback_settings()
         settings.update(s)
-    except Exception:
-        pass
+    except Exception as e:
+        import logging as _logging
+        _logging.getLogger('services.mpv_player_service').warning(
+            f"加载播放设置失败，使用默认值: {e}"
+        )
     return settings
 
 
@@ -186,15 +199,15 @@ class MpvPlayerController(QObject):
                 try:
                     from services.mpv_gl_widget import MpvGLWidget
                     _skip_wid = isinstance(self.video_widget, MpvGLWidget)
-                except Exception:
-                    pass
+                except Exception as _e:
+                    global_logger.debug(f"unexpected error: {_e}")
 
             if not _skip_wid:
                 try:
                     from PySide6.QtWidgets import QApplication
                     QApplication.processEvents()
-                except Exception:
-                    pass
+                except Exception as _e:
+                    global_logger.debug(f"unexpected error: {_e}")
 
                 if is_linux():
                     self.logger.info(
@@ -539,8 +552,8 @@ class MpvPlayerController(QObject):
                 from utils.hdr_detect import is_windows_hdr_enabled
                 if is_windows_hdr_enabled():
                     return 'srgb'
-        except Exception:
-            pass
+        except Exception as _e:
+            global_logger.debug(f"unexpected error: {_e}")
         return 'bt.1886'
 
     def _apply_tonemap_config(self):
@@ -742,14 +755,15 @@ class MpvPlayerController(QObject):
                 import socket
                 if not port:
                     port = 443 if parsed.scheme == 'https' else 80
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                # 使用 AF_UNSPEC 支持 IPv4 和 IPv6（getaddrinfo 自动选择）
+                sock = socket.socket(socket.AF_UNSPEC, socket.SOCK_STREAM)
                 sock.settimeout(3)
                 sock.connect((host, port))
                 sock.close()
             except (socket.timeout, socket.error, OSError) as e:
                 return f"网络不可达: {host}:{port} ({e})"
-            except Exception:
-                pass
+            except Exception as e:
+                global_logger.debug(f"_check_path_reachability_sync 未知异常: {e}")
             return None
         return None
 
@@ -919,8 +933,8 @@ class MpvPlayerController(QObject):
                     elif is_linux():
                         from utils.hdr_detect import is_linux_hdr_enabled
                         return is_linux_hdr_enabled()
-                except Exception:
-                    pass
+                except Exception as _e:
+                    global_logger.debug(f"unexpected error: {_e}")
                 return False
 
             if hdr_mode == 'tonemap':
@@ -1001,8 +1015,8 @@ class MpvPlayerController(QObject):
                 fs_str = self._get_mpv_property_string('file-size')
                 if fs_str:
                     file_size = int(fs_str)
-            except Exception:
-                pass
+            except Exception as _e:
+                global_logger.debug(f"unexpected error: {_e}")
             is_4k = (w >= 3840 or h >= 2160)
             is_hdr = False
             try:
@@ -1012,8 +1026,8 @@ class MpvPlayerController(QObject):
                 is_hdr = ('pq' in gamma or 'smpte2084' in gamma or
                           'hlg' in gamma or 'arib-std-b67' in gamma or
                           'dovi' in vf or 'dvhe' in vf or 'dvh1' in vf or 'dav1' in vf)
-            except Exception:
-                pass
+            except Exception as _e:
+                global_logger.debug(f"unexpected error: {_e}")
             is_large_file = file_size > 10 * 1024 * 1024 * 1024 or (duration > 3600 and is_4k)
             if not is_4k and not is_hdr and not is_large_file:
                 return
@@ -1291,8 +1305,8 @@ class MpvPlayerController(QObject):
                                             if new_paused != self.is_paused:
                                                 self.is_paused = new_paused
                                                 self._safe_emit(self.play_state_changed, not new_paused)
-                        except Exception:
-                            pass
+                        except Exception as _e:
+                            self.logger.debug(f"处理 pause 属性变更事件失败: {_e}")
 
                 elif event.event_id == MPV_EVENT_FILE_LOADED:
                     self._reconnect_count = 0
@@ -1391,8 +1405,8 @@ class MpvPlayerController(QObject):
                                 global_logger.warning(f"[mpv:{prefix}] {text}")
                             else:
                                 global_logger.debug(f"[mpv:{prefix}] {text}")
-                        except Exception:
-                            pass
+                        except Exception as _e:
+                            global_logger.debug(f"处理 mpv 日志消息失败: {_e}")
 
         except Exception as e:
             self.logger.error(f"处理 mpv 事件失败：{str(e)}")
@@ -1442,8 +1456,8 @@ class MpvPlayerController(QObject):
                 # 清理可能残留的视频滤镜（flip/crop/360），避免新文件加载时冲突
                 try:
                     self.clear_all_video_filters()
-                except Exception:
-                    pass
+                except Exception as _e:
+                    self.logger.debug(f"清理视频滤镜失败: {_e}")
 
             if hasattr(self, 'event_timer') and self.event_timer and not self.event_timer.isActive():
                 self.event_timer.start(100)
@@ -1608,16 +1622,16 @@ class MpvPlayerController(QObject):
             if is_macos() and hasattr(self.video_widget, 'cleanup'):
                 try:
                     self.video_widget.cleanup()
-                except Exception:
-                    pass
+                except Exception as _e:
+                    global_logger.debug(f"unexpected error: {_e}")
 
             for timer_attr in ['_media_info_timer', '_live_info_timer', 'event_timer']:
                 timer = getattr(self, timer_attr, None)
                 if timer:
                     try:
                         timer.stop()
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        global_logger.debug(f"unexpected error: {_e}")
 
             with self._lock:
                 handle = self.mpv_handle
@@ -1655,8 +1669,8 @@ class MpvPlayerController(QObject):
             try:
                 from services.fcc_service import _close_udp_socket
                 _close_udp_socket()
-            except Exception:
-                pass
+            except Exception as _e:
+                global_logger.debug(f"unexpected error: {_e}")
 
             self.logger.info("MPV播放器已完全终止")
         except Exception as e:
@@ -1666,24 +1680,24 @@ class MpvPlayerController(QObject):
         try:
             from utils.hdr_detect import clear_hdr_cache
             clear_hdr_cache()
-        except Exception:
-            pass
+        except Exception as _e:
+            global_logger.debug(f"unexpected error: {_e}")
         saved_url = self.current_url
         saved_position = 0.0
         was_playing = self.is_playing and not self.is_paused
         if self.mpv_handle:
             try:
                 saved_position = self._get_mpv_property_double('time-pos') or 0.0
-            except Exception:
-                pass
+            except Exception as _e:
+                global_logger.debug(f"unexpected error: {_e}")
         self.stop()
         for timer_attr in ['_media_info_timer', '_live_info_timer', 'event_timer']:
             timer = getattr(self, timer_attr, None)
             if timer:
                 try:
                     timer.stop()
-                except Exception:
-                    pass
+                except Exception as _e:
+                    global_logger.debug(f"unexpected error: {_e}")
         # 在销毁旧 mpv_handle 前释放 macOS render context，避免 GL 资源泄漏
         if is_macos() and hasattr(self.video_widget, 'cleanup'):
             try:
@@ -1696,8 +1710,8 @@ class MpvPlayerController(QObject):
         if handle:
             try:
                 _mpv_send_command(handle, ['quit'])
-            except Exception:
-                pass
+            except Exception as _e:
+                global_logger.debug(f"unexpected error: {_e}")
             with self._lock:
                 terminate_destroy_mpv(handle)
         self._mpv_initialized = False
@@ -1720,8 +1734,8 @@ class MpvPlayerController(QObject):
                     file_loaded = False
                     try:
                         file_loaded = self._get_mpv_property_double('time-pos') is not None
-                    except Exception:
-                        pass
+                    except Exception as _e:
+                        global_logger.debug(f"unexpected error: {_e}")
                     if file_loaded:
                         self.send_command(['seek', str(pos), 'absolute'])
                     elif seek_retries[0] < 5:
@@ -2206,8 +2220,8 @@ class MpvPlayerController(QObject):
                 try:
                     from services.mpv_common import send_command as _async_send
                     _async_send(handle, ['screenshot-to-file', filepath, 'video'])
-                except Exception:
-                    pass
+                except Exception as _e:
+                    global_logger.debug(f"unexpected error: {_e}")
             threading.Thread(target=_do_screenshot, daemon=True).start()
             QTimer.singleShot(1500, lambda: self._check_thumbnail_saved(filepath) if not self._terminated else None)
         except Exception as e:
@@ -2219,8 +2233,8 @@ class MpvPlayerController(QObject):
                 return
             if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
                 self._safe_emit(self.thumbnail_captured, self.current_url)
-        except Exception:
-            pass
+        except Exception as _e:
+            global_logger.debug(f"unexpected error: {_e}")
 
     @staticmethod
     def get_thumbnail_path(url):
@@ -2278,8 +2292,8 @@ class MpvPlayerController(QObject):
                 error_str = _libmpv.mpv_error_string(error_code)
                 if error_str:
                     return error_str.decode('utf-8')
-        except Exception:
-            pass
+        except Exception as _e:
+            global_logger.debug(f"unexpected error: {_e}")
         return f"错误码: {error_code}"
 
     def _get_mpv_property_int(self, property_name):
@@ -2317,8 +2331,8 @@ class MpvPlayerController(QObject):
             if eof and eof.lower() == 'yes':
                 self.send_command(['stop'])
                 time.sleep(0.08)
-        except Exception:
-            pass
+        except Exception as _e:
+            global_logger.debug(f"unexpected error: {_e}")
 
     def is_eof_reached(self):
         try:
@@ -2343,8 +2357,8 @@ class MpvPlayerController(QObject):
                         first = seekable_ranges[0]
                         cache_duration = first.get('end', 0) - first.get('start', 0)
                     buffering = cache_state.get('eof', False) is False and cache_state.get('underrun', False)
-                except Exception:
-                    pass
+                except Exception as _e:
+                    global_logger.debug(f"unexpected error: {_e}")
             if cache_duration <= 0:
                 dur = self._get_mpv_property_double('demuxer-cache-duration') or 0
                 if dur > 0:
@@ -2717,8 +2731,8 @@ class MpvPlayerController(QObject):
             result['bold'] = (bv == 'yes')
             iv = self._get_mpv_property_string('sub-italic')
             result['italic'] = (iv == 'yes')
-        except Exception:
-            pass
+        except Exception as _e:
+            global_logger.debug(f"unexpected error: {_e}")
         return result
 
     # ---------- 视频图像调整（brightness/contrast/saturation/hue/gamma/sharpness） ----------
@@ -2847,15 +2861,15 @@ class MpvPlayerController(QObject):
             return
         try:
             self.send_command(['vf', 'remove', '@iptv_deint'])
-        except Exception:
-            pass
+        except Exception as _e:
+            global_logger.debug(f"unexpected error: {_e}")
         ret = self.send_command(['vf', 'add', '@iptv_deint:yadif=mode=1'])
         if ret != 0:
             cur_hwdec = ''
             try:
                 cur_hwdec = self._get_mpv_property_string('hwdec') or ''
-            except Exception:
-                pass
+            except Exception as _e:
+                global_logger.debug(f"unexpected error: {_e}")
             self.logger.warning(
                 f"yadif bob 反交错滤镜添加失败(ret={ret})，当前 hwdec='{cur_hwdec}'。"
                 f"若为原生硬解(auto)，请在播放设置中改为 copy-back(auto-copy) 或软解(no)"
@@ -2870,8 +2884,8 @@ class MpvPlayerController(QObject):
         try:
             self.send_command(['vf', 'remove', '@iptv_deint'])
             self.logger.info("反交错滤镜已移除")
-        except Exception:
-            pass
+        except Exception as _e:
+            global_logger.debug(f"unexpected error: {_e}")
 
     # ---------- 画面旋转 / 镜像 / 裁剪（vf 滤镜） ----------
     def set_video_rotate(self, degree: int) -> bool:
@@ -2901,8 +2915,8 @@ class MpvPlayerController(QObject):
         # 通过 vf 滤镜实现；先清除已有 flip 滤镜，再添加新的
         try:
             self.send_command(['vf', 'remove', '@iptv_flip'])
-        except Exception:
-            pass
+        except Exception as _e:
+            global_logger.debug(f"unexpected error: {_e}")
         if not mode:
             return True
         if mode == 'horizontal':
@@ -2964,8 +2978,8 @@ class MpvPlayerController(QObject):
         # 清除旧裁剪
         try:
             self.send_command(['vf', 'remove', '@iptv_crop'])
-        except Exception:
-            pass
+        except Exception as _e:
+            global_logger.debug(f"unexpected error: {_e}")
         if w <= 0 or h <= 0:
             return True
         # crop=w:h:x:y
@@ -2989,8 +3003,8 @@ class MpvPlayerController(QObject):
         for label in ('@iptv_flip', '@iptv_crop', '@iptv_360'):
             try:
                 self.send_command(['vf', 'remove', label])
-            except Exception:
-                pass
+            except Exception as _e:
+                global_logger.debug(f"unexpected error: {_e}")
         return True
 
     # ---------- 3D 立体模式 / 360° 视角 ----------
@@ -3040,8 +3054,8 @@ class MpvPlayerController(QObject):
         # 移除旧滤镜
         try:
             self.send_command(['vf', 'remove', '@iptv_360'])
-        except Exception:
-            pass
+        except Exception as _e:
+            global_logger.debug(f"unexpected error: {_e}")
         # 全 0 视角等同于无滤镜
         if yaw == 0.0 and pitch == 0.0 and roll == 0.0:
             return True
@@ -3098,8 +3112,8 @@ class MpvPlayerController(QObject):
                     result['roll'] = float(m.group(1))
                 result['active'] = True
                 break
-        except Exception:
-            pass
+        except Exception as _e:
+            global_logger.debug(f"unexpected error: {_e}")
         return result
 
     # ---------- 音频系统增强（audio-delay/device/channels/pitch/equalizer） ----------
@@ -3218,8 +3232,8 @@ class MpvPlayerController(QObject):
                         if len(parts) == 10:
                             return [max(-12.0, min(12.0, float(p))) for p in parts]
                     break
-        except Exception:
-            pass
+        except Exception as _e:
+            global_logger.debug(f"unexpected error: {_e}")
         return [0.0] * 10
 
     def _apply_audio_eq_filter(self, gains: list) -> bool:
@@ -3229,8 +3243,8 @@ class MpvPlayerController(QObject):
         # 先移除已有的 eq 滤镜
         try:
             self.send_command(['af', 'remove', '@iptv_eq'])
-        except Exception:
-            pass
+        except Exception as _e:
+            global_logger.debug(f"unexpected error: {_e}")
         # 全为 0 时不再添加
         if all(abs(g) < 0.01 for g in gains):
             return True
@@ -3277,8 +3291,8 @@ class MpvPlayerController(QObject):
         # 清除均衡器滤镜
         try:
             self.send_command(['af', 'remove', '@iptv_eq'])
-        except Exception:
-            pass
+        except Exception as _e:
+            global_logger.debug(f"unexpected error: {_e}")
 
     # ---------- 播放列表控制（loop-file / ab-loop / frame-step） ----------
     def set_loop_file(self, mode: str) -> bool:
@@ -3414,8 +3428,8 @@ class MpvPlayerController(QObject):
             font_family = colors.get('font_family', "'Segoe UI', 'Microsoft YaHei', sans-serif")
             mpv_font = font_family.split(",")[0].strip("' \"")
             self._set_mpv_string('osd-font', mpv_font)
-        except Exception:
-            pass
+        except Exception as _e:
+            global_logger.debug(f"unexpected error: {_e}")
 
     def update_osd_theme(self):
         self._apply_osd_colors()
@@ -3498,8 +3512,8 @@ class MpvPlayerController(QObject):
                         buffer_start = first.get('start', 0)
                         buffer_end = first.get('end', 0)
                         cache_duration = buffer_end - buffer_start
-                except Exception:
-                    pass
+                except Exception as _e:
+                    global_logger.debug(f"unexpected error: {_e}")
             if cache_duration <= 0:
                 cache_dur = self._get_mpv_property_double('demuxer-cache-duration') or 0
                 if cache_dur > 0:

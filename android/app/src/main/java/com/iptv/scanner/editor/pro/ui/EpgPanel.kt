@@ -20,8 +20,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -58,6 +60,7 @@ import androidx.compose.ui.unit.sp
 import com.iptv.scanner.editor.pro.data.IptvEpgProgram
 import com.iptv.scanner.editor.pro.ui.theme.tvFocusBorder
 import com.iptv.scanner.editor.pro.ui.theme.tvTextField
+import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -99,7 +102,8 @@ fun EpgPanel(viewModel: AppViewModel) {
         color = Color(0xF0161616),
         modifier = Modifier
             .fillMaxHeight()
-            .width(360.dp)
+            .fillMaxWidth(0.92f)
+            .widthIn(max = 380.dp)
     ) {
         Column(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
             // -----------------------------------------------------------------
@@ -263,7 +267,15 @@ private fun EpgList(
     onProgramClick: (IptvEpgProgram) -> Unit
 ) {
     val listState = rememberLazyListState()
-    val now = System.currentTimeMillis()
+
+    // 每秒刷新 `now`，确保当前节目高亮随时间推移自动更新
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1_000L)
+            now = System.currentTimeMillis()
+        }
+    }
 
     // 找当前节目索引
     val currentProgramIdx = remember(programs, now) {
@@ -298,8 +310,7 @@ private fun EpgList(
         modifier = Modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 4.dp)
     ) {
-        items(items = programs, key = { it.start + it.title }) { program ->
-            val idx = programs.indexOf(program)
+        itemsIndexed(items = programs, key = { _, p -> p.start + p.title }) { idx, program ->
             val isCurrent = idx == currentProgramIdx
             val isPast = isProgramPast(program, now)
             EpgItem(

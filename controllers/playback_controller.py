@@ -180,7 +180,25 @@ class PlaybackController:
             logger.debug(f"play_channel: 开始切换频道 {channel.get('name', '?')} url={channel.get('url', '?')}")
             self._do_play_channel(channel)
         finally:
-            QTimer.singleShot(300, lambda: setattr(self, '_is_switching', False))
+            # 确保在主线程上重置 _is_switching 标志
+            # 如果 invoke_on_thread 失败，使用 QTimer.singleShot 兜底，否则标志会永久锁定
+            def _reset_switching():
+                self._is_switching = False
+
+            try:
+                from utils.thread_safety import invoke_on_thread
+
+                def _schedule_reset():
+                    QTimer.singleShot(300, _reset_switching)
+
+                invoke_on_thread(self.window, _schedule_reset)
+            except Exception as e:
+                logger.debug(f"invoke_on_thread 失败，使用 QTimer.singleShot 兜底: {e}")
+                try:
+                    QTimer.singleShot(300, _reset_switching)
+                except Exception:
+                    # 最后兜底：直接重置，避免标志永久锁定
+                    self._is_switching = False
 
     def _do_play_channel(self, channel: Dict[str, Any]):
         if not (hasattr(self.window, 'player_controller') and self.window.player_controller and channel):

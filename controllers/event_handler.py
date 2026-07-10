@@ -94,6 +94,7 @@ class EventHandler:
         """判断按键组合是否由 eventFilter 统一处理（用于拦截 ShortcutOverride）"""
         if self._is_input_widget_focused():
             return False
+        # _is_input_widget_focused() 已在上方检查，此处无需重复判断
         if modifiers == Qt.KeyboardModifier.NoModifier:
             global_keys = (Qt.Key.Key_Space, Qt.Key.Key_Escape,
                            Qt.Key.Key_F, Qt.Key.Key_E,
@@ -121,8 +122,7 @@ class EventHandler:
                            Qt.Key.Key_BracketLeft, Qt.Key.Key_BracketRight)
             main_only_keys = (Qt.Key.Key_Up, Qt.Key.Key_Down,
                               Qt.Key.Key_Left, Qt.Key.Key_Right)
-            if key == Qt.Key.Key_Backspace and self._is_input_widget_focused():
-                return False
+            # Backspace 已被上方 _is_input_widget_focused() 检查拦截，此处无需重复判断
             if key in global_keys:
                 return True
             if key in main_only_keys and self._is_main_window_focused():
@@ -413,17 +413,6 @@ class EventHandler:
         if item and hasattr(self.window, 'select_channel'):
             self.window.select_channel(item, source_list=channel_list)
 
-    def _adjust_volume(self, delta: int):
-        """调整音量（delta为正增大，为负减小）"""
-        if not hasattr(self.window, 'volume_slider'):
-            return
-
-        current = self.window.volume_slider.value()
-        new_vol = max(0, min(100, current + delta))
-
-        if new_vol != current:
-            self.window.volume_slider.setValue(new_vol)
-
     def _is_local_file_playing(self) -> bool:
         """判断当前是否在播放本地视频文件或回看/时移（支持seek）"""
         w = self.window
@@ -488,9 +477,10 @@ class EventHandler:
                 }
                 settings = config.load_ui_settings(defaults)
 
-                self.window.epg_visible = True
-                self.window.playlist_visible = True
-                self.window.floating_panel_visible = True
+                # 尊重用户保存的面板可见性设置，而非强制全部显示
+                self.window.epg_visible = settings.get('epg_visible', True)
+                self.window.playlist_visible = settings.get('playlist_visible', True)
+                self.window.floating_panel_visible = settings.get('floating_visible', True)
 
                 if hasattr(self.window, 'epg_dock') and self.window.epg_dock:
                     epg_w = max(200, settings.get('epg_width', 280))
@@ -724,7 +714,7 @@ class EventHandler:
                 logger.debug(f"清理系统托盘失败: {e}")
             self.window._system_tray = None
 
-        # 6.7 执行注册的资源清理器
+        # 6.10 执行注册的资源清理器
         try:
             from utils.resource_cleaner import cleanup_all
             cleanup_all()
@@ -733,7 +723,9 @@ class EventHandler:
 
         # 7. 等待后台工作线程完成
         if hasattr(self.window, 'subscription_ctrl'):
-            for worker in self.window.subscription_ctrl._workers:
+            # 复制 workers 列表避免遍历过程中被修改导致竞争
+            workers = list(self.window.subscription_ctrl._workers)
+            for worker in workers:
                 if worker.isRunning():
                     try:
                         worker.requestInterruption()

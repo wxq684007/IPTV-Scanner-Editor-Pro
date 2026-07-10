@@ -15,19 +15,43 @@ logger = logging.getLogger('server.routes')
 # --- 安全配置 ---
 # 认证 Token：通过环境变量 ISEP_AUTH_TOKEN 或配置文件 [Server] auth_token 设置
 # 为空时表示不需要认证（仅限 localhost 场景）
-_AUTH_TOKEN = os.environ.get('ISEP_AUTH_TOKEN', '').strip()
+# 动态读取，确保运行时修改环境变量或配置后立即生效
 
 # 允许的流代理 URL 协议
 _ALLOWED_STREAM_PROTOCOLS = {'http', 'https', 'rtsp', 'rtmp', 'rtp', 'udp', 'srt'}
 
 # 共享 aiohttp ClientSession（流代理用），延迟初始化
 _stream_session = None
+_stream_session_lock = asyncio.Lock()
 
 
-def _get_stream_session():
-    """获取共享的 aiohttp ClientSession，避免每个请求创建新连接池"""
+def _get_auth_token():
+    """动态获取认证 Token，优先读环境变量，其次读配置文件"""
+    token = os.environ.get('ISEP_AUTH_TOKEN', '').strip()
+    if token:
+        return token
+    # 尝试从配置文件读取
+    try:
+        config = get_config()
+        if config:
+            return config.get_setting('Server', 'auth_token', '').strip()
+    except Exception:
+        pass
+    return ''
+
+
+async def _get_stream_session():
+    """获取共享的 aiohttp ClientSession，避免每个请求创建新连接池
+
+    使用 asyncio.Lock 确保并发请求时只创建一个 session。
+    """
     global _stream_session
-    if _stream_session is None or _stream_session.closed:
+    if _stream_session is not None and not _stream_session.closed:
+        return _stream_session
+    async with _stream_session_lock:
+        # double-check：持锁后再次确认（可能其他协程已创建）
+        if _stream_session is not None and not _stream_session.closed:
+            return _stream_session
         import aiohttp
         _stream_session = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=30),
@@ -148,12 +172,27 @@ def _register_admin_routes(app):
             return web.Response(text='404: Not Found', status=404)
         ext = os.path.splitext(rel_path)[1].lower()
         content_type = _MIME_TYPES.get(ext, 'application/octet-stream')
+        file_size = os.path.getsize(file_path)
+        # 使用 StreamResponse 流式传输，避免大文件全量读入内存
+        response = web_response.StreamResponse(
+            status=200,
+            headers={
+                'Content-Type': content_type,
+                'Content-Length': str(file_size),
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0',
+            }
+        )
+        await response.prepare(request)
         with open(file_path, 'rb') as f:
-            content = f.read()
-        return web.Response(
-            body=content, content_type=content_type,
-            headers={'Cache-Control': 'no-cache, no-store, must-revalidate',
-                     'Pragma': 'no-cache', 'Expires': '0'})
+            while True:
+                chunk = f.read(65536)  # 64KB chunks
+                if not chunk:
+                    break
+                await response.write(chunk)
+        await response.write_eof()
+        return response
 
     try:
         app.router.add_get('/admin/', _handle_admin)
@@ -324,7 +363,7 @@ def _is_auth_required(request):
     if not path.startswith('/api/'):
         return False
     # 如果未配置 Token，免认证（仅限 localhost 场景）
-    if not _AUTH_TOKEN:
+    if not _get_auth_token():
         return False
     return True
 
@@ -345,7 +384,7 @@ async def auth_middleware(request, handler):
         token = auth_header[7:].strip()
     if not token:
         token = request.rel_url.query.get('token', '').strip()
-    if token != _AUTH_TOKEN:
+    if token != _get_auth_token():
         return web.json_response(
             {'success': False, 'error': '未授权访问'}, status=401
         )
@@ -678,7 +717,7 @@ async def handle_channels_list(request):
     try:
         ctx = get_context()
         # 直接读取已加载的 channels，不触发 reload_if_needed（避免同步加载导致请求超时）
-        all_channels = ctx._channels if ctx else []
+        all_channels = ctx.get_all_channels() if ctx else []
         if not all_channels:
             # 返回空列表而非 503，让前端正常显示"暂无频道"
             return _json_success(
@@ -772,19 +811,30 @@ async def handle_channel_update(request):
         return _json_error('没有可更新的字段')
     if model and 0 <= idx < model.rowCount():
         model.update_channel(idx, data)
-    elif ctx and hasattr(ctx, '_channels') and 0 <= idx < len(ctx._channels):
-        # standalone 模式（Android）：直接更新内存中的频道并持久化
-        with getattr(ctx, '_channels_lock', _noop_lock):
-            if 0 <= idx < len(ctx._channels):
-                ctx._channels[idx].update(data)
+    elif ctx and hasattr(ctx, 'update_channel'):
+        # standalone 模式（Android）：通过线程安全 API 更新并持久化
+        if not ctx.update_channel(idx, data):
+            return _json_error('频道不存在', 404)
         ctx._save_channels_to_cache()
     else:
         mw = get_main_window()
         if mw:
-            for ch_list in (getattr(mw, '_sub_channels', []), getattr(mw, '_local_channels', [])):
-                if 0 <= idx < len(ch_list):
-                    ch_list[idx].update(data)
+            updated = False
+            for ch_list_attr in ('_sub_channels', '_local_channels'):
+                ch_list = getattr(mw, ch_list_attr, None)
+                if ch_list and 0 <= idx < len(ch_list):
+                    # 使用 ServerContext 的线程安全 API 更新
+                    ctx2 = get_context()
+                    if ctx2 and hasattr(ctx2, 'update_channel'):
+                        ctx2.update_channel(idx, data)
+                    else:
+                        ch_list[idx].update(data)
+                    updated = True
                     break
+            if not updated:
+                return _json_error('频道不存在', 404)
+        else:
+            return _json_error('频道不存在', 404)
     return _json_success()
 
 
@@ -797,10 +847,13 @@ async def handle_channel_delete(request):
         return _json_error('无效的频道ID')
     if model and 0 <= idx < model.rowCount():
         model.remove_channel(idx)
-    elif ctx and hasattr(ctx, '_channels') and 0 <= idx < len(ctx._channels):
-        # standalone 模式（Android）：直接从内存列表删除并持久化
-        ctx._channels.pop(idx)
+    elif ctx and hasattr(ctx, 'delete_channel'):
+        # standalone 模式（Android）：通过线程安全 API 删除并持久化
+        if not ctx.delete_channel(idx):
+            return _json_error('频道不存在', 404)
         ctx._save_channels_to_cache()
+    else:
+        return _json_error('频道不存在', 404)
     return _json_success()
 
 
@@ -830,10 +883,9 @@ async def handle_channel_add(request):
     model = get_channel_model() if ctx else None
     if model:
         model.add_channel(data)
-    elif ctx and hasattr(ctx, '_channels'):
-        # standalone 模式（Android）：直接追加到内存列表并持久化
-        data['id'] = len(ctx._channels) + 1
-        ctx._channels.append(data)
+    elif ctx and hasattr(ctx, 'add_channel'):
+        # standalone 模式（Android）：通过线程安全 API 追加并持久化
+        ctx.add_channel(data)
         ctx._save_channels_to_cache()
     return _json_success()
 
@@ -852,19 +904,16 @@ async def handle_channels_import(request):
         # 标记为手动导入（source=''），在 Android 端 LOCAL tab 显示
         # 同时补全 id 字段（与 android_bridge.py import_channels 对齐）
         ctx = get_context()
-        if not ctx or not hasattr(ctx, '_channels'):
+        if not ctx or not hasattr(ctx, 'import_channels'):
             return _json_error('上下文未初始化', 503)
-        base_id = len(ctx._channels)
-        for i, c in enumerate(channels):
+        # 标记为手动导入（source=''），在 Android 端 LOCAL tab 显示
+        for c in channels:
             c['source'] = ''
-            c.setdefault('id', base_id + i + 1)
-        with getattr(ctx, '_channels_lock', _noop_lock):
-            ctx._channels.extend(channels)
+        # 使用线程安全 API 批量导入
+        imported_count = ctx.import_channels(channels)
         # 持久化到缓存，重启后不丢失
         ctx._save_channels_to_cache()
-        all_groups = list(dict.fromkeys([c.get('group', '未分组') for c in ctx._channels]))
-        ctx._channels_list = all_groups if hasattr(ctx, '_channels_list') else None
-        return _json_success(imported=len(channels))
+        return _json_success(imported=imported_count)
     except Exception as e:
         return _json_error(f'解析失败: {e}', 500)
 
@@ -1419,9 +1468,12 @@ async def handle_stream_proxy(request):
     if not is_safe:
         logger.warning(f'Stream proxy blocked: {stream_url} - {reject_reason}')
         return _json_error(f'不允许的流地址: {reject_reason}', 403)
-    session = _get_stream_session()
+    session = await _get_stream_session()
     try:
-        async with session.get(stream_url) as resp:
+        # 使用 sock_read timeout 防止数据传输卡死（total=300s，sock_read=30s）
+        import aiohttp as _aiohttp
+        stream_timeout = _aiohttp.ClientTimeout(total=300, sock_read=30, sock_connect=10)
+        async with session.get(stream_url, timeout=stream_timeout) as resp:
             content_type = resp.headers.get('Content-Type', 'video/mp2t')
             response = web_response.StreamResponse(
                 status=resp.status,
@@ -1756,29 +1808,39 @@ async def handle_log_view(request):
 
 
 async def handle_log_download(request):
-    """下载完整日志文件"""
+    """下载完整日志文件（流式传输，避免大文件全量读入内存）"""
     try:
         log_path = _get_log_file_path()
         if not os.path.isfile(log_path):
             return _json_error('日志文件不存在', 404)
 
         file_size = os.path.getsize(log_path)
-        with open(log_path, 'rb') as f:
-            content = f.read()
 
         # 生成带时间戳的文件名
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         filename = f'app_{timestamp}.log'
 
-        return web.Response(
-            body=content,
-            content_type='application/octet-stream',
+        # 使用 StreamResponse 流式传输，避免大日志文件撑爆内存
+        response = web_response.StreamResponse(
+            status=200,
             headers={
+                'Content-Type': 'application/octet-stream',
                 'Content-Disposition': f'attachment; filename="{filename}"',
                 'Content-Length': str(file_size),
                 'Cache-Control': 'no-cache',
             }
         )
+        await response.prepare(request)
+
+        # 分块读取并写入响应
+        with open(log_path, 'rb') as f:
+            while True:
+                chunk = f.read(65536)  # 64KB chunks
+                if not chunk:
+                    break
+                await response.write(chunk)
+        await response.write_eof()
+        return response
     except Exception as e:
         logger.error(f"下载日志失败: {e}")
         return _json_error(f'下载日志失败: {e}', 500)

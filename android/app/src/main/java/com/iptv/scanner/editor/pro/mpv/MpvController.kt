@@ -910,18 +910,32 @@ var onFileError: (() -> Unit)? = null
     override fun setPropertyBoolean(name: String, value: Boolean) =
         postOnUiThread { MPVLib.setPropertyBoolean(name, value) }
 
-    /** 同步读取属性（在调用线程执行，注意 mpv 线程安全）。libmpv 未初始化时返回 null，避免 native 崩溃。 */
+    /**
+     * 同步读取属性（在调用线程执行，注意 mpv 线程安全）。libmpv 未初始化时返回 null，避免 native 崩溃。
+     *
+     * 注意：mpv-android 构建中部分属性（如 protocol、demuxer-bitrate、estimated-vfps）不存在，
+     * native 层会打印 "property not found" 错误日志。使用 try-catch 包裹以避免日志刷屏，
+     * 同时返回 null 让 UI 层优雅降级。
+     */
     override fun getPropertyString(name: String): String? =
-        if (mpvView != null) MPVLib.getPropertyString(name) else null
+        if (mpvView != null) {
+            try { MPVLib.getPropertyString(name) } catch (e: Throwable) { null }
+        } else null
 
     override fun getPropertyInt(name: String): Int? =
-        if (mpvView != null) MPVLib.getPropertyInt(name) else null
+        if (mpvView != null) {
+            try { MPVLib.getPropertyInt(name) } catch (e: Throwable) { null }
+        } else null
 
     override fun getPropertyDouble(name: String): Double? =
-        if (mpvView != null) MPVLib.getPropertyDouble(name) else null
+        if (mpvView != null) {
+            try { MPVLib.getPropertyDouble(name) } catch (e: Throwable) { null }
+        } else null
 
     override fun getPropertyBoolean(name: String): Boolean? =
-        if (mpvView != null) MPVLib.getPropertyBoolean(name) else null
+        if (mpvView != null) {
+            try { MPVLib.getPropertyBoolean(name) } catch (e: Throwable) { null }
+        } else null
 
     override fun command(args: Array<String>) = postOnUiThread { MPVLib.command(args) }
 
@@ -940,11 +954,11 @@ var onFileError: (() -> Unit)? = null
                 "videoCodec" to safeGet("video-format"),
                 "audioCodec" to safeGet("audio-codec-name"),
                 "videoRes" to "${_videoWidth.value}x${_videoHeight.value}",
-                "fps" to safeGet("estimated-vfps"),
+                "fps" to safeGet("container-fps"),
                 "displayFps" to safeGet("display-fps"),
                 "bitrate" to safeGet("video-bitrate"),
                 "audioBitrate" to safeGet("audio-bitrate"),
-                "cacheDuration" to safeGet("cache-duration"),
+                "cacheDuration" to safeGet("demuxer-cache-duration"),
                 "avdiff" to safeGet("total-avsync-change"),
                 "containerFormat" to safeGet("file-format"),
                 "hwdec" to safeGet("hwdec-current"),
@@ -1173,20 +1187,18 @@ var onFileError: (() -> Unit)? = null
         }
         if (currentVo == "mediacodec_embed" || currentVo.isEmpty()) return@Runnable
 
-        // 黑屏判断：两个指标综合判断
-        // 1. videoWidth==0：解码器完全没工作
-        // 2. videoWidth>0 但 estimated-vfps==0：解码器工作了但 VO 没有输出帧（GPU 渲染管线失败）
+        // 黑屏判断：仅以 videoWidth==0 为准
+        // 注意：不使用 estimated-vfps，因为 IPTV 直播流（通过 rt2phttpd HTTP 代理）的
+        // estimated-vfps 可能长时间为 0，即使视频正常渲染，会导致误判 fallback。
         val videoWidth = _videoWidth.value
         val estimatedVfps = try {
             MPVLib.getPropertyDouble("estimated-vfps") ?: 0.0
         } catch (_: Throwable) { 0.0 }
-        // VO: [gpu] 输出格式，检查是否实际在渲染
-        val voActive = estimatedVfps > 0.0
 
-        Log.d(TAG, "blackScreenCheck: vo=$currentVo, videoWidth=$videoWidth, vfps=$estimatedVfps, voActive=$voActive, attempt=${blackScreenRetryCount + 1}, fboDowngraded=$fboFormatDowngraded")
+        Log.d(TAG, "blackScreenCheck: vo=$currentVo, videoWidth=$videoWidth, vfps=$estimatedVfps, attempt=${blackScreenRetryCount + 1}, fboDowngraded=$fboFormatDowngraded")
 
-        // 黑屏条件：videoWidth==0（解码器没工作）或 vfps==0 但 videoWidth>0（VO 渲染失败）
-        val isBlackScreen = videoWidth == 0 || (videoWidth > 0 && !voActive)
+        // 黑屏条件：仅 videoWidth==0（解码器没工作）
+        val isBlackScreen = videoWidth == 0
 
         if (isBlackScreen) {
             blackScreenRetryCount++

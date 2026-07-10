@@ -31,11 +31,24 @@ class ChannelController:
 
     def _get_current_channels(self):
         """获取当前活跃的频道列表"""
-        if getattr(self.window, '_local_channels', None) and getattr(self.window, '_sub_channels', None):
-            playlist_tab = getattr(self.window, 'playlist_tab', None)
-            if playlist_tab and playlist_tab.currentIndex() == 1:
-                return self.window._local_channels
-            return self.window._sub_channels
+        playlist_tab = getattr(self.window, 'playlist_tab', None)
+        if playlist_tab:
+            # Tab 1 = 本地频道，Tab 0 = 订阅频道
+            if playlist_tab.currentIndex() == 1:
+                channels = getattr(self.window, '_local_channels', None)
+                if channels:
+                    return channels
+            else:
+                channels = getattr(self.window, '_sub_channels', None)
+                if channels:
+                    return channels
+        # fallback：任一列表有数据则返回
+        sub = getattr(self.window, '_sub_channels', None)
+        local = getattr(self.window, '_local_channels', None)
+        if sub:
+            return sub
+        if local:
+            return local
         return app_state.channels
 
     def _get_display_channel_name(self, channel: Dict[str, Any]) -> str:
@@ -55,6 +68,7 @@ class ChannelController:
             logo_url = channel.get('logo') or channel.get('logo_url')
             if not logo_url:
                 self.window.channel_logo.setText("")
+                self.window.channel_logo.setPixmap(None)
 
     def populate_channel_list_for(self, list_widget, channels, selected_group=''):
         w = self.window

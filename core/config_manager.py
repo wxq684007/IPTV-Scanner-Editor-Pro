@@ -730,6 +730,8 @@ class ConfigManager(Singleton):
             # demuxer 探测参数覆盖：0 表示使用自动值（按流类型自动选择）
             'probesize_override': 0,
             'analyzeduration_override': 0,
+            # 隔行扫描：'no' 默认不启用（与 mpv_player_service.py 默认值同步）
+            'deinterlace': 'no',
         }
         if settings:
             defaults.update(settings)
@@ -782,6 +784,8 @@ class ConfigManager(Singleton):
             # demuxer 探测参数覆盖：0 表示使用自动值（按流类型自动选择）
             'probesize_override': 0,
             'analyzeduration_override': 0,
+            # 隔行扫描：'no' 默认不启用（与 mpv_player_service.py 默认值同步）
+            'deinterlace': 'no',
         }
         result = {}
         need_save = False

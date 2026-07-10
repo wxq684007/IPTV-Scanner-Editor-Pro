@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 import threading
 import time
@@ -95,6 +94,8 @@ class IPTVServer:
         except Exception as e:
             logger.error(f"Server运行异常: {e}")
         finally:
+            # 确保 _running 标志在异常退出时也被重置，否则 stop() 会卡死
+            self._running = False
             try:
                 self._loop.close()
             except Exception:

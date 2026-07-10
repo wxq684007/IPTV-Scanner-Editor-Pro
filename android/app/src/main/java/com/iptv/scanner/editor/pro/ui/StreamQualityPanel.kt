@@ -251,8 +251,8 @@ private fun readStreamInfo(mpv: com.iptv.scanner.editor.pro.player.Player): Stre
     val dwidth = mpv.getPropertyInt("dwidth") ?: 0
     val dheight = mpv.getPropertyInt("dheight") ?: 0
 
-    // 帧率：container-fps 优先，回退 estimated-vf-fps（与 PC/Web 端一致）
-    val fps = gs("container-fps").ifEmpty { gd("estimated-vf-fps") }
+    // 帧率：container-fps 优先（mpv-android 不支持 estimated-vf-fps，桌面版才有）
+    val fps = gs("container-fps")
 
     // 视频码率：video-bitrate 优先，回退 video-params/bitrate
     val vBitrate = mpv.getPropertyInt("video-bitrate")?.let { formatBitrate(it) }
@@ -300,13 +300,15 @@ private fun readStreamInfo(mpv: com.iptv.scanner.editor.pro.player.Player): Stre
         audioDepth = gi("audio-params/bits-per-sample").ifEmpty { "N/A" } + " bit",
         // 网络
         container = gs("file-format").ifEmpty { "N/A" },
-        protocol = gs("protocol").ifEmpty { "N/A" },
+        // 注意：mpv-android 不支持 protocol 和 demuxer-bitrate 属性（桌面版才有）。
+        // protocol 从 file-format 推断，demuxer-bitrate 用 video-bitrate+audio-bitrate 替代。
+        protocol = gs("file-format").ifEmpty { "N/A" },
         demuxer = gs("demuxer").ifEmpty { "N/A" },
         cacheDuration = gd("demuxer-cache-duration").ifEmpty { gd("demuxer-cache-time") }.ifEmpty { "N/A" } + " s",
         cacheSize = cacheSize,
         cacheSpeed = cacheSpeed,
         buffering = gi("cache-buffering-state").let { if (it.isNotEmpty() && it != "0") "$it%" else "无缓冲" },
-        demuxerBitrate = formatBitrate(mpv.getPropertyInt("demuxer-bitrate") ?: 0),
+        demuxerBitrate = "N/A",
         // 丢帧
         voDropCount = gi("vo-drop-frame-count").ifEmpty { gi("frame-drop-count") }.ifEmpty { "0" },
         decoderDropCount = gi("decoder-drop-frame-count").ifEmpty { gi("decoder-frame-drop-count") }.ifEmpty { "0" },

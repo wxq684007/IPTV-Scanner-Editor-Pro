@@ -279,7 +279,8 @@ class StandaloneScanner:
                 self._scan_results = scan_results
             if found_channels and not self._stop_event.is_set():
                 # 追加到现有频道列表（不覆盖订阅源加载的频道）
-                self._ctx._channels = self._ctx._channels + found_channels
+                with self._ctx._channels_lock:
+                    self._ctx._channels = self._ctx._channels + found_channels
                 # 持久化到 channels_cache.json：进程重启后扫描频道不丢失
                 self._ctx._save_channels_to_cache()
                 self._ctx._last_load_time = time.time()
@@ -372,7 +373,8 @@ class StandaloneScanner:
 
             # 更新 context 的频道列表
             if all_channels and not self._stop_event.is_set():
-                self._ctx._channels = all_channels
+                with self._ctx._channels_lock:
+                    self._ctx._channels = all_channels
                 self._ctx._last_load_time = time.time()
                 self.last_message = f'完成：共 {len(all_channels)} 个频道'
                 logger.info(f"独立模式扫描完成，加载了 {len(all_channels)} 个频道")
@@ -452,7 +454,10 @@ class ServerContext:
             logger.warning(f"加载频道缓存失败: {e}")
 
     def _save_channels_to_cache(self):
-        """将频道列表保存到本地缓存文件（供下次进程重启时快速恢复）"""
+        """将频道列表保存到本地缓存文件（供下次进程重启时快速恢复）
+
+        使用原子写入模式（临时文件 + rename），避免写入过程中崩溃导致缓存损坏。
+        """
         if not self._config:
             return
         try:
@@ -460,8 +465,12 @@ class ServerContext:
             with self._channels_lock:
                 channels_snapshot = list(self._channels)
             data = {'channels': channels_snapshot, 'saved_at': time.time()}
-            with open(cache_path, 'w', encoding='utf-8') as f:
+            # 原子写入：先写临时文件，再 rename 覆盖目标文件
+            tmp_path = cache_path + '.tmp'
+            with open(tmp_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False)
+            # os.replace 在所有平台上都是原子操作
+            os.replace(tmp_path, cache_path)
         except Exception as e:
             logger.warning(f"保存频道缓存失败: {e}")
 
@@ -470,7 +479,8 @@ class ServerContext:
             return
         try:
             sources = self._config.load_playlist_sources()
-            self._sources = sources
+            with self._sources_lock:
+                self._sources = sources
             all_channels = []
             for source in sources:
                 if not source.get('enabled', True):
@@ -672,19 +682,21 @@ class ServerContext:
     def get_all_channels(self) -> List[Dict]:
         if self._main_window:
             channels = []
-            sub = getattr(self._main_window, '_sub_channels', [])
-            local = getattr(self._main_window, '_local_channels', [])
-            seen = set()
-            for ch in sub:
-                url = ch.get('url', '')
-                if url and url not in seen:
-                    channels.append(ch)
-                    seen.add(url)
-            for ch in local:
-                url = ch.get('url', '')
-                if url and url not in seen:
-                    channels.append(ch)
-                    seen.add(url)
+            # 使用 _channels_lock 保护读取，避免订阅加载线程并发修改
+            with self._channels_lock:
+                sub = getattr(self._main_window, '_sub_channels', [])
+                local = getattr(self._main_window, '_local_channels', [])
+                seen = set()
+                for ch in sub:
+                    url = ch.get('url', '')
+                    if url and url not in seen:
+                        channels.append(ch)
+                        seen.add(url)
+                for ch in local:
+                    url = ch.get('url', '')
+                    if url and url not in seen:
+                        channels.append(ch)
+                        seen.add(url)
             if not channels:
                 model = getattr(self._main_window, 'channel_model', None)
                 if model:
@@ -696,6 +708,55 @@ class ServerContext:
         self.reload_if_needed()
         with self._channels_lock:
             return list(self._channels)
+
+    def update_channel(self, idx: int, data: dict) -> bool:
+        """线程安全地更新指定索引的频道
+
+        Returns: True 如果更新成功，False 如果索引越界
+        """
+        with self._channels_lock:
+            if 0 <= idx < len(self._channels):
+                self._channels[idx].update(data)
+                return True
+            return False
+
+    def delete_channel(self, idx: int) -> bool:
+        """线程安全地删除指定索引的频道
+
+        Returns: True 如果删除成功，False 如果索引越界
+        """
+        with self._channels_lock:
+            if 0 <= idx < len(self._channels):
+                self._channels.pop(idx)
+                return True
+            return False
+
+    def add_channel(self, data: dict) -> int:
+        """线程安全地添加频道
+
+        Returns: 新频道的索引
+        """
+        with self._channels_lock:
+            data['id'] = len(self._channels) + 1
+            self._channels.append(data)
+            return len(self._channels) - 1
+
+    def import_channels(self, channels: List[Dict]) -> int:
+        """线程安全地批量导入频道
+
+        Returns: 导入的频道数量
+        """
+        with self._channels_lock:
+            base_id = len(self._channels)
+            for i, c in enumerate(channels):
+                c.setdefault('id', base_id + i + 1)
+            self._channels.extend(channels)
+            return len(channels)
+
+    def get_channel_count(self) -> int:
+        """线程安全地获取频道数量"""
+        with self._channels_lock:
+            return len(self._channels)
 
     def get_channel_model(self):
         if self._main_window and hasattr(self._main_window, 'channel_model'):
