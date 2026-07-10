@@ -353,8 +353,8 @@ jobs:
             echo '                j+=1' >> /tmp/fix_tp.py
             echo '            return c[:i]+d+c[j:],True' >> /tmp/fix_tp.py
             echo '        p=i+1' >> /tmp/fix_tp.py
-            echo 'content,ok1=rf(content,"cavs_threadpool_run","cavs_threadpool_run(cavs_threadpool_t* pool, void* (*func)(void*), void* arg)\\n{\\n    func(arg);\\n}\\n")' >> /tmp/fix_tp.py
-            echo 'content,ok2=rf(content,"cavs_threadpool_wait","cavs_threadpool_wait(cavs_threadpool_t* pool, void* arg)\\n{\\n    return NULL;\\n}\\n")' >> /tmp/fix_tp.py
+            echo 'content,ok1=rf(content,"cavs_threadpool_run","cavs_threadpool_run(cavs_threadpool_t* pool, void* (*func)(void*), void* arg)\n{\n    func(arg);\n}\n")' >> /tmp/fix_tp.py
+            echo 'content,ok2=rf(content,"cavs_threadpool_wait","cavs_threadpool_wait(cavs_threadpool_t* pool, void* arg)\n{\n    return NULL;\n}\n")' >> /tmp/fix_tp.py
             echo 'with open("libavcodec/libcavs.c","w") as f: f.write(content)' >> /tmp/fix_tp.py
             echo 'print("Patched: run="+str(ok1)+", wait="+str(ok2))' >> /tmp/fix_tp.py
             python3 /tmp/fix_tp.py
