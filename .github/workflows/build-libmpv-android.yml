@@ -393,25 +393,42 @@ jobs:
           fi
 
           # 修复4：在 cavs_decode_one_frame 中添加 p->Frame NULL 检查。
-          # 使用 Python 脚本可靠地找到函数并在其 body 开头插入 NULL 检查。
-          # sed 方法失败因为 if (!param->seq_header_flag) 模式可能不匹配实际源码。
+          # 使用 Python 脚本可靠地找到函数定义并在 p 变量声明后插入 NULL 检查。
           cat > /tmp/fix_frame_null.py << 'PYEOF'
           with open('libavcodec/libcavs.c','r') as f:
-              content = f.read()
-          marker = 'cavs_decode_one_frame'
-          idx = content.find(marker)
-          if idx == -1:
-              print('ERROR: cavs_decode_one_frame not found in libcavs.c')
+              lines = f.readlines()
+          # 查找 cavs_decode_one_frame 函数定义行（不是声明，不是注释）
+          # 定义行格式: int cavs_decode_one_frame( void *p_decoder, ... )
+          func_line = -1
+          for i, line in enumerate(lines):
+              if 'cavs_decode_one_frame' in line and 'int ' in line and not line.strip().startswith('//') and not line.strip().startswith('*'):
+                  # 检查是否是函数定义（后面有 { ）
+                  for j in range(i, min(i+10, len(lines))):
+                      if '{' in lines[j]:
+                          func_line = j
+                          break
+                      if ';' in lines[j]:
+                          break  # 这是声明，不是定义
+                  if func_line != -1:
+                      break
+          if func_line == -1:
+              print('ERROR: cavs_decode_one_frame definition not found')
               exit(1)
-          brace_idx = content.find('{', idx)
-          if brace_idx == -1:
-              print('ERROR: could not find opening brace for cavs_decode_one_frame')
-              exit(1)
-          null_check = '\n    if(!p->Frame) {\n        p->Frame = (frame_pack*)cavs_malloc(sizeof(frame_pack));\n        memset(p->Frame, 0, sizeof(frame_pack));\n        p->Frame->p_start = (uint8_t*)cavs_malloc(MAX_CODED_FRAME_SIZE * sizeof(uint8_t));\n        memset(p->Frame->p_start, 0, MAX_CODED_FRAME_SIZE);\n    }\n'
-          content = content[:brace_idx+1] + null_check + content[brace_idx+1:]
+          # 找到 p 变量声明行: cavs_decoder *p = (cavs_decoder *)p_decoder;
+          insert_after = -1
+          for i in range(func_line, min(func_line+20, len(lines))):
+              if 'cavs_decoder *p' in lines[i] or 'cavs_decoder* p' in lines[i]:
+                  insert_after = i
+                  break
+          if insert_after == -1:
+              # 如果找不到 p 声明，就在 { 后面插入
+              insert_after = func_line
+              print('WARNING: p variable declaration not found, inserting after {')
+          null_check = '    if(!p->Frame) {\n        p->Frame = (frame_pack*)cavs_malloc(sizeof(frame_pack));\n        memset(p->Frame, 0, sizeof(frame_pack));\n        p->Frame->p_start = (uint8_t*)cavs_malloc(MAX_CODED_FRAME_SIZE * sizeof(uint8_t));\n        memset(p->Frame->p_start, 0, MAX_CODED_FRAME_SIZE);\n    }\n'
+          lines.insert(insert_after + 1, null_check)
           with open('libavcodec/libcavs.c','w') as f:
-              f.write(content)
-          print('SUCCESS: p->Frame NULL check inserted into cavs_decode_one_frame')
+              f.writelines(lines)
+          print('SUCCESS: p->Frame NULL check inserted at line ' + str(insert_after + 2))
           PYEOF
           python3 /tmp/fix_frame_null.py
           echo "=== Verify: p->Frame NULL check ==="
