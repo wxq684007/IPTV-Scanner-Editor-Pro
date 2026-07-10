@@ -434,6 +434,47 @@ jobs:
           echo "=== Verify: p->Frame NULL check ==="
           grep -n 'if(!p->Frame)' libavcodec/libcavs.c | head -5
 
+          # 修复5：在 cavs_topfield_pack / cavs_botfield_pack 函数入口添加 field NULL 检查。
+          # 崩溃堆栈: cavs_topfield_pack+32 ← cavs_get_slice ← cavs_decode_one_frame
+          # cavs_get_slice 传了 NULL field 给 cavs_topfield_pack，导致访问 field->slice[0] 崩溃。
+          # 直接在函数入口 return 0 避免崩溃。
+          cat > /tmp/fix_pack_null.py << 'PYEOF'
+          with open('libavcodec/libcavs.c','r') as f:
+              lines = f.readlines()
+
+          def add_null_check(func_name, param_name):
+              """在函数定义的 { 行后插入 NULL 检查"""
+              func_line = -1
+              for i, line in enumerate(lines):
+                  if func_name in line and not line.strip().startswith('//') and not line.strip().startswith('*'):
+                      for j in range(i, min(i+10, len(lines))):
+                          if '{' in lines[j]:
+                              func_line = j
+                              break
+                          if ';' in lines[j]:
+                              break
+                      if func_line != -1:
+                          break
+              if func_line == -1:
+                  print(f'WARNING: {func_name} definition not found')
+                  return False
+              null_check = f'    if(!{param_name}) return 0;\n'
+              lines.insert(func_line + 1, null_check)
+              print(f'SUCCESS: {param_name} NULL check inserted into {func_name} at line {func_line + 2}')
+              return True
+
+          add_null_check('cavs_topfield_pack', 'field')
+          add_null_check('cavs_botfield_pack', 'field')
+          add_null_check('cavs_frame_pack', 'frame')
+          add_null_check('cavs_field_pack', 'field')
+
+          with open('libavcodec/libcavs.c','w') as f:
+              f.writelines(lines)
+          PYEOF
+          python3 /tmp/fix_pack_null.py
+          echo "=== Verify: pack function NULL checks ==="
+          grep -n 'if(!field) return 0;\|if(!frame) return 0;' libavcodec/libcavs.c | head -10
+
           # 验证 patch 应用结果
           echo "=== Verify CAVS files exist ==="
           ls -la libavcodec/libcavs* libavcodec/libcavsdec* libavcodec/dradec* 2>/dev/null || \
