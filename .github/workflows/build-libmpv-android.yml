@@ -338,7 +338,7 @@ jobs:
           # 修复 ARM64 threadpool 崩溃：将 cavs_threadpool_run 改为同步执行，
           # cavs_threadpool_wait 改为空操作，避免线程切换导致的竞态条件。
           if grep -q 'cavs_threadpool_run' libavcodec/libcavs.c; then
-            printf 'import re\nwith open("libavcodec/libcavs.c","r") as f: c=f.read()\nc=re.sub(r"void cavs_threadpool_run\\([^)]*\\)\\s*\\{[^}]*\\}", "void cavs_threadpool_run(cavs_threadpool_t* pool, void* (*func)(void*), void* arg)\\n{\\n    func(arg);\\n}", c)\nc=re.sub(r"void\\* cavs_threadpool_wait\\([^)]*\\)\\s*\\{[^}]*\\}", "void* cavs_threadpool_wait(cavs_threadpool_t* pool, void* arg)\\n{\\n    return NULL;\\n}", c)\nwith open("libavcodec/libcavs.c","w") as f: f.write(c)\nprint("Patched threadpool")\n' > /tmp/fix_tp.py
+            printf 'import re\nwith open("libavcodec/libcavs.c","r") as f: c=f.read()\nc=re.sub(r"void\\s+cavs_threadpool_run\\b[^{]*\\{[^}]*\\}", "void cavs_threadpool_run(cavs_threadpool_t* pool, void* (*func)(void*), void* arg)\\n{\\n    func(arg);\\n}", c)\nc=re.sub(r"void\\s*\\*\\s*cavs_threadpool_wait\\b[^{]*\\{[^}]*\\}", "void* cavs_threadpool_wait(cavs_threadpool_t* pool, void* arg)\\n{\\n    return NULL;\\n}", c)\nwith open("libavcodec/libcavs.c","w") as f: f.write(c)\nprint("Patched threadpool")\n' > /tmp/fix_tp.py
             python3 /tmp/fix_tp.py
             echo "=== Patched: cavs_threadpool_run -> synchronous ==="
             grep -n 'cavs_threadpool_run' libavcodec/libcavs.c | head -5
