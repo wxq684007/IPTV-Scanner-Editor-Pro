@@ -1438,6 +1438,25 @@ private var _channelInputJob: kotlinx.coroutines.Job? = null
     }
 
     // -----------------------------------------------------------------
+    // 分屏模式（手机端：视频+频道列表并排显示）
+    // -----------------------------------------------------------------
+
+    /** 分屏模式开关（仅 PHONE 模式生效） */
+    private val _splitMode = MutableStateFlow(userPrefs.getSplitMode())
+    val splitMode: StateFlow<Boolean> = _splitMode.asStateFlow()
+
+    /** 切换分屏模式 */
+    fun toggleSplitMode() {
+        _splitMode.value = !_splitMode.value
+        userPrefs.setSplitMode(_splitMode.value)
+        if (_splitMode.value) {
+            // 开启分屏时关闭频道抽屉（分屏模式下频道列表始终可见）
+            _channelsPanelOpen.value = false
+        }
+        showControlsAutoHide()
+    }
+
+    // -----------------------------------------------------------------
     // 二级分组模式（与酷9 GROUP_PARS_SET_SELECT 对齐）
     // -----------------------------------------------------------------
 

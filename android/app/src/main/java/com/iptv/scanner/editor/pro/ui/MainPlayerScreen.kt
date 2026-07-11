@@ -1,6 +1,7 @@
 package com.iptv.scanner.editor.pro.ui
 
 import android.content.Context
+import android.content.res.Configuration
 import android.util.Log
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -27,6 +28,8 @@ import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material.icons.filled.ViewAgenda
+import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -41,6 +44,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -106,6 +110,7 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
     val updateDialogOpen by viewModel.updateDialogOpen.collectAsState()
     val triggeredReminder by viewModel.triggeredReminder.collectAsState()
     val osd by viewModel.osd.collectAsState()
+    val splitMode by viewModel.splitMode.collectAsState()
 
     val player = viewModel.mpv  // 当前 Player 实例（类型为 Player 接口）
     val paused by player.paused.collectAsState()
@@ -162,6 +167,18 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
             exitConfirmOpen || openUrlDialogOpen || updateDialogOpen
     // 控制层是否应该显示
     val showControls = controlsVisible && !anyPanelOpen
+
+    // 分屏模式：仅 PHONE 模式 + 非多画面 + 无全屏覆盖面板时生效
+    val anyFullScreenPanel = menuPanelOpen || sourceManagerOpen || playerSettingsOpen ||
+            videoSettingsOpen || audioSettingsOpen || subtitleSettingsOpen || subtitleSearchOpen ||
+            playbackPanelOpen || screenshotPanelOpen || viewSettingsOpen || aboutPanelOpen ||
+            mappingPanelOpen || avSyncPanelOpen || networkPanelOpen || toolsPanelOpen || scanPanelOpen ||
+            reminderPanelOpen || resumePanelOpen || bookmarkPanelOpen ||
+            epgTimelineOpen || searchPanelOpen || streamQualityPanelOpen ||
+            exitConfirmOpen || openUrlDialogOpen || updateDialogOpen
+    val splitActive = splitMode && uiMode.isPhone && !multiViewState.active && !anyFullScreenPanel
+    val configuration = LocalConfiguration.current
+    val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
 
     Box(
         modifier = Modifier
@@ -236,116 +253,192 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
                 }
             }
 
-            if (multiViewState.active) {
-                // 多画面模式：MultiViewOverlay 渲染网格，主画面用 primaryPlayer 填满 cell
-                MultiViewOverlay(
-                    state = multiViewState,
-                    primaryContent = { primaryPlayer() },
-                    getSubPlayer = { idx -> viewModel.getSubPlayer(idx) },
-                    onViewportClick = { idx ->
-                        viewModel.setFocusedViewport(idx)
-                        // 点击空画面时自动打开频道列表，方便快速添加频道
-                        val viewport = multiViewState.viewports.getOrNull(idx)
-                        if (viewport != null && viewport.isEmpty) {
-                            viewModel.showChannelsPanel()
+            // -----------------------------------------------------------------
+            // 分屏模式 vs 全屏模式
+            //
+            // 分屏模式（仅 PHONE + 非多画面 + 无全屏面板）：
+            //   竖屏：上视频(45%) + 下频道列表(55%)
+            //   横屏：左视频(58%) + 右频道列表(42%)
+            // 全屏模式：原始布局（视频全屏 + 抽屉式面板）
+            // -----------------------------------------------------------------
+            if (splitActive) {
+                // ---- 分屏模式 ----
+                if (isPortrait) {
+                    // 竖屏：上下分屏
+                    Column(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
+                        // 视频区域 (45%)
+                        SplitVideoArea(
+                            primaryPlayer = primaryPlayer,
+                            aspectRatio = aspectRatio,
+                            showControls = showControls,
+                            anyPanelOpen = anyPanelOpen,
+                            channelName = currentChannel?.name ?: "未选择频道",
+                            paused = paused,
+                            viewModel = viewModel,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(0.45f)
+                        )
+                        // 分隔线
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(1.dp)
+                                .background(Color(0xFF2A2A2A))
+                        )
+                        // 频道列表区域 (55%)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(0.55f)
+                        ) {
+                            ChannelsPanel(viewModel = viewModel, inline = true)
                         }
-                    },
-                    onViewportClose = { idx -> viewModel.removeFromMultiView(idx) },
-                    onToggleMute = { idx -> viewModel.toggleMultiViewMute(idx) }
-                )
+                    }
+                } else {
+                    // 横屏：左右分屏
+                    Row(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
+                        // 视频区域 (58%)
+                        SplitVideoArea(
+                            primaryPlayer = primaryPlayer,
+                            aspectRatio = aspectRatio,
+                            showControls = showControls,
+                            anyPanelOpen = anyPanelOpen,
+                            channelName = currentChannel?.name ?: "未选择频道",
+                            paused = paused,
+                            viewModel = viewModel,
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .weight(0.58f)
+                        )
+                        // 分隔线
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .width(1.dp)
+                                .background(Color(0xFF2A2A2A))
+                        )
+                        // 频道列表区域 (42%)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .weight(0.42f)
+                        ) {
+                            ChannelsPanel(viewModel = viewModel, inline = true)
+                        }
+                    }
+                }
+                // EPG 节目单（分屏模式下仍作为全屏覆盖抽屉）
+                if (epgPanelOpen) {
+                    Row(modifier = Modifier.fillMaxSize()) {
+                        EpgPanel(viewModel = viewModel)
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .background(Color(0x88000000))
+                                .clickable { viewModel.toggleEpgPanel() }
+                        )
+                    }
+                }
             } else {
-                // 单画面模式：Box + aspectRatio 控制主画面大小和位置（居中保持比例）
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .aspectRatio(aspectRatio)
-                ) {
-                    primaryPlayer()
-                }
-            }
-
-        // -----------------------------------------------------------------
-        // 2. 透明点击层（点击切换控制层显示/隐藏）
-        // -----------------------------------------------------------------
-        // 仅当无面板打开时启用点击切换（面板打开时点击由面板自身处理）
-        if (!anyPanelOpen) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clickable { viewModel.toggleControls() }
-            )
-        }
-
-        // -----------------------------------------------------------------
-        // 3. 控制层（顶部侧边栏按钮 + 底部 ControlPanel）
-        // -----------------------------------------------------------------
-        AnimatedVisibility(
-            visible = showControls,
-            enter = fadeIn(),
-            exit = fadeOut()
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color(0x66000000))
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxSize().systemBarsPadding(),
-                    verticalArrangement = Arrangement.SpaceBetween
-                ) {
-                    // ----------------- 顶部：频道名 + 面板入口按钮 -----------------
-                    TopBar(
-                        channelName = currentChannel?.name ?: "未选择频道",
-                        mode = if (uiMode.isTV) "TV" else "PHONE",
-                        paused = paused,
-                        isTV = uiMode.isTV,
-                        onChannelsClick = { viewModel.showChannelsPanel() },
-                        onEpgClick = { viewModel.showEpgPanel() },
-                        onMenuClick = { viewModel.showMenuPanel() }
+                // ---- 全屏模式（原始布局）----
+                if (multiViewState.active) {
+                    // 多画面模式：MultiViewOverlay 渲染网格，主画面用 primaryPlayer 填满 cell
+                    MultiViewOverlay(
+                        state = multiViewState,
+                        primaryContent = { primaryPlayer() },
+                        getSubPlayer = { idx -> viewModel.getSubPlayer(idx) },
+                        onViewportClick = { idx ->
+                            viewModel.setFocusedViewport(idx)
+                            // 点击空画面时自动打开频道列表，方便快速添加频道
+                            val viewport = multiViewState.viewports.getOrNull(idx)
+                            if (viewport != null && viewport.isEmpty) {
+                                viewModel.showChannelsPanel()
+                            }
+                        },
+                        onViewportClose = { idx -> viewModel.removeFromMultiView(idx) },
+                        onToggleMute = { idx -> viewModel.toggleMultiViewMute(idx) }
                     )
+                } else {
+                    // 单画面模式：Box + aspectRatio 控制主画面大小和位置（居中保持比例）
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .aspectRatio(aspectRatio)
+                    ) {
+                        primaryPlayer()
+                    }
+                }
 
-                    // ----------------- 中间空白（让视频可见）-----------------
+                // 透明点击层（点击切换控制层显示/隐藏）
+                if (!anyPanelOpen) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clickable { viewModel.toggleControls() }
+                    )
+                }
 
-                    // ----------------- 底部：ControlPanel（3 行布局） -----------------
-                    ControlPanel(viewModel = viewModel)
+                // 控制层（顶部侧边栏按钮 + 底部 ControlPanel）
+                AnimatedVisibility(
+                    visible = showControls,
+                    enter = fadeIn(),
+                    exit = fadeOut()
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color(0x66000000))
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxSize().systemBarsPadding(),
+                            verticalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            TopBar(
+                                channelName = currentChannel?.name ?: "未选择频道",
+                                mode = if (uiMode.isTV) "TV" else "PHONE",
+                                paused = paused,
+                                isTV = uiMode.isTV,
+                                splitMode = splitMode,
+                                onChannelsClick = { viewModel.showChannelsPanel() },
+                                onEpgClick = { viewModel.showEpgPanel() },
+                                onMenuClick = { viewModel.showMenuPanel() },
+                                onSplitToggle = if (uiMode.isPhone) ({ viewModel.toggleSplitMode() }) else null
+                            )
+                            ControlPanel(viewModel = viewModel)
+                        }
+                    }
+                }
+
+                // 频道列表（右侧抽屉）
+                if (channelsPanelOpen) {
+                    Row(modifier = Modifier.fillMaxSize()) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .background(Color(0x88000000))
+                                .clickable { viewModel.toggleChannelsPanel() }
+                        )
+                        ChannelsPanel(viewModel = viewModel)
+                    }
+                }
+
+                // EPG 节目单（左侧抽屉）
+                if (epgPanelOpen) {
+                    Row(modifier = Modifier.fillMaxSize()) {
+                        EpgPanel(viewModel = viewModel)
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .background(Color(0x88000000))
+                                .clickable { viewModel.toggleEpgPanel() }
+                        )
+                    }
                 }
             }
-        }
-
-        // -----------------------------------------------------------------
-        // 4. 面板层
-        // -----------------------------------------------------------------
-        // 频道列表（右侧抽屉）
-        if (channelsPanelOpen) {
-            Row(modifier = Modifier.fillMaxSize()) {
-                // 左侧空白可点击关闭
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .background(Color(0x88000000))
-                        .clickable { viewModel.toggleChannelsPanel() }
-                )
-                // 右侧面板
-                ChannelsPanel(viewModel = viewModel)
-            }
-        }
-
-        // EPG 节目单（左侧抽屉）
-        if (epgPanelOpen) {
-            Row(modifier = Modifier.fillMaxSize()) {
-                // 左侧面板
-                EpgPanel(viewModel = viewModel)
-                // 右侧空白可点击关闭
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .background(Color(0x88000000))
-                        .clickable { viewModel.toggleEpgPanel() }
-                )
-            }
-        }
 
         // 主菜单（全屏覆盖）— 仅 PHONE 模式使用
         if (menuPanelOpen && !uiMode.isTV) {
@@ -513,9 +606,11 @@ private fun TopBar(
     mode: String,
     paused: Boolean,
     isTV: Boolean,
+    splitMode: Boolean = false,
     onChannelsClick: () -> Unit,
     onEpgClick: () -> Unit,
-    onMenuClick: () -> Unit
+    onMenuClick: () -> Unit,
+    onSplitToggle: (() -> Unit)? = null
 ) {
     Surface(
         color = Color(0xCC000000),
@@ -553,6 +648,16 @@ private fun TopBar(
             // 右侧：面板入口按钮（TV 模式下隐藏，由 MENU 键和方向键替代）
             if (!isTV) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    // 分屏切换按钮（仅 PHONE 模式显示）
+                    if (onSplitToggle != null) {
+                        IconButton(onClick = onSplitToggle) {
+                            Icon(
+                                if (splitMode) Icons.Default.Fullscreen else Icons.Default.ViewAgenda,
+                                contentDescription = if (splitMode) "退出分屏" else "分屏模式",
+                                tint = if (splitMode) Color(0xFF4A9EFF) else Color.White
+                            )
+                        }
+                    }
                     IconButton(onClick = onChannelsClick) {
                         Icon(
                             Icons.Default.VideoLibrary,
@@ -582,6 +687,74 @@ private fun TopBar(
                 style = MaterialTheme.typography.labelSmall,
                 color = Color(0xFF888888)
             )
+        }
+    }
+}
+
+// -----------------------------------------------------------------
+// 分屏模式视频区域（独立 composable，避免 ColumnScope/RowScope 与 AnimatedVisibility 冲突）
+// -----------------------------------------------------------------
+
+@Composable
+private fun SplitVideoArea(
+    primaryPlayer: @Composable () -> Unit,
+    aspectRatio: Float,
+    showControls: Boolean,
+    anyPanelOpen: Boolean,
+    channelName: String,
+    paused: Boolean,
+    viewModel: AppViewModel,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .background(Color.Black)
+    ) {
+        // 播放器（居中保持比例）
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .aspectRatio(aspectRatio)
+        ) {
+            primaryPlayer()
+        }
+        // 点击层
+        if (!anyPanelOpen) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable { viewModel.toggleControls() }
+            )
+        }
+        // 控制层
+        AnimatedVisibility(
+            visible = showControls,
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0x66000000))
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.SpaceBetween
+                ) {
+                    TopBar(
+                        channelName = channelName,
+                        mode = "PHONE",
+                        paused = paused,
+                        isTV = false,
+                        splitMode = true,
+                        onChannelsClick = { viewModel.showChannelsPanel() },
+                        onEpgClick = { viewModel.showEpgPanel() },
+                        onMenuClick = { viewModel.showMenuPanel() },
+                        onSplitToggle = { viewModel.toggleSplitMode() }
+                    )
+                    ControlPanel(viewModel = viewModel)
+                }
+            }
         }
     }
 }

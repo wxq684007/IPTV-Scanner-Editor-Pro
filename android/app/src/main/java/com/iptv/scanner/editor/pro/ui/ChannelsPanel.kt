@@ -67,7 +67,7 @@ import com.iptv.scanner.editor.pro.ui.theme.tvTextField
  * TV 模式也可从统一面板菜单进入此面板（DPAD 焦点导航）。
  */
 @Composable
-fun ChannelsPanel(viewModel: AppViewModel) {
+fun ChannelsPanel(viewModel: AppViewModel, inline: Boolean = false) {
     val tab by viewModel.channelsTab.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
     val selectedGroup by viewModel.selectedGroup.collectAsState()
@@ -105,23 +105,54 @@ fun ChannelsPanel(viewModel: AppViewModel) {
         viewModel.getFilteredChannels()
     }
 
-    Surface(
-        color = Color(0xF0161616),
-        modifier = Modifier
+    val surfaceModifier = if (inline) {
+        // 内联模式：填满父容器，无宽度限制
+        Modifier.fillMaxSize()
+    } else {
+        // 抽屉模式：右侧 92% 宽，最大 380dp
+        Modifier
             .fillMaxHeight()
             .fillMaxWidth(0.92f)
             .widthIn(max = 380.dp)
+    }
+
+    Surface(
+        color = Color(0xF0161616),
+        modifier = surfaceModifier
     ) {
-        Column(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
+        Column(modifier = Modifier.fillMaxSize().then(if (inline) Modifier else Modifier.systemBarsPadding())) {
             // -----------------------------------------------------------------
-            // 标题栏
+            // 标题栏（内联模式不显示关闭按钮）
             // -----------------------------------------------------------------
-            PanelHeader(
-                title = "频道列表",
-                subtitle = "${channels.size} 个频道",
-                onClose = { viewModel.toggleChannelsPanel() },
-                closeFocusRequester = closeFocusRequester
-            )
+            if (inline) {
+                // 内联模式：简洁标题栏（无关闭按钮）
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "频道列表",
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "${channels.size} 个频道",
+                        color = Color(0xFF888888),
+                        fontSize = 12.sp
+                    )
+                }
+            } else {
+                PanelHeader(
+                    title = "频道列表",
+                    subtitle = "${channels.size} 个频道",
+                    onClose = { viewModel.toggleChannelsPanel() },
+                    closeFocusRequester = closeFocusRequester
+                )
+            }
 
             // -----------------------------------------------------------------
             // 5 个 Tab

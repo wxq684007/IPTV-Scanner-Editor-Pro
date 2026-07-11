@@ -365,6 +365,17 @@ fun getTimeoutSwitchSource(): Int = prefs.getInt(KEY_TIMEOUT_SWITCH_SOURCE, DEFA
     }
 
     // -----------------------------------------------------------------
+    // 分屏模式（手机端：视频+频道列表并排显示）
+    // -----------------------------------------------------------------
+
+    /** 是否开启分屏模式（手机端视频与频道列表并排），默认 false */
+    fun getSplitMode(): Boolean = prefs.getBoolean(KEY_SPLIT_MODE, false)
+
+    fun setSplitMode(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_SPLIT_MODE, enabled).apply()
+    }
+
+    // -----------------------------------------------------------------
     // 倍速双步进控制（与酷9 Speed_value 对齐）
     //
     // 格式: min,max,slowStep,fastStep,fastStep2,fastStep2Threshold
@@ -956,6 +967,9 @@ fun getTimeoutSwitchSource(): Int = prefs.getInt(KEY_TIMEOUT_SWITCH_SOURCE, DEFA
 
         // 画面锁定（换源不黑屏）
         private const val KEY_SCREEN_LOCK = "screen_lock"
+
+        // 分屏模式（手机端：视频+频道列表并排显示）
+        private const val KEY_SPLIT_MODE = "split_mode"
 
         // 倍速双步进参数
         private const val KEY_SPEED_PARAMS = "speed_params"
