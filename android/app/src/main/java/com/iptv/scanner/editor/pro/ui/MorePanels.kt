@@ -28,12 +28,17 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardType
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Analytics
@@ -49,6 +54,15 @@ import androidx.compose.material.icons.filled.SyncAlt
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
@@ -3371,4 +3385,537 @@ private fun BookmarkRow(
             )
         }
     }
+}
+
+// =================================================================
+// 新增功能面板
+// =================================================================
+
+/**
+ * 最近打开文件面板（与 PC 端 recent_menu 对齐）。
+ * 显示最近打开的播放列表文件、网络流 URL、本地视频文件。
+ */
+@Composable
+fun RecentFilesPanel(viewModel: AppViewModel) {
+    val recentFiles by viewModel.recentFiles.collectAsState()
+
+    PanelScaffold(
+        title = "最近打开",
+        onClose = { viewModel.toggleRecentPanel() }
+    ) {
+        if (recentFiles.isEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("暂无最近打开记录", color = Color(0xFF888888), fontSize = 14.sp)
+            }
+            return@PanelScaffold
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            // 清空按钮
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                OutlinedButton(
+                    onClick = { viewModel.clearRecentFiles() },
+                    modifier = Modifier.tvFocusBorder()
+                ) {
+                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("清空", color = Color(0xFFE57373), fontSize = 12.sp)
+                }
+            }
+            // 最近打开列表
+            recentFiles.forEach { entry ->
+                val typeIcon = when (entry.type) {
+                    "playlist" -> Icons.Default.VideoLibrary
+                    "url" -> Icons.Default.Link
+                    else -> Icons.Default.PlayCircle
+                }
+                val typeLabel = when (entry.type) {
+                    "playlist" -> "播放列表"
+                    "url" -> "网络流"
+                    else -> "视频"
+                }
+                Surface(
+                    color = Color(0xFF1E2A45),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { viewModel.playRecent(entry) }
+                        .tvFocusBorder()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            typeIcon,
+                            contentDescription = typeLabel,
+                            tint = Color(0xFF4A9EFF),
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = entry.name,
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = "$typeLabel · ${entry.uri.take(60)}",
+                                color = Color(0xFF888888),
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        IconButton(
+                            onClick = { viewModel.removeRecentFile(entry.uri) },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "移除",
+                                tint = Color(0xFFE57373),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 切片导出面板（与 PC 端 ClipExportDialog 对齐）。
+ * 支持视频片段裁剪（MP4/GIF/MP3）。
+ */
+@Composable
+fun ClipExportPanel(viewModel: AppViewModel) {
+    val mpv = viewModel.mpv
+    val fileLoaded by mpv.fileLoaded.collectAsState()
+    val timePos by mpv.timePos.collectAsState()
+    val duration by mpv.duration.collectAsState()
+    val exportProgress by viewModel.clipExportProgress.collectAsState()
+    val exportStatus by viewModel.clipExportStatus.collectAsState()
+
+    var startTimeText by remember { mutableStateOf("") }
+    var durationText by remember { mutableStateOf("30") }
+    var selectedFormat by remember { mutableStateOf("mp4") }
+
+    PanelScaffold(
+        title = "切片导出",
+        onClose = { viewModel.toggleClipExportPanel() }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            if (!fileLoaded) {
+                Text("请先加载视频", color = Color(0xFF888888), fontSize = 14.sp)
+                return@PanelScaffold
+            }
+
+            // 当前播放信息
+            val posStr = formatTime(timePos)
+            val durStr = formatTime(duration)
+            Text(
+                text = "当前播放: $posStr / $durStr",
+                color = Color(0xFFCCCCCC),
+                fontSize = 13.sp
+            )
+
+            // 开始时间输入
+            Text("开始时间（秒）", color = Color(0xFFAAAAAA), fontSize = 12.sp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = startTimeText,
+                    onValueChange = { startTimeText = it.filter { c -> c.isDigit() || c == '.' } },
+                    placeholder = { Text("${timePos.toInt()}") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                OutlinedButton(
+                    onClick = { startTimeText = timePos.toInt().toString() },
+                    modifier = Modifier.tvFocusBorder()
+                ) {
+                    Text("当前", fontSize = 12.sp)
+                }
+            }
+
+            // 持续时间输入
+            Text("持续时间（秒）", color = Color(0xFFAAAAAA), fontSize = 12.sp)
+            OutlinedTextField(
+                value = durationText,
+                onValueChange = { durationText = it.filter { c -> c.isDigit() || c == '.' } },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+            )
+
+            // 格式选择
+            Text("输出格式", color = Color(0xFFAAAAAA), fontSize = 12.sp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf("mp4" to "视频(MP4)", "gif" to "动图(GIF)", "mp3" to "音频(MP3)").forEach { (value, label) ->
+                    FilterChip(
+                        selected = selectedFormat == value,
+                        onClick = { selectedFormat = value },
+                        label = { Text(label, fontSize = 12.sp) },
+                        modifier = Modifier.tvFocusBorder()
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // 导出按钮
+            Button(
+                onClick = {
+                    val start = startTimeText.toDoubleOrNull() ?: timePos
+                    val dur = durationText.toDoubleOrNull() ?: 30.0
+                    viewModel.exportClip(start, dur, selectedFormat)
+                },
+                modifier = Modifier.fillMaxWidth().tvFocusBorder(),
+                enabled = exportProgress !in 1..99
+            ) {
+                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("开始导出")
+            }
+
+            // 导出进度
+            if (exportProgress > 0 || exportStatus.isNotEmpty()) {
+                Surface(
+                    color = Color(0xFF1E2A45),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        if (exportProgress > 0) {
+                            LinearProgressIndicator(
+                                progress = { exportProgress / 100f },
+                                modifier = Modifier.fillMaxWidth(),
+                                color = Color(0xFF4CAF50),
+                                trackColor = Color(0xFF333333)
+                            )
+                            Text(
+                                text = "进度: $exportProgress%",
+                                color = Color(0xFFCCCCCC),
+                                fontSize = 12.sp
+                            )
+                        }
+                        if (exportStatus.isNotEmpty()) {
+                            Text(
+                                text = exportStatus,
+                                color = if (exportStatus.startsWith("导出成功")) Color(0xFF4CAF50)
+                                       else Color(0xFFFFA500),
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 说明
+            Text(
+                text = "说明：导出文件将保存到下载目录（Download/ISEP_*）。" +
+                       "MP4 使用流拷贝（快速），GIF 限制 480px 宽 10fps，MP3 提取音轨。",
+                color = Color(0xFF666666),
+                fontSize = 11.sp,
+                lineHeight = 16.sp
+            )
+        }
+    }
+}
+
+/**
+ * 音频可视化面板（与 PC 端 audio_visual 对齐）。
+ * 实时频谱波形 Canvas 绘制。
+ */
+@Composable
+fun AudioVisualizerPanel(viewModel: AppViewModel) {
+    val spectrum by viewModel.audioSpectrum.collectAsState()
+    val mpv = viewModel.mpv
+    val fileLoaded by mpv.fileLoaded.collectAsState()
+
+    PanelScaffold(
+        title = "音频可视化",
+        onClose = { viewModel.toggleAudioVisualizer() }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            if (!fileLoaded) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("请先加载音视频", color = Color(0xFF888888), fontSize = 14.sp)
+                }
+                return@PanelScaffold
+            }
+
+            // 频谱画布
+            Canvas(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(200.dp)
+                    .background(Color(0xFF0A0A14), shape = RoundedCornerShape(8.dp))
+            ) {
+                val barCount = spectrum.size
+                if (barCount == 0) return@Canvas
+                val barWidth = size.width / barCount
+                val gap = barWidth * 0.2f
+                val actualBarWidth = barWidth - gap
+
+                spectrum.forEachIndexed { i, amplitude ->
+                    val barHeight = (amplitude * size.height * 0.9f)
+                    val x = i * barWidth + gap / 2
+                    val y = size.height - barHeight
+
+                    // 渐变色：低频绿 → 中频黄 → 高频红
+                    val color = when {
+                        amplitude < 0.33f -> Color(0xFF4CAF50)
+                        amplitude < 0.66f -> Color(0xFFFFC107)
+                        else -> Color(0xFFFF5722)
+                    }
+
+                    drawRoundRect(
+                        color = color,
+                        topLeft = androidx.compose.ui.geometry.Offset(x, y),
+                        size = androidx.compose.ui.geometry.Size(actualBarWidth, barHeight),
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(4f, 4f)
+                    )
+                }
+            }
+
+            // 信息行
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                val volume = mpv.getPropertyDouble("volume") ?: 100.0
+                Text("音量: ${volume.toInt()}", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                Text("频段: ${spectrum.size}", color = Color(0xFF888888), fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+/**
+ * 歌词面板（与 PC 端 LyricsWidget 对齐）。
+ * 支持 LRC 格式歌词加载、显示和同步高亮。
+ */
+@Composable
+fun LyricsPanel(viewModel: AppViewModel) {
+    val lyricsLines by viewModel.lyricsLines.collectAsState()
+    val currentLine by viewModel.currentLyricLine.collectAsState()
+    val mpv = viewModel.mpv
+    val fileLoaded by mpv.fileLoaded.collectAsState()
+
+    // SAF 文件选择器（选择 .lrc 文件）
+    val filePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            viewModel.loadLyricsFromUri(uri.toString())
+        }
+    }
+
+    PanelScaffold(
+        title = "歌词",
+        onClose = { viewModel.toggleLyricsPanel() }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // 操作栏
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = { filePicker.launch(arrayOf("application/octet-stream", "text/plain", "*/*")) },
+                    modifier = Modifier.tvFocusBorder()
+                ) {
+                    Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("加载 LRC", fontSize = 12.sp)
+                }
+                OutlinedButton(
+                    onClick = { viewModel.clearLyrics() },
+                    modifier = Modifier.tvFocusBorder()
+                ) {
+                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("清除", fontSize = 12.sp, color = Color(0xFFE57373))
+                }
+            }
+
+            if (lyricsLines.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            Icons.Default.MusicNote,
+                            contentDescription = null,
+                            tint = Color(0xFF555555),
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text("点击「加载 LRC」导入歌词文件", color = Color(0xFF888888), fontSize = 13.sp)
+                        if (fileLoaded) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text("播放时将自动同步高亮", color = Color(0xFF666666), fontSize = 11.sp)
+                        }
+                    }
+                }
+                return@Column
+            }
+
+            // 歌词列表
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .weight(1f),
+                contentPadding = PaddingValues(vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                itemsIndexed(lyricsLines) { index, line ->
+                    val isCurrent = index == currentLine
+                    val isPast = index < currentLine
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // 时间标签
+                        val min = line.time / 60000
+                        val sec = (line.time % 60000) / 1000
+                        Text(
+                            text = String.format("%02d:%05.2f", min, sec),
+                            color = Color(0xFF444444),
+                            fontSize = 11.sp,
+                            modifier = Modifier.width(56.dp)
+                        )
+                        Text(
+                            text = line.text,
+                            color = when {
+                                isCurrent -> Color(0xFF4CAF50)
+                                isPast -> Color(0xFF555555)
+                                else -> Color(0xFFCCCCCC)
+                            },
+                            fontSize = if (isCurrent) 16.sp else 14.sp,
+                            fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+// -----------------------------------------------------------------
+// 通用面板脚手架（全屏覆盖 + 标题栏 + 关闭按钮）
+// -----------------------------------------------------------------
+
+@Composable
+fun PanelScaffold(
+    title: String,
+    onClose: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxSize().systemBarsPadding(),
+        color = MaterialTheme.colorScheme.background
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0xF0121212))
+        ) {
+            // 标题栏
+            Surface(color = Color(0xFF1A1A2E)) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = title,
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(
+                        onClick = onClose,
+                        modifier = Modifier.size(40.dp).tvFocusBorder()
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "关闭",
+                            tint = Color.White
+                        )
+                    }
+                }
+            }
+            // 内容区域
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState()),
+                content = content
+            )
+        }
+    }
+}
+
+/** 格式化秒为 mm:ss */
+private fun formatTime(seconds: Double): String {
+    val totalSec = seconds.toInt()
+    val min = totalSec / 60
+    val sec = totalSec % 60
+    return String.format("%02d:%02d", min, sec)
 }

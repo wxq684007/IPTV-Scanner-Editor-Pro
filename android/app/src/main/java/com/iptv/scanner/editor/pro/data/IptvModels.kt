@@ -410,3 +410,21 @@ data class TokenResponse(
 data class RemoteCommandResponse(
     @SerialName("cmd") val cmd: String? = null,
 )
+
+// -----------------------------------------------------------------
+// 最近打开（与 PC 端 recent_menu 对齐）
+// -----------------------------------------------------------------
+
+/**
+ * 最近打开的文件/URL 条目。
+ * @param uri 文件 URI 或 URL
+ * @param name 显示名称
+ * @param type 类型："playlist" / "url" / "video"
+ * @param timestamp 打开时间戳（毫秒）
+ */
+data class RecentEntry(
+    val uri: String,
+    val name: String,
+    val type: String,
+    val timestamp: Long,
+)

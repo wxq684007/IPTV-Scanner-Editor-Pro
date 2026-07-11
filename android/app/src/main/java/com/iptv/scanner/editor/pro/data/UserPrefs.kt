@@ -485,6 +485,86 @@ fun getTimeoutSwitchSource(): Int = prefs.getInt(KEY_TIMEOUT_SWITCH_SOURCE, DEFA
     }
 
     // -----------------------------------------------------------------
+    // 主题模式（深色/浅色/跟随系统）
+    //
+    // 与 PC 端 ThemeManager 的 color_mode 对齐。
+    // "dark"=深色（默认，视频播放沉浸感）
+    // "light"=浅色
+    // "system"=跟随系统
+    // -----------------------------------------------------------------
+
+    /** 获取主题模式，默认 "dark" */
+    fun getThemeMode(): String = prefs.getString(KEY_THEME_MODE, DEFAULT_THEME_MODE) ?: DEFAULT_THEME_MODE
+
+    /** 设置主题模式 */
+    fun setThemeMode(mode: String) {
+        prefs.edit().putString(KEY_THEME_MODE, mode).apply()
+    }
+
+    // -----------------------------------------------------------------
+    // 最近打开文件/URL（与 PC 端 recent_menu 对齐）
+    //
+    // 存储最近打开的播放列表文件、网络流 URL、本地视频文件。
+    // 最多 20 条，按时间倒序。
+    // -----------------------------------------------------------------
+
+    fun getRecentFiles(): List<RecentEntry> {
+        val json = prefs.getString(KEY_RECENT_FILES, "[]") ?: "[]"
+        return parseRecentFiles(json)
+    }
+
+    fun addRecentFile(entry: RecentEntry) {
+        val cur = getRecentFiles().toMutableList()
+        cur.removeAll { it.uri == entry.uri }
+        cur.add(0, entry)
+        if (cur.size > MAX_RECENT_FILES) {
+            cur.subList(MAX_RECENT_FILES, cur.size).clear()
+        }
+        saveRecentFiles(cur)
+    }
+
+    fun removeRecentFile(uri: String) {
+        val cur = getRecentFiles().toMutableList()
+        cur.removeAll { it.uri == uri }
+        saveRecentFiles(cur)
+    }
+
+    fun clearRecentFiles() {
+        prefs.edit().putString(KEY_RECENT_FILES, "[]").apply()
+    }
+
+    private fun saveRecentFiles(list: List<RecentEntry>) {
+        val arr = JSONArray()
+        list.forEach { item ->
+            arr.put(JSONObject().apply {
+                put("uri", item.uri)
+                put("name", item.name)
+                put("type", item.type)
+                put("ts", item.timestamp)
+            })
+        }
+        prefs.edit().putString(KEY_RECENT_FILES, arr.toString()).apply()
+    }
+
+    private fun parseRecentFiles(json: String): List<RecentEntry> {
+        if (json.isEmpty()) return emptyList()
+        return try {
+            val arr = JSONArray(json)
+            (0 until arr.length()).mapNotNull { idx ->
+                val obj = arr.optJSONObject(idx) ?: return@mapNotNull null
+                RecentEntry(
+                    uri = obj.optString("uri"),
+                    name = obj.optString("name"),
+                    type = obj.optString("type"),
+                    timestamp = obj.optLong("ts", 0),
+                )
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    // -----------------------------------------------------------------
     // 局域网管理设置
     //
     // 自动关闭开关：开启后 5 分钟自动停止服务器（默认开启）
@@ -1018,6 +1098,14 @@ fun getTimeoutSwitchSource(): Int = prefs.getInt(KEY_TIMEOUT_SWITCH_SOURCE, DEFA
         // 同时控制 mpv msg-level 和 Python logging（app.log 文件 + logcat）
         private const val KEY_LOG_LEVEL = "log_level"
         private const val DEFAULT_LOG_LEVEL = "info"
+
+        // 主题模式
+        private const val KEY_THEME_MODE = "theme_mode"
+        private const val DEFAULT_THEME_MODE = "dark"
+
+        // 最近打开
+        private const val KEY_RECENT_FILES = "recent_files"
+        private const val MAX_RECENT_FILES = 20
 
         @Volatile
         private var INSTANCE: UserPrefs? = null

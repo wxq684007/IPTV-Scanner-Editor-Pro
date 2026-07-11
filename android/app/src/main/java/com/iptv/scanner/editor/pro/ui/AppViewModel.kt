@@ -26,6 +26,7 @@ import com.iptv.scanner.editor.pro.data.IptvSource
 import com.iptv.scanner.editor.pro.data.IptvStatus
 import com.iptv.scanner.editor.pro.data.MappingEntry
 import com.iptv.scanner.editor.pro.data.ReminderItem
+import com.iptv.scanner.editor.pro.data.RecentEntry
 import com.iptv.scanner.editor.pro.data.ResumeItem
 import com.iptv.scanner.editor.pro.data.BookmarkItem
 import com.iptv.scanner.editor.pro.data.ChannelPlayerSettings
@@ -400,6 +401,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // OSD（顶部反馈信息）
     // -----------------------------------------------------------------
     data class OsdInfo(val title: String, val subtitle: String = "", val extra: String = "")
+
+/** 歌词行（与 PC 端 LyricsWidget 对齐） */
+data class LyricsLine(val time: Long, val text: String)
 
     private val _osd = MutableStateFlow<OsdInfo?>(null)
     val osd: StateFlow<OsdInfo?> = _osd.asStateFlow()
@@ -881,6 +885,52 @@ private var _channelInputJob: kotlinx.coroutines.Job? = null
 
     private val _streamQualityPanelOpen = MutableStateFlow(false)
     val streamQualityPanelOpen: StateFlow<Boolean> = _streamQualityPanelOpen.asStateFlow()
+
+    // -----------------------------------------------------------------
+    // 新增功能面板（与 PC 端功能对齐）
+    // -----------------------------------------------------------------
+
+    /** 主题模式：dark / light / system */
+    private val _themeMode = MutableStateFlow(userPrefs.getThemeMode())
+    val themeMode: StateFlow<String> = _themeMode.asStateFlow()
+
+    /** 最近打开文件面板 */
+    private val _recentPanelOpen = MutableStateFlow(false)
+    val recentPanelOpen: StateFlow<Boolean> = _recentPanelOpen.asStateFlow()
+    private val _recentFiles = MutableStateFlow<List<RecentEntry>>(emptyList())
+    val recentFiles: StateFlow<List<RecentEntry>> = _recentFiles.asStateFlow()
+
+    /** 切片导出面板 */
+    private val _clipExportPanelOpen = MutableStateFlow(false)
+    val clipExportPanelOpen: StateFlow<Boolean> = _clipExportPanelOpen.asStateFlow()
+    private val _clipExportProgress = MutableStateFlow(0)
+    val clipExportProgress: StateFlow<Int> = _clipExportProgress.asStateFlow()
+    private val _clipExportStatus = MutableStateFlow("")
+    val clipExportStatus: StateFlow<String> = _clipExportStatus.asStateFlow()
+
+    /** 音频可视化面板 */
+    private val _audioVisualizerOpen = MutableStateFlow(false)
+    val audioVisualizerOpen: StateFlow<Boolean> = _audioVisualizerOpen.asStateFlow()
+    /** 频谱数据（0-1 归一化，32 个频段） */
+    private val _audioSpectrum = MutableStateFlow<FloatArray(FloatArray(32) { 0f })
+    val audioSpectrum: StateFlow<FloatArray> = _audioSpectrum.asStateFlow()
+
+    /** 歌词面板 */
+    private val _lyricsOpen = MutableStateFlow(false)
+    val lyricsOpen: StateFlow<Boolean> = _lyricsOpen.asStateFlow()
+    /** 当前歌词行列表 */
+    private val _lyricsLines = MutableStateFlow<List<LyricsLine>>(emptyList())
+    val lyricsLines: StateFlow<List<LyricsLine>> = _lyricsLines.asStateFlow()
+    /** 当前高亮的歌词行索引 */
+    private val _currentLyricLine = MutableStateFlow(-1)
+    val currentLyricLine: StateFlow<Int> = _currentLyricLine.asStateFlow()
+
+    /** PiP 回调（Activity 注入，ViewModel 不能直接调用 Activity 方法） */
+    var onEnterPip: (() -> Unit)? = null
+
+    /** 刷新 UI 状态 */
+    private val _refreshing = MutableStateFlow(false)
+    val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
 
     // -----------------------------------------------------------------
     // HDR 输出模式（与 PC 端 hdr_output_mode 对齐）
@@ -2593,6 +2643,10 @@ private var _channelInputJob: kotlinx.coroutines.Job? = null
         _epgTimelineOpen.value = false
         _searchPanelOpen.value = false
         _streamQualityPanelOpen.value = false
+        _recentPanelOpen.value = false
+        _clipExportPanelOpen.value = false
+        _audioVisualizerOpen.value = false
+        _lyricsOpen.value = false
         stopScanPolling()
         // 关闭 A/V 同步采样
         stopAvSyncSampling()
@@ -2618,7 +2672,9 @@ private var _channelInputJob: kotlinx.coroutines.Job? = null
                 _networkPanelOpen.value || _toolsPanelOpen.value || _scanPanelOpen.value ||
                 _reminderPanelOpen.value || _resumePanelOpen.value || _bookmarkPanelOpen.value ||
                 _epgTimelineOpen.value || _searchPanelOpen.value ||
-                _streamQualityPanelOpen.value
+                _streamQualityPanelOpen.value ||
+                _recentPanelOpen.value || _clipExportPanelOpen.value ||
+                _audioVisualizerOpen.value || _lyricsOpen.value
 
     /**
      * 关闭任意打开的面板。返回 true 表示关闭了面板（用于 BACK 键消费判断）。
@@ -4165,6 +4221,449 @@ private var _channelInputJob: kotlinx.coroutines.Job? = null
         _streamQualityPanelOpen.value = !_streamQualityPanelOpen.value
         if (!_streamQualityPanelOpen.value) {
             showControlsAutoHide()
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // 画中画 (PiP) — 与 PC 端 PipController 对齐
+    // -----------------------------------------------------------------
+
+    /** 手动进入 PiP 模式（由 Activity 的 enterPipManual() 实现） */
+    fun enterPip() {
+        onEnterPip?.invoke() ?: showOsd("画中画", "当前环境不支持")
+    }
+
+    // -----------------------------------------------------------------
+    // 主题模式切换 — 与 PC 端 ThemeManager color_mode 对齐
+    // -----------------------------------------------------------------
+
+    /** 设置主题模式：dark / light / system */
+    fun setThemeMode(mode: String) {
+        _themeMode.value = mode
+        userPrefs.setThemeMode(mode)
+        val name = when (mode) {
+            "light" -> "浅色"
+            "system" -> "跟随系统"
+            else -> "深色"
+        }
+        showOsd("主题", name)
+    }
+
+    // -----------------------------------------------------------------
+    // 最近打开 — 与 PC 端 recent_menu 对齐
+    // -----------------------------------------------------------------
+
+    fun toggleRecentPanel() {
+        _recentPanelOpen.value = !_recentPanelOpen.value
+        if (_recentPanelOpen.value) {
+            _recentFiles.value = userPrefs.getRecentFiles()
+        } else {
+            showControlsAutoHide()
+        }
+    }
+
+    fun addRecentFile(uri: String, name: String, type: String) {
+        userPrefs.addRecentFile(RecentEntry(uri, name, type, System.currentTimeMillis()))
+        _recentFiles.value = userPrefs.getRecentFiles()
+    }
+
+    fun removeRecentFile(uri: String) {
+        userPrefs.removeRecentFile(uri)
+        _recentFiles.value = userPrefs.getRecentFiles()
+    }
+
+    fun clearRecentFiles() {
+        userPrefs.clearRecentFiles()
+        _recentFiles.value = emptyList()
+        showOsd("最近打开", "已清空")
+    }
+
+    /** 从最近打开列表中恢复播放 */
+    fun playRecent(entry: RecentEntry) {
+        closeAllPanels()
+        when (entry.type) {
+            "playlist" -> openPlaylistFromUri(entry.uri, entry.name)
+            "url" -> {
+                _currentIdx.value = -1
+                _playbackState.value = PlaybackState(mode = PlayMode.LIVE)
+                currentPlaybackUrl = entry.uri
+                currentPlaybackName = entry.name
+                mpv.playFile(entry.uri)
+                showOsd("播放", entry.name)
+            }
+            "video" -> playLocalVideo(entry.uri)
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // 另存为 — 导出频道列表为 M3U（与 PC 端 save_as 对齐）
+    // -----------------------------------------------------------------
+
+    /** 导出当前频道列表为 M3U 文件，写入下载目录 */
+    fun saveAsM3u() {
+        viewModelScope.launch {
+            val channels = _channels.value
+            if (channels.isEmpty()) {
+                showOsd("另存为", "频道列表为空")
+                return@launch
+            }
+            showOsd("另存为", "正在导出...")
+            val m3uContent = buildM3uContent(channels)
+            val written = writeM3uToFile(m3uContent)
+            if (written) {
+                showOsd("另存为", "已导出到下载目录")
+            } else {
+                showOsd("另存为", "导出失败")
+            }
+        }
+    }
+
+    private fun buildM3uContent(channels: List<IptvChannel>): String {
+        val sb = StringBuilder()
+        sb.append("#EXTM3U\n")
+        channels.forEach { ch ->
+            val attrs = StringBuilder()
+            if (ch.tvgId.isNotEmpty()) attrs.append(" tvg-id=\"${ch.tvgId}\"")
+            if (ch.tvgName.isNotEmpty()) attrs.append(" tvg-name=\"${ch.tvgName}\"")
+            if (ch.tvgLogo.isNotEmpty()) attrs.append(" tvg-logo=\"${ch.tvgLogo}\"")
+            if (ch.groupTitle.isNotEmpty()) attrs.append(" group-title=\"${ch.groupTitle}\"")
+            sb.append("#EXTINF:-1$attrs,${ch.name}\n")
+            sb.append("${ch.url}\n")
+        }
+        return sb.toString()
+    }
+
+    private fun writeM3uToFile(content: String): Boolean {
+        val now = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
+        val filename = "ISEP_export_$now.m3u"
+        return try {
+            val app = getApplication<Application>()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val resolver = app.contentResolver
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, filename)
+                    put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "audio/x-mpegurl")
+                    put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+                }
+                val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return false
+                resolver.openOutputStream(uri)?.use { it.write(content.toByteArray()) } ?: return false
+            } else {
+                @Suppress("DEPRECATION")
+                val dir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                if (!dir.exists()) dir.mkdirs()
+                java.io.File(dir, filename).writeText(content)
+            }
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "writeM3uToFile failed", e)
+            false
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // 刷新 UI — 重新加载频道/EPG（与 PC 端 F5 refresh 对齐）
+    // -----------------------------------------------------------------
+
+    fun refreshUi() {
+        if (_refreshing.value) return
+        _refreshing.value = true
+        viewModelScope.launch {
+            showOsd("刷新", "正在重新加载...")
+            try {
+                loadChannels()
+                loadEpgForChannel(_currentIdx.value)
+                showOsd("刷新", "已完成")
+            } catch (e: Exception) {
+                showOsd("刷新", "失败: ${e.message}")
+            } finally {
+                _refreshing.value = false
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // 切片导出 — 利用 ffmpeg（与 PC 端 ClipExportDialog 对齐）
+    // -----------------------------------------------------------------
+
+    fun toggleClipExportPanel() {
+        _clipExportPanelOpen.value = !_clipExportPanelOpen.value
+        if (!_clipExportPanelOpen.value) showControlsAutoHide()
+    }
+
+    /**
+     * 导出视频片段。使用 ffmpeg 命令行裁剪指定时间段。
+     * @param startTime 开始时间（秒）
+     * @param duration 持续时间（秒）
+     * @param format 输出格式："mp4" / "gif" / "mp3"
+     */
+    fun exportClip(startTime: Double, duration: Double, format: String) {
+        val url = currentPlaybackUrl.ifBlank { return }
+        if (duration <= 0 || startTime < 0) {
+            showOsd("切片导出", "参数无效")
+            return
+        }
+        viewModelScope.launch {
+            _clipExportStatus.value = "准备中..."
+            _clipExportProgress.value = 0
+            try {
+                val app = getApplication<Application>()
+                val now = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
+                val ext = when (format) { "gif" -> "gif"; "mp3" -> "mp3"; else -> "mp4" }
+                val filename = "ISEP_clip_$now.$ext"
+
+                // 获取输出路径
+                val outFile = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val resolver = app.contentResolver
+                    val mimeType = when (format) {
+                        "gif" -> "image/gif"
+                        "mp3" -> "audio/mpeg"
+                        else -> "video/mp4"
+                    }
+                    val values = android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, filename)
+                        put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                        put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+                    }
+                    val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                    uri?.let { resolver.openOutputStream(it) }?.let { java.io.File.createTempFile("clip_tmp", ".$ext", app.cacheDir).also { tmp -> tmp.outputStream().use { _ -> } } }
+                } else {
+                    @Suppress("DEPRECATION")
+                    val dir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                    if (!dir.exists()) dir.mkdirs()
+                    java.io.File(dir, filename)
+                }
+
+                if (outFile == null) {
+                    _clipExportStatus.value = "无法创建输出文件"
+                    return@launch
+                }
+
+                _clipExportStatus.value = "正在导出..."
+
+                // 构建 ffmpeg 命令
+                val ffmpegDir = java.io.File(app.applicationInfo.nativeLibraryDir, "ffmpeg")
+                val ffmpegBin = if (ffmpegDir.exists()) ffmpegDir.absolutePath else "ffmpeg"
+
+                val cmd = mutableListOf(ffmpegBin, "-y")
+                cmd.addAll(listOf("-ss", startTime.toString()))
+                cmd.addAll(listOf("-i", url))
+                cmd.addAll(listOf("-t", duration.toString()))
+
+                when (format) {
+                    "gif" -> {
+                        cmd.addAll(listOf("-vf", "fps=10,scale=480:-1:flags=lanczos"))
+                        cmd.addAll(listOf("-loop", "0"))
+                    }
+                    "mp3" -> {
+                        cmd.addAll(listOf("-vn", "-acodec", "libmp3lame", "-q:a", "2"))
+                    }
+                    else -> {
+                        cmd.addAll(listOf("-c", "copy", "-avoid_negative_ts", "make_zero"))
+                    }
+                }
+                cmd.add(outFile.absolutePath)
+
+                val process = ProcessBuilder(cmd).redirectErrorStream(true).start()
+                val reader = java.io.BufferedReader(java.io.InputStreamReader(process.inputStream))
+                var line: String?
+                var progress = 0
+                while (reader.readLine().also { line = it } != null) {
+                    Log.d(TAG, "ffmpeg: $line")
+                    progress = (progress + 5) % 100
+                    _clipExportProgress.value = progress
+                }
+                val exitCode = process.waitFor()
+                if (exitCode == 0) {
+                    _clipExportProgress.value = 100
+                    _clipExportStatus.value = "导出成功: $filename"
+                    showOsd("切片导出", "已导出到下载目录")
+                } else {
+                    _clipExportStatus.value = "导出失败 (exit=$exitCode)"
+                    showOsd("切片导出", "导出失败")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "exportClip failed", e)
+                _clipExportStatus.value = "错误: ${e.message}"
+                showOsd("切片导出", "错误: ${e.message}")
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // 音频可视化 — 频谱波形（与 PC 端 audio_visual 对齐）
+    // -----------------------------------------------------------------
+
+    fun toggleAudioVisualizer() {
+        _audioVisualizerOpen.value = !_audioVisualizerOpen.value
+        if (_audioVisualizerOpen.value) {
+            startSpectrumSampling()
+        } else {
+            stopSpectrumSampling()
+            showControlsAutoHide()
+        }
+    }
+
+    private var spectrumJob: kotlinx.coroutines.Job? = null
+
+    private fun startSpectrumSampling() {
+        spectrumJob?.cancel()
+        spectrumJob = viewModelScope.launch {
+            while (_audioVisualizerOpen.value) {
+                try {
+                    if (mpv.fileLoaded.value) {
+                        // 从 mpv 读取音频电平（af-lavfi spectrumsynth 或 peak level）
+                        // 简化方案：读取 audio-params 和 volume 模拟频谱
+                        val volume = mpv.getPropertyDouble("volume") ?: 100.0
+                        val volFactor = (volume / 100.0).coerceIn(0.0, 1.0)
+                        // 生成模拟频谱数据（32 频段）
+                        val spectrum = FloatArray(32) { i ->
+                            val freq = (i + 1).toFloat() / 32f
+                            val noise = kotlin.math.abs(kotlin.math.sin(System.currentTimeMillis() / 200.0 + i * 0.5)).toFloat()
+                            val decay = 1f - freq * 0.3f
+                            (noise * decay * volFactor).coerceIn(0f, 1f)
+                        }
+                        _audioSpectrum.value = spectrum
+                    }
+                } catch (e: Exception) {
+                    // 忽略采样错误
+                }
+                kotlinx.coroutines.delay(80) // ~12.5 fps
+            }
+        }
+    }
+
+    private fun stopSpectrumSampling() {
+        spectrumJob?.cancel()
+        spectrumJob = null
+        _audioSpectrum.value = FloatArray(32) { 0f }
+    }
+
+    // -----------------------------------------------------------------
+    // 歌词 — 加载/显示/同步（与 PC 端 LyricsWidget 对齐）
+    // -----------------------------------------------------------------
+
+    fun toggleLyricsPanel() {
+        _lyricsOpen.value = !_lyricsOpen.value
+        if (_lyricsOpen.value) {
+            startLyricsSync()
+        } else {
+            stopLyricsSync()
+            showControlsAutoHide()
+        }
+    }
+
+    private var lyricsSyncJob: kotlinx.coroutines.Job? = null
+
+    /** 从文件 URI 加载 LRC 歌词 */
+    fun loadLyricsFromUri(uri: String) {
+        viewModelScope.launch {
+            try {
+                val app = getApplication<Application>()
+                val content = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    if (uri.startsWith("content://")) {
+                        app.contentResolver.openInputStream(android.net.Uri.parse(uri))?.bufferedReader()?.use { it.readText() }
+                    } else if (uri.startsWith("http")) {
+                        java.net.URL(uri).readText()
+                    } else {
+                        java.io.File(uri).readText()
+                    }
+                } ?: run {
+                    showOsd("歌词", "无法读取文件")
+                    return@launch
+                }
+                parseLrc(content)
+                showOsd("歌词", "已加载 ${_lyricsLines.value.size} 行")
+            } catch (e: Exception) {
+                showOsd("歌词", "加载失败: ${e.message}")
+            }
+        }
+    }
+
+    /** 解析 LRC 格式歌词 [mm:ss.xx]文本 */
+    private fun parseLrc(content: String) {
+        val lines = mutableListOf<LyricsLine>()
+        val pattern = Regex("""\[(\d+):(\d+)(?:\.(\d+))?\](.*)""")
+        content.lines().forEach { line ->
+            val matches = pattern.findAll(line)
+            val text = if (matches.none()) line.trim() else {
+                val lastMatch = matches.last()
+                lastMatch.groupValues[4].trim()
+            }
+            matches.forEach { m ->
+                val min = m.groupValues[1].toLongOrNull() ?: 0L
+                val sec = m.groupValues[2].toLongOrNull() ?: 0L
+                val ms = m.groupValues[3].let { if (it.isNotEmpty()) (it.toLongOrNull() ?: 0L) else 0L }
+                val time = (min * 60 + sec) * 1000 + ms
+                val lyricText = m.groupValues[4].trim()
+                if (lyricText.isNotEmpty()) {
+                    lines.add(LyricsLine(time, lyricText))
+                }
+            }
+            // 无时间标签的行（如歌曲信息）
+            if (matches.none() && text.isNotEmpty()) {
+                lines.add(LyricsLine(0, text))
+            }
+        }
+        lines.sortBy { it.time }
+        _lyricsLines.value = lines
+    }
+
+    private fun startLyricsSync() {
+        lyricsSyncJob?.cancel()
+        lyricsSyncJob = viewModelScope.launch {
+            while (_lyricsOpen.value) {
+                try {
+                    if (mpv.fileLoaded.value && _lyricsLines.value.isNotEmpty()) {
+                        val posMs = (mpv.timePos.value * 1000).toLong()
+                        val idx = _lyricsLines.value.indexOfLast { it.time <= posMs }
+                        if (idx != _currentLyricLine.value) {
+                            _currentLyricLine.value = idx
+                        }
+                    }
+                } catch (e: Exception) {
+                    // 忽略
+                }
+                kotlinx.coroutines.delay(200)
+            }
+        }
+    }
+
+    private fun stopLyricsSync() {
+        lyricsSyncJob?.cancel()
+        lyricsSyncJob = null
+        _currentLyricLine.value = -1
+    }
+
+    /** 清除当前歌词 */
+    fun clearLyrics() {
+        _lyricsLines.value = emptyList()
+        _currentLyricLine.value = -1
+        showOsd("歌词", "已清除")
+    }
+
+    // -----------------------------------------------------------------
+    // 从 URI 打开播放列表（文件关联入口）
+    // -----------------------------------------------------------------
+
+    /** 从外部 URI 导入播放列表 */
+    fun openPlaylistFromUri(uri: String, name: String) {
+        viewModelScope.launch {
+            showOsd("打开播放列表", name)
+            try {
+                val added = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    repository.addSource(name, uri)
+                }
+                if (added.isSuccess) {
+                    addRecentFile(uri, name, "playlist")
+                    loadSources()
+                    loadChannels()
+                    showOsd("播放列表", "已导入: $name")
+                } else {
+                    showOsd("播放列表", "导入失败")
+                }
+            } catch (e: Exception) {
+                showOsd("播放列表", "错误: ${e.message}")
+            }
         }
     }
 

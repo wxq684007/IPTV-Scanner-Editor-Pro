@@ -79,8 +79,15 @@ class MainActivityCompose : ComponentActivity() {
         enableEdgeToEdge()
         Log.i(TAG, "onCreate")
 
+        // 处理外部文件打开（intent-filter 文件关联）
+        handleIntent(intent)
+
+        // 注入 PiP 回调（ViewModel 不能直接调用 Activity 方法）
+        viewModel.onEnterPip = { enterPipManual() }
+
         setContent {
-            IptvTheme {
+            val themeMode by viewModel.themeMode.collectAsState()
+            IptvTheme(themeMode = themeMode) {
                 val initState by viewModel.initState.collectAsState()
                 when (initState) {
                     is AppViewModel.InitState.Ready -> MainPlayerScreen(viewModel)
@@ -458,6 +465,61 @@ class MainActivityCompose : ComponentActivity() {
      * - setSourceBoundsHint：从视频区域平滑动画过渡到 PiP 窗口
      * - Android 12+：setAutoEnterEnabled + setSeamlessResizeEnabled
      */
+    /**
+     * 手动进入 PiP 模式（主菜单/控制层按钮触发）。
+     * 与 onUserLeaveHint 自动进入不同，这是用户主动请求 PiP。
+     */
+    fun enterPipManual() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+            && packageManager.hasSystemFeature("android.software.picture_in_picture")
+        ) {
+            try {
+                val builder = PictureInPictureParams.Builder()
+                val mpv = MpvController.getInstance()
+                mpv.getVideoAspectRatio()?.let { ratio -> builder.setAspectRatio(ratio) }
+                mpv.getVideoBoundsOnScreen()?.let { rect -> builder.setSourceRectHint(rect) }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    builder.setAutoEnterEnabled(true)
+                    builder.setSeamlessResizeEnabled(true)
+                }
+                enterPictureInPictureMode(builder.build())
+                Log.i(TAG, "Manual PiP entered")
+            } catch (e: Exception) {
+                Log.w(TAG, "Manual PiP failed: ${e.message}")
+                viewModel.showOsd("画中画", "不支持或失败")
+            }
+        } else {
+            viewModel.showOsd("画中画", "设备不支持")
+        }
+    }
+
+    /**
+     * 处理外部文件打开 Intent（文件关联）。
+     * 支持 VIEW intent 打开 M3U/M3U8 播放列表和视频文件。
+     */
+    private fun handleIntent(intent: android.content.Intent?) {
+        if (intent == null || intent.action != android.content.Intent.ACTION_VIEW) return
+        val uri = intent.data ?: return
+        val mimeType = intent.type ?: ""
+        Log.i(TAG, "handleIntent: uri=$uri, mime=$mimeType")
+        // 判断是播放列表还是视频文件
+        val isPlaylist = mimeType.contains("mpegurl") ||
+                uri.toString().lowercase().endsWith(".m3u") ||
+                uri.toString().lowercase().endsWith(".m3u8")
+        if (isPlaylist) {
+            viewModel.openPlaylistFromUri(uri.toString(), uri.lastPathSegment ?: "播放列表")
+        } else {
+            viewModel.playLocalVideo(uri.toString())
+        }
+        // 清除 action 避免旋转屏幕时重复触发
+        intent.action = null
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        handleIntent(intent)
+    }
+
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         val mpv = MpvController.getInstance()

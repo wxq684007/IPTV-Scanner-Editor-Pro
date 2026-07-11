@@ -121,6 +121,10 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
     val epgTimelineOpen by viewModel.epgTimelineOpen.collectAsState()
     val searchPanelOpen by viewModel.searchPanelOpen.collectAsState()
     val streamQualityPanelOpen by viewModel.streamQualityPanelOpen.collectAsState()
+    val recentPanelOpen by viewModel.recentPanelOpen.collectAsState()
+    val clipExportPanelOpen by viewModel.clipExportPanelOpen.collectAsState()
+    val audioVisualizerOpen by viewModel.audioVisualizerOpen.collectAsState()
+    val lyricsOpen by viewModel.lyricsOpen.collectAsState()
     val exitConfirmOpen by viewModel.exitConfirmOpen.collectAsState()
     val openUrlDialogOpen by viewModel.openUrlDialogOpen.collectAsState()
     val updateDialogOpen by viewModel.updateDialogOpen.collectAsState()
@@ -177,6 +181,7 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
             mappingPanelOpen || avSyncPanelOpen || networkPanelOpen || toolsPanelOpen || scanPanelOpen ||
             reminderPanelOpen || resumePanelOpen || bookmarkPanelOpen ||
             epgTimelineOpen || searchPanelOpen || streamQualityPanelOpen ||
+            recentPanelOpen || clipExportPanelOpen || audioVisualizerOpen || lyricsOpen ||
             exitConfirmOpen || openUrlDialogOpen || updateDialogOpen
     // 控制层是否应该显示
     val showControls = controlsVisible && !anyPanelOpen
@@ -188,6 +193,7 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
             mappingPanelOpen || avSyncPanelOpen || networkPanelOpen || toolsPanelOpen || scanPanelOpen ||
             reminderPanelOpen || resumePanelOpen || bookmarkPanelOpen ||
             epgTimelineOpen || searchPanelOpen || streamQualityPanelOpen ||
+            recentPanelOpen || clipExportPanelOpen || audioVisualizerOpen || lyricsOpen ||
             exitConfirmOpen || openUrlDialogOpen || updateDialogOpen
     val configuration = LocalConfiguration.current
     val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
@@ -525,6 +531,26 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
         // 流质量检测（全屏覆盖，工具 → 流质量检测）
         if (streamQualityPanelOpen) {
             StreamQualityPanel(viewModel = viewModel)
+        }
+
+        // 最近打开（全屏覆盖）
+        if (recentPanelOpen) {
+            RecentFilesPanel(viewModel = viewModel)
+        }
+
+        // 切片导出（全屏覆盖）
+        if (clipExportPanelOpen) {
+            ClipExportPanel(viewModel = viewModel)
+        }
+
+        // 音频可视化（全屏覆盖）
+        if (audioVisualizerOpen) {
+            AudioVisualizerPanel(viewModel = viewModel)
+        }
+
+        // 歌词（全屏覆盖）
+        if (lyricsOpen) {
+            LyricsPanel(viewModel = viewModel)
         }
 
         // 提醒触发弹窗（节目即将开始时弹出，全屏遮罩）

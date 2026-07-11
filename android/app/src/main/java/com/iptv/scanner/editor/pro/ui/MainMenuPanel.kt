@@ -27,15 +27,23 @@ import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.filled.ListAlt
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.ClosedCaption
+import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Equalizer
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.PictureInPicture
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ScreenshotMonitor
 import androidx.compose.material.icons.filled.SyncAlt
@@ -43,6 +51,7 @@ import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VideoSettings
 import androidx.compose.material.icons.filled.ViewInAr
 import androidx.compose.material.icons.filled.Web
+import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -194,6 +203,43 @@ fun MainMenuPanel(viewModel: AppViewModel) {
             },
             onQuit = {
                 viewModel.showOsd("退出", "请使用系统返回键退出")
+            },
+            onPip = {
+                viewModel.toggleMenuPanel()
+                viewModel.enterPip()
+            },
+            onThemeDark = {
+                viewModel.setThemeMode("dark")
+            },
+            onThemeLight = {
+                viewModel.setThemeMode("light")
+            },
+            onThemeSystem = {
+                viewModel.setThemeMode("system")
+            },
+            onClipExport = {
+                viewModel.toggleMenuPanel()
+                viewModel.toggleClipExportPanel()
+            },
+            onAudioVisualizer = {
+                viewModel.toggleMenuPanel()
+                viewModel.toggleAudioVisualizer()
+            },
+            onLyrics = {
+                viewModel.toggleMenuPanel()
+                viewModel.toggleLyricsPanel()
+            },
+            onSaveAs = {
+                viewModel.toggleMenuPanel()
+                viewModel.saveAsM3u()
+            },
+            onRecent = {
+                viewModel.toggleMenuPanel()
+                viewModel.toggleRecentPanel()
+            },
+            onRefresh = {
+                viewModel.toggleMenuPanel()
+                viewModel.refreshUi()
             },
             hasCurrentChannel = currentChannel != null,
             isFavorite = isFavorite
@@ -393,6 +439,16 @@ private fun buildMenuSections(
     onAbout: () -> Unit,
     onToggleFavorite: () -> Unit,
     onQuit: () -> Unit,
+    onPip: () -> Unit,
+    onThemeDark: () -> Unit,
+    onThemeLight: () -> Unit,
+    onThemeSystem: () -> Unit,
+    onClipExport: () -> Unit,
+    onAudioVisualizer: () -> Unit,
+    onLyrics: () -> Unit,
+    onSaveAs: () -> Unit,
+    onRecent: () -> Unit,
+    onRefresh: () -> Unit,
     hasCurrentChannel: Boolean,
     isFavorite: Boolean
 ): List<MenuSection> {
@@ -410,9 +466,12 @@ private fun buildMenuSections(
             MenuEntry(Icons.Default.FileOpen, "打开播放列表", "选择设备上的 M3U/M3U8 文件", onOpenPlaylist),
             MenuEntry(Icons.Default.Link, "打开网络流", "输入 M3U/M3U8 订阅源 URL", onOpenUrl),
             MenuEntry(Icons.Default.Movie, "打开本地文件", "播放设备上的视频/音频文件", onOpenLocalVideo),
+            MenuEntry(Icons.Default.History, "最近打开", "最近打开的播放列表/网络流/视频", onRecent),
             MenuEntry(Icons.Default.Web, "订阅源管理", "添加、编辑、删除 M3U 订阅源", onSources),
             MenuEntry(Icons.Default.CalendarMonth, "EPG 订阅源", "管理节目单订阅地址（XMLTV）", onEpgSources),
-            MenuEntry(Icons.Default.SyncAlt, "频道映射", "远程映射 + 用户映射管理", onMapping)
+            MenuEntry(Icons.Default.SyncAlt, "频道映射", "远程映射 + 用户映射管理", onMapping),
+            MenuEntry(Icons.Default.FileDownload, "另存为 M3U", "导出当前频道列表到下载目录", onSaveAs),
+            MenuEntry(Icons.Default.Refresh, "刷新", "重新加载频道和 EPG", onRefresh)
         )
     )
 
@@ -427,6 +486,10 @@ private fun buildMenuSections(
             MenuEntry(Icons.Default.GraphicEq, "A/V 同步监控", "实时数值 / 波形 / 延迟调整", onAvsync),
             MenuEntry(Icons.Default.Public, "网络增强", "Referer / Proxy / Headers", onNetwork),
             MenuEntry(Icons.Default.Tune, "工具", "搜索 / EPG时间线 / 提醒 / 续播 / 书签 / 映射 / 扫描 / 流质量", onTools),
+            MenuEntry(Icons.Default.PictureInPicture, "画中画", "进入 PiP 小窗口播放", onPip),
+            MenuEntry(Icons.Default.ContentCut, "切片导出", "裁剪视频片段 / GIF / MP3", onClipExport),
+            MenuEntry(Icons.Default.GraphicEq, "音频可视化", "实时频谱波形", onAudioVisualizer),
+            MenuEntry(Icons.Default.MusicNote, "歌词", "加载 LRC / 同步高亮", onLyrics),
             MenuEntry(Icons.Default.ViewInAr, "视图", "视频比例 / OSD", onView),
             MenuEntry(Icons.Default.Settings, "设置", "播放器内核 / VO / HWDEC / HDR", onSettings),
             MenuEntry(Icons.Default.Info, "关于", "版本信息 / 功能特性", onAbout),
@@ -441,7 +504,16 @@ private fun buildMenuSections(
         )
     )
 
-    return listOf(quickSection, fileSection, playbackSection)
+    val themeSection = MenuSection(
+        title = "主题",
+        entries = listOf(
+            MenuEntry(Icons.Default.DarkMode, "深色模式", "沉浸式播放体验", onThemeDark, highlight = true),
+            MenuEntry(Icons.Default.LightMode, "浅色模式", "明亮界面", onThemeLight),
+            MenuEntry(Icons.Default.BrightnessAuto, "跟随系统", "随系统暗色/亮色切换", onThemeSystem)
+        )
+    )
+
+    return listOf(quickSection, fileSection, playbackSection, themeSection)
 }
 
 // -----------------------------------------------------------------
