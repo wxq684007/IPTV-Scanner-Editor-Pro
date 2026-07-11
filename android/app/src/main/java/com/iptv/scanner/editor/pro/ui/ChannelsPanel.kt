@@ -54,10 +54,10 @@ import com.iptv.scanner.editor.pro.ui.theme.tvFocusBorder
 import com.iptv.scanner.editor.pro.ui.theme.tvTextField
 
 /**
- * 频道列表面板：5 个 tab + 搜索 + 分组过滤 + LazyColumn。
+ * 频道列表面板：4 个 tab + 搜索 + 分组过滤 + LazyColumn。
  *
  * 与 PC 端 mobile/index.html panelChannels 对齐：
- * - 5 个 tab：订阅/本地/收藏/历史/队列
+ * - 4 个 tab：订阅/本地/收藏/历史
  * - 搜索框：输入即过滤（name/group 包含关键字）
  * - 分组过滤器（仅 SUB/LOCAL tab 显示）
  * - 列表项：圆点 + 名称 + 分组 meta + 当前播放高亮
@@ -67,7 +67,7 @@ import com.iptv.scanner.editor.pro.ui.theme.tvTextField
  * TV 模式也可从统一面板菜单进入此面板（DPAD 焦点导航）。
  */
 @Composable
-fun ChannelsPanel(viewModel: AppViewModel, inline: Boolean = false) {
+fun ChannelsPanel(viewModel: AppViewModel, inline: Boolean = false, compact: Boolean = false, noSearch: Boolean = false) {
     val tab by viewModel.channelsTab.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
     val selectedGroup by viewModel.selectedGroup.collectAsState()
@@ -76,7 +76,6 @@ fun ChannelsPanel(viewModel: AppViewModel, inline: Boolean = false) {
     val currentIdx by viewModel.currentIdx.collectAsState()
     val favorites by viewModel.favorites.collectAsState()
     val history by viewModel.history.collectAsState()
-    val queue by viewModel.queue.collectAsState()
 
     val closeFocusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) {
@@ -101,16 +100,19 @@ fun ChannelsPanel(viewModel: AppViewModel, inline: Boolean = false) {
 
     val showGroups = (tab == ChannelTab.SUB || tab == ChannelTab.LOCAL) && groups.isNotEmpty()
 
-    val filteredChannels = remember(tab, searchQuery, selectedGroup, channels, favorites, history, queue) {
+    val filteredChannels = remember(tab, searchQuery, selectedGroup, channels, favorites, history) {
         viewModel.getFilteredChannels()
     }
 
-    val surfaceModifier = if (inline) {
-        // 内联模式：填满父容器，无宽度限制
-        Modifier.fillMaxSize()
-    } else {
-        // 抽屉模式：右侧 92% 宽，最大 380dp
-        Modifier
+    // compact 模式：横屏抽屉，宽度 1/4，无标题无搜索
+    // inline 模式：竖屏内联，填满父容器，无标题有搜索
+    // 默认模式：全屏抽屉，有标题有搜索
+    val surfaceModifier = when {
+        compact -> Modifier
+            .fillMaxHeight()
+            .fillMaxWidth(0.25f)
+        inline -> Modifier.fillMaxSize()
+        else -> Modifier
             .fillMaxHeight()
             .fillMaxWidth(0.92f)
             .widthIn(max = 380.dp)
@@ -120,32 +122,11 @@ fun ChannelsPanel(viewModel: AppViewModel, inline: Boolean = false) {
         color = Color(0xF0161616),
         modifier = surfaceModifier
     ) {
-        Column(modifier = Modifier.fillMaxSize().then(if (inline) Modifier else Modifier.systemBarsPadding())) {
+        Column(modifier = Modifier.fillMaxSize().then(if (inline || compact) Modifier else Modifier.systemBarsPadding())) {
             // -----------------------------------------------------------------
-            // 标题栏（内联模式不显示关闭按钮）
+            // 标题栏：compact 和 inline 模式不显示标题
             // -----------------------------------------------------------------
-            if (inline) {
-                // 内联模式：简洁标题栏（无关闭按钮）
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "频道列表",
-                        color = Color.White,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "${channels.size} 个频道",
-                        color = Color(0xFF888888),
-                        fontSize = 12.sp
-                    )
-                }
-            } else {
+            if (!inline && !compact) {
                 PanelHeader(
                     title = "频道列表",
                     subtitle = "${channels.size} 个频道",
@@ -163,33 +144,35 @@ fun ChannelsPanel(viewModel: AppViewModel, inline: Boolean = false) {
             )
 
             // -----------------------------------------------------------------
-            // 搜索框
+            // 搜索框（compact 和 noSearch 模式不显示）
             // -----------------------------------------------------------------
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { viewModel.setSearchQuery(it) },
-                placeholder = { Text("搜索频道...", color = Color(0xFF888888), fontSize = 13.sp) },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Color(0xFF888888)) },
-                trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { viewModel.setSearchQuery("") }, modifier = Modifier.tvFocusBorder()) {
-                            Icon(Icons.Default.Close, contentDescription = "清空", tint = Color(0xFF888888))
+            if (!compact && !noSearch) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { viewModel.setSearchQuery(it) },
+                    placeholder = { Text("搜索频道...", color = Color(0xFF888888), fontSize = 13.sp) },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Color(0xFF888888)) },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { viewModel.setSearchQuery("") }, modifier = Modifier.tvFocusBorder()) {
+                                Icon(Icons.Default.Close, contentDescription = "清空", tint = Color(0xFF888888))
+                            }
                         }
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
-                    .tvTextField(),
-                shape = RoundedCornerShape(8.dp),
-                singleLine = true
-            )
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                        .tvTextField(),
+                    shape = RoundedCornerShape(8.dp),
+                    singleLine = true
+                )
+            }
 
             Divider(color = Color(0xFF2A2A2A))
 
             // -----------------------------------------------------------------
             // 主体区域：左列分组 + 右列频道（双列布局）
-            // 收藏/历史/队列 tab 无分组数据，直接全宽显示频道列表
+            // 收藏/历史 tab 无分组数据，直接全宽显示频道列表
             // -----------------------------------------------------------------
             if (showGroups) {
                 Row(modifier = Modifier.fillMaxSize()) {
@@ -255,7 +238,6 @@ private fun ChannelListContent(
                     ChannelTab.LOCAL -> "暂无本地频道"
                     ChannelTab.FAV -> "暂无收藏\n点击频道右侧星标添加"
                     ChannelTab.HIST -> "暂无历史\n播放后会自动记录"
-                    ChannelTab.QUEUE -> "暂无队列\n长按频道可加入队列"
                 },
                 color = Color(0xFF888888),
                 fontSize = 13.sp,
@@ -395,7 +377,7 @@ fun PanelHeader(
 }
 
 /**
- * 5 个 Tab 行（订阅/本地/收藏/历史/队列）。
+ * 4 个 Tab 行（订阅/本地/收藏/历史）。
  */
 @Composable
 private fun ChannelTabsRow(
@@ -406,8 +388,7 @@ private fun ChannelTabsRow(
         ChannelTab.SUB to "订阅",
         ChannelTab.LOCAL to "本地",
         ChannelTab.FAV to "收藏",
-        ChannelTab.HIST to "历史",
-        ChannelTab.QUEUE to "队列"
+        ChannelTab.HIST to "历史"
     )
     Surface(
         color = Color(0xFF1A1A1A),

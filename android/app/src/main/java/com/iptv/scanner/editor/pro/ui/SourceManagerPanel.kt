@@ -1,5 +1,6 @@
 package com.iptv.scanner.editor.pro.ui
 
+import android.content.res.Configuration
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -56,6 +58,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.font.FontWeight
@@ -99,12 +102,20 @@ fun SourceManagerPanel(viewModel: AppViewModel) {
         runCatching { closeFocusRequester.requestFocus() }
     }
 
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     Surface(
         color = Color(0xF0121212),
         modifier = Modifier.fillMaxSize()
     ) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            val contentMod = if (isLandscape) {
+                Modifier.fillMaxHeight().fillMaxWidth(0.65f)
+            } else {
+                Modifier.fillMaxSize()
+            }
         Column(
-            modifier = Modifier.fillMaxSize().focusGroup().verticalScroll(rememberScrollState()).systemBarsPadding().padding(16.dp)
+            modifier = contentMod.focusGroup().verticalScroll(rememberScrollState()).systemBarsPadding().padding(16.dp)
         ) {
             // 标题栏
             Row(
@@ -305,6 +316,7 @@ fun SourceManagerPanel(viewModel: AppViewModel) {
                         }
                     }
                 }
+            }
             }
         }
     }

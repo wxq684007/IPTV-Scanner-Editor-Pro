@@ -81,7 +81,7 @@ import java.util.Locale
  * - EPG current/future programs trigger reminder via setReminder
  */
 @Composable
-fun EpgPanel(viewModel: AppViewModel) {
+fun EpgPanel(viewModel: AppViewModel, compact: Boolean = false) {
     val currentChannel by viewModel.currentChannel.collectAsState()
     val epg by viewModel.currentEpg.collectAsState()
     val loading by viewModel.epgLoading.collectAsState()
@@ -98,23 +98,34 @@ fun EpgPanel(viewModel: AppViewModel) {
         kotlin.runCatching { closeFocusRequester.requestFocus() }
     }
 
-    Surface(
-        color = Color(0xF0161616),
-        modifier = Modifier
+    val surfaceModifier = if (compact) {
+        // compact 模式：横屏抽屉，宽度 1/4
+        Modifier
+            .fillMaxHeight()
+            .fillMaxWidth(0.25f)
+    } else {
+        Modifier
             .fillMaxHeight()
             .fillMaxWidth(0.92f)
             .widthIn(max = 380.dp)
+    }
+
+    Surface(
+        color = Color(0xF0161616),
+        modifier = surfaceModifier
     ) {
-        Column(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
+        Column(modifier = Modifier.fillMaxSize().then(if (compact) Modifier else Modifier.systemBarsPadding())) {
             // -----------------------------------------------------------------
-            // 标题栏
+            // 标题栏（compact 模式不显示）
             // -----------------------------------------------------------------
-            PanelHeader(
-                title = "节目单",
-                subtitle = currentChannel?.name ?: "未选择频道",
-                onClose = { viewModel.toggleEpgPanel() },
-                closeFocusRequester = closeFocusRequester
-            )
+            if (!compact) {
+                PanelHeader(
+                    title = "节目单",
+                    subtitle = currentChannel?.name ?: "未选择频道",
+                    onClose = { viewModel.toggleEpgPanel() },
+                    closeFocusRequester = closeFocusRequester
+                )
+            }
 
             // -----------------------------------------------------------------
             // 日期切换栏（±7 天）
@@ -155,27 +166,29 @@ fun EpgPanel(viewModel: AppViewModel) {
             }
 
             // -----------------------------------------------------------------
-            // 搜索框
+            // 搜索框（compact 模式不显示）
             // -----------------------------------------------------------------
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                placeholder = { Text("搜索节目...", color = Color(0xFF888888), fontSize = 13.sp) },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Color(0xFF888888)) },
-                trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { searchQuery = "" }, modifier = Modifier.tvFocusBorder()) {
-                            Icon(Icons.Default.Close, contentDescription = "清空", tint = Color(0xFF888888))
+            if (!compact) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("搜索节目...", color = Color(0xFF888888), fontSize = 13.sp) },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Color(0xFF888888)) },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }, modifier = Modifier.tvFocusBorder()) {
+                                Icon(Icons.Default.Close, contentDescription = "清空", tint = Color(0xFF888888))
+                            }
                         }
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 6.dp)
                     .tvTextField(),
                 shape = RoundedCornerShape(8.dp),
                 singleLine = true
             )
+            }
 
             // -----------------------------------------------------------------
             // 节目列表

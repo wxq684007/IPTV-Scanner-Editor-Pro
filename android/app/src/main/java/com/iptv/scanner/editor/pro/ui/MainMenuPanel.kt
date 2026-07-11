@@ -1,10 +1,12 @@
 package com.iptv.scanner.editor.pro.ui
 
+import android.content.res.Configuration
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.filled.ListAlt
@@ -52,7 +55,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -62,20 +67,14 @@ import com.iptv.scanner.editor.pro.ui.theme.tvFocusBorder
  * 主菜单面板：与 PC 端 mobile/index.html 主菜单（panelMenu）对齐。
  *
  * 3 个分组：
- * - 快捷（2 项）：频道列表 / 节目单 EPG（TV 端遥控器最常用入口，置顶方便快速访问）
+ * - 快捷（2 项）：频道列表 / 节目单 EPG
  * - 文件（6 项）：打开播放列表 / 打开网络流 / 打开本地视频 / 订阅源管理 / EPG 订阅源 / 频道映射
  * - 播放（13 项）：字幕 / 视频 / 音频 / 播放 / 截图 / A/V 同步 / 网络增强 /
  *   工具 / 视图 / 设置 / 关于 / 收藏 / 退出
  *
- * TV 端遥控器便捷访问：
- * - 直播模式（无面板）：DPAD_LEFT/RIGHT 直接切换 EPG/频道面板
- * - 任何模式：MENU 键打开主菜单，第一项就是"频道列表"，第二项是"节目单 EPG"
- *
- * 当前阶段只实现入口结构和已实现功能（频道列表 / EPG / 收藏 / 退出），
- * 其余入口点击时显示 OSD 提示"功能开发中"，后续逐步补齐子面板。
- *
- * 与内存规则对齐：
- * - File operations (local files, URLs, video, subscription management) are accessed via '文件' group in main menu
+ * 布局自适应：
+ * - 竖屏：单列列表（图标 + 标题 + 副标题）
+ * - 横屏：多列网格（4 列，仅图标 + 标题，更紧凑高效）
  */
 @Composable
 fun MainMenuPanel(viewModel: AppViewModel) {
@@ -85,9 +84,7 @@ fun MainMenuPanel(viewModel: AppViewModel) {
 
     val isFavorite = currentIdx >= 0 && favorites.contains(currentIdx)
 
-    // SAF 文件选择器：用于"打开播放列表"和"打开本地视频"
-    // rememberLauncherForActivityResult 在 Composable 主体中创建（不能在 remember 块内），
-    // launcher 引用稳定，可被 remember 块中的闭包安全捕获。
+    // SAF 文件选择器
     val playlistLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -107,7 +104,6 @@ fun MainMenuPanel(viewModel: AppViewModel) {
                     viewModel.toggleMenuPanel()
                     viewModel.showFileBrowser()
                 } else {
-                    // M3U/M3U8 文件常见 MIME 类型 + 通配 text/plain 和 octet-stream（部分设备不识别 m3u MIME）
                     playlistLauncher.launch(arrayOf(
                         "application/x-mpegurl", "application/vnd.apple.mpegurl",
                         "audio/x-mpegurl", "video/x-mpegurl",
@@ -204,41 +200,156 @@ fun MainMenuPanel(viewModel: AppViewModel) {
         )
     }
 
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
     Surface(
         color = Color(0xF0161616),
         modifier = Modifier.fillMaxSize()
     ) {
-Column(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
-// 标题栏
-PanelHeader(
-    title = "主菜单",
+        Column(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
+            // 标题栏
+            PanelHeader(
+                title = "主菜单",
                 subtitle = "功能入口",
                 onClose = { viewModel.toggleMenuPanel() }
             )
 
-            // 菜单分组列表
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 4.dp)
-            ) {
-                sections.forEach { section ->
-                    item(key = "section_header_${section.title}") {
-                        SectionHeader(section.title)
-                    }
-                    items(
-                        items = section.entries,
-                        key = { entry -> section.title + "_" + entry.title }
-                    ) { entry ->
-                        MenuEntryItem(
-                            entry = entry,
-                            onClick = entry.onClick
-                        )
-                    }
-                    item(key = "section_divider_${section.title}") {
-                        Spacer(modifier = Modifier.height(4.dp))
+            if (isLandscape) {
+                // ---- 横屏：多列网格布局 ----
+                LandscapeMenuGrid(sections = sections)
+            } else {
+                // ---- 竖屏：单列列表布局 ----
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 4.dp)
+                ) {
+                    sections.forEach { section ->
+                        item(key = "section_header_${section.title}") {
+                            SectionHeader(section.title)
+                        }
+                        items(
+                            items = section.entries,
+                            key = { entry -> section.title + "_" + entry.title }
+                        ) { entry ->
+                            MenuEntryItem(
+                                entry = entry,
+                                onClick = entry.onClick
+                            )
+                        }
+                        item(key = "section_divider_${section.title}") {
+                            Spacer(modifier = Modifier.height(4.dp))
+                        }
                     }
                 }
             }
+        }
+    }
+}
+
+// -----------------------------------------------------------------
+// 横屏网格布局
+// -----------------------------------------------------------------
+
+/**
+ * 横屏主菜单网格：每个分区分组显示，每行 4 列。
+ * 每个菜单项为紧凑卡片（图标 + 标题），无副标题。
+ */
+@Composable
+private fun LandscapeMenuGrid(sections: List<MenuSection>) {
+    val columnCount = 4
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+    ) {
+        sections.forEach { section ->
+            item(key = "grid_header_${section.title}") {
+                SectionHeader(section.title)
+            }
+            // 将条目按 columnCount 分行
+            section.entries.chunked(columnCount).forEachIndexed { rowIdx, rowEntries ->
+                item(key = "grid_row_${section.title}_$rowIdx") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 3.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        rowEntries.forEach { entry ->
+                            MenuGridItem(
+                                entry = entry,
+                                onClick = entry.onClick,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        // 用空占位填满剩余列（保持等宽）
+                        repeat(columnCount - rowEntries.size) {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+            item(key = "grid_divider_${section.title}") {
+                Spacer(modifier = Modifier.height(6.dp))
+            }
+        }
+    }
+}
+
+/**
+ * 网格菜单项（横屏紧凑模式）：图标 + 标题
+ */
+@Composable
+private fun MenuGridItem(
+    entry: MenuEntry,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = if (entry.highlight) Color(0xFF4A9EFF).copy(alpha = 0.12f) else Color(0xFF1E1E1E),
+        shape = RoundedCornerShape(8.dp),
+        modifier = modifier
+            .height(72.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(vertical = 8.dp, horizontal = 4.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            // 图标
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (entry.highlight) Color(0xFF4A9EFF).copy(alpha = 0.2f)
+                        else Color(0xFF2A2A2A)
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = entry.icon,
+                    contentDescription = null,
+                    tint = if (entry.highlight) Color(0xFF4A9EFF) else Color(0xFFCCCCCC),
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            // 标题
+            Text(
+                text = entry.title,
+                color = if (entry.highlight) Color(0xFF6A9EFF) else Color.White,
+                fontSize = 11.sp,
+                fontWeight = if (entry.highlight) FontWeight.Medium else FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center
+            )
         }
     }
 }
@@ -288,7 +399,7 @@ private fun buildMenuSections(
     val quickSection = MenuSection(
         title = "快捷",
         entries = listOf(
-            MenuEntry(Icons.AutoMirrored.Filled.ListAlt, "频道列表", "订阅 / 本地 / 收藏 / 历史 / 队列", onChannels, highlight = true),
+            MenuEntry(Icons.AutoMirrored.Filled.ListAlt, "频道列表", "订阅 / 本地 / 收藏 / 历史", onChannels, highlight = true),
             MenuEntry(Icons.Default.CalendarMonth, "节目单 EPG", "当前频道节目 / 日期切换 / 提醒", onEpg, highlight = true)
         )
     )

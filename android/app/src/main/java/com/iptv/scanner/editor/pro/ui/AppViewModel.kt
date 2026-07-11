@@ -293,7 +293,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // -----------------------------------------------------------------
     // 频道列表面板状态
     // -----------------------------------------------------------------
-    enum class ChannelTab { SUB, LOCAL, FAV, HIST, QUEUE }
+    enum class ChannelTab { SUB, LOCAL, FAV, HIST }
 
     private val _channelsTab = MutableStateFlow(ChannelTab.SUB)
     val channelsTab: StateFlow<ChannelTab> = _channelsTab.asStateFlow()
@@ -1138,9 +1138,6 @@ private var _channelInputJob: kotlinx.coroutines.Job? = null
             ChannelTab.FAV -> all.mapIndexed { idx, c -> c to idx }
                 .filter { (c, idx) -> _favorites.value.contains(idx) }
             ChannelTab.HIST -> _history.value.mapNotNull { idx ->
-                all.getOrNull(idx)?.let { it to idx }
-            }
-            ChannelTab.QUEUE -> _queue.value.mapNotNull { idx ->
                 all.getOrNull(idx)?.let { it to idx }
             }
         }
@@ -2694,13 +2691,12 @@ private var _channelInputJob: kotlinx.coroutines.Job? = null
     fun showControls() { showControlsAutoHide() }
 
     /**
-     * 显示控制面板，TV 模式下 4 秒后自动隐藏（与 PC 端 autoHideControls 对齐）。
-     * 非TV 模式下仅显示不自动隐藏。
+     * 显示控制面板，所有模式下 4 秒后自动隐藏（与 PC 端 autoHideControls 对齐）。
      * 若控制层已 pin（持久模式），则不启动自动隐藏定时器。
      */
     fun showControlsAutoHide() {
         _controlsVisible.value = true
-        if (uiMode.value.isTV && !_controlsPinned.value) {
+        if (!_controlsPinned.value) {
             tvControlsAutoHideJob?.cancel()
             tvControlsAutoHideJob = viewModelScope.launch {
                 delay(4_000L)

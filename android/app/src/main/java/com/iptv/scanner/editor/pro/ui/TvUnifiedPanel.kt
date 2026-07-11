@@ -910,7 +910,7 @@ private fun MenuColumn(
     val menuItems = remember(hasCurrentChannel, isFavorite, multiViewActive, currentMultiViewLayout, perChannelEnabled, hasChannelSettings) {
         buildList {
             // 快捷分组
-            add(TvMenuItem("频道列表", "订阅 / 本地 / 收藏 / 历史 / 队列", Icons.AutoMirrored.Filled.ListAlt, onChannels, highlight = true))
+            add(TvMenuItem("频道列表", "订阅 / 本地 / 收藏 / 历史", Icons.AutoMirrored.Filled.ListAlt, onChannels, highlight = true))
             add(TvMenuItem("节目单 EPG", "当前频道节目 / 日期切换 / 提醒", Icons.Default.CalendarMonth, onEpg, highlight = true))
             // 文件分组
             add(TvMenuItem("打开播放列表", "选择 M3U/M3U8 文件", Icons.Default.FileOpen, onOpenPlaylist))

@@ -1,6 +1,7 @@
 package com.iptv.scanner.editor.pro.ui
 
 import android.content.Intent
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import android.util.Log
@@ -21,12 +22,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -80,6 +83,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -115,6 +119,7 @@ import java.util.Locale
 /**
  * 设置面板脚手架：标题栏 + 可滚动内容区域。
  * 与 PlayerSettingsPanel 风格统一，避免每个面板重复写标题栏代码。
+ * 横屏模式下自动限制内容宽度（65%），居中显示，避免设置项过宽。
  */
 @Composable
 private fun PanelScaffold(
@@ -131,13 +136,24 @@ private fun PanelScaffold(
     LaunchedEffect(Unit) {
         runCatching { closeFocusRequester.requestFocus() }
     }
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     Surface(
         color = Color(0xF0121212),
         modifier = Modifier.fillMaxSize()
     ) {
-        Column(
-            modifier = Modifier.fillMaxSize().focusGroup().systemBarsPadding().padding(16.dp)
-        ) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            val contentMod = if (isLandscape) {
+                Modifier.fillMaxHeight().fillMaxWidth(0.65f)
+            } else {
+                Modifier.fillMaxSize()
+            }
+            Column(
+                modifier = contentMod
+                    .focusGroup()
+                    .systemBarsPadding()
+                    .padding(16.dp)
+            ) {
             // 标题栏
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -177,6 +193,7 @@ private fun PanelScaffold(
                     .then(if (scrollable) Modifier.verticalScroll(rememberScrollState()) else Modifier)
             ) {
                 content()
+            }
             }
         }
     }
