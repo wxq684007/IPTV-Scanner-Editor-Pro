@@ -38,7 +38,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.text.KeyboardType
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Analytics
@@ -3851,63 +3851,6 @@ fun LyricsPanel(viewModel: AppViewModel) {
                     }
                 }
             }
-        }
-    }
-}
-
-// -----------------------------------------------------------------
-// 通用面板脚手架（全屏覆盖 + 标题栏 + 关闭按钮）
-// -----------------------------------------------------------------
-
-@Composable
-fun PanelScaffold(
-    title: String,
-    onClose: () -> Unit,
-    content: @Composable ColumnScope.() -> Unit
-) {
-    Surface(
-        modifier = Modifier.fillMaxSize().systemBarsPadding(),
-        color = MaterialTheme.colorScheme.background
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color(0xF0121212))
-        ) {
-            // 标题栏
-            Surface(color = Color(0xFF1A1A2E)) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = title,
-                        color = Color.White,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.weight(1f)
-                    )
-                    IconButton(
-                        onClick = onClose,
-                        modifier = Modifier.size(40.dp).tvFocusBorder()
-                    ) {
-                        Icon(
-                            Icons.Default.Close,
-                            contentDescription = "关闭",
-                            tint = Color.White
-                        )
-                    }
-                }
-            }
-            // 内容区域
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState()),
-                content = content
-            )
         }
     }
 }

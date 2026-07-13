@@ -296,6 +296,47 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // -----------------------------------------------------------------
     enum class ChannelTab { SUB, LOCAL, FAV, HIST }
 
+    /** 竖屏底部 Tab（频道/收藏/工具/设置） */
+    enum class PortraitTab { CHANNELS, FAV, TOOLS, SETTINGS }
+
+    private val _portraitTab = MutableStateFlow(PortraitTab.CHANNELS)
+    val portraitTab: StateFlow<PortraitTab> = _portraitTab.asStateFlow()
+
+    fun setPortraitTab(tab: PortraitTab) {
+        _portraitTab.value = tab
+    }
+
+    /** 获取指定频道的缓存 EPG 当前节目（用于频道列表显示） */
+    fun getCachedCurrentProgram(idx: Int): IptvEpgProgram? {
+        val programs = epgCache[idx] ?: return null
+        return ProgressHelper.findCurrentProgram(programs, System.currentTimeMillis())
+    }
+
+    /** 播放指定频道并打开 EPG 面板 */
+    fun playChannelAndShowEpg(idx: Int) {
+        playChannel(idx, silent = true)
+        showEpgPanel()
+    }
+
+    /** 频道信息详情面板 */
+    private val _channelInfoOpen = MutableStateFlow(false)
+    val channelInfoOpen: StateFlow<Boolean> = _channelInfoOpen.asStateFlow()
+
+    fun toggleChannelInfo() {
+        _channelInfoOpen.value = !_channelInfoOpen.value
+    }
+
+    /** 判断指定频道是否已收藏 */
+    fun isChannelFavorite(idx: Int): Boolean = _favorites.value.contains(idx)
+
+    /** 切换指定频道收藏状态 */
+    fun toggleFavoriteByIndex(idx: Int): Boolean {
+        val added = userPrefs.toggleFavorite(idx)
+        _favorites.value = userPrefs.getFavorites()
+        showOsd(if (added) "已收藏" else "已取消收藏")
+        return added
+    }
+
     private val _channelsTab = MutableStateFlow(ChannelTab.SUB)
     val channelsTab: StateFlow<ChannelTab> = _channelsTab.asStateFlow()
 
@@ -912,7 +953,7 @@ private var _channelInputJob: kotlinx.coroutines.Job? = null
     private val _audioVisualizerOpen = MutableStateFlow(false)
     val audioVisualizerOpen: StateFlow<Boolean> = _audioVisualizerOpen.asStateFlow()
     /** 频谱数据（0-1 归一化，32 个频段） */
-    private val _audioSpectrum = MutableStateFlow<FloatArray(FloatArray(32) { 0f })
+    private val _audioSpectrum = MutableStateFlow(FloatArray(32) { 0f })
     val audioSpectrum: StateFlow<FloatArray> = _audioSpectrum.asStateFlow()
 
     /** 歌词面板 */
@@ -4325,8 +4366,8 @@ private var _channelInputJob: kotlinx.coroutines.Job? = null
             val attrs = StringBuilder()
             if (ch.tvgId.isNotEmpty()) attrs.append(" tvg-id=\"${ch.tvgId}\"")
             if (ch.tvgName.isNotEmpty()) attrs.append(" tvg-name=\"${ch.tvgName}\"")
-            if (ch.tvgLogo.isNotEmpty()) attrs.append(" tvg-logo=\"${ch.tvgLogo}\"")
-            if (ch.groupTitle.isNotEmpty()) attrs.append(" group-title=\"${ch.groupTitle}\"")
+            if (ch.logo.isNotEmpty()) attrs.append(" tvg-logo=\"${ch.logo}\"")
+            if (ch.group.isNotEmpty()) attrs.append(" group-title=\"${ch.group}\"")
             sb.append("#EXTINF:-1$attrs,${ch.name}\n")
             sb.append("${ch.url}\n")
         }
@@ -4371,7 +4412,7 @@ private var _channelInputJob: kotlinx.coroutines.Job? = null
             showOsd("刷新", "正在重新加载...")
             try {
                 loadChannels()
-                loadEpgForChannel(_currentIdx.value)
+                fetchEpgForChannel(_currentIdx.value)
                 showOsd("刷新", "已完成")
             } catch (e: Exception) {
                 showOsd("刷新", "失败: ${e.message}")
@@ -4550,7 +4591,7 @@ private var _channelInputJob: kotlinx.coroutines.Job? = null
                         // 从 mpv 读取音频电平（af-lavfi spectrumsynth 或 peak level）
                         // 简化方案：读取 audio-params 和 volume 模拟频谱
                         val volume = mpv.getPropertyDouble("volume") ?: 100.0
-                        val volFactor = (volume / 100.0).coerceIn(0.0, 1.0)
+                        val volFactor = (volume / 100.0).coerceIn(0.0, 1.0).toFloat()
                         // 生成模拟频谱数据（32 频段）
                         val spectrum = FloatArray(32) { i ->
                             val freq = (i + 1).toFloat() / 32f

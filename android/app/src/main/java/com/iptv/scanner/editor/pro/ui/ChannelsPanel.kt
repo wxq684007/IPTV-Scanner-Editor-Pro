@@ -380,7 +380,7 @@ fun PanelHeader(
  * 4 个 Tab 行（订阅/本地/收藏/历史）。
  */
 @Composable
-private fun ChannelTabsRow(
+fun ChannelTabsRow(
     currentTab: ChannelTab,
     onTabSelected: (ChannelTab) -> Unit
 ) {

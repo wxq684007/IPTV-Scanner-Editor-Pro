@@ -52,7 +52,7 @@ class MpvController : MPVLib.EventObserver, Player {
     )
 
     @Volatile
-    private var mpvView: MPVView? = null
+    private var mpvView: MPVViewLike? = null
 
     /**
      * 黑屏 fallback 标志：vo=gpu 在部分 GPU（如 Mali-G76）上存在 EGL 兼容性问题导致黑屏。
@@ -126,7 +126,7 @@ var onFileError: (() -> Unit)? = null
      * 绑定 MPVView 实例，注册 EventObserver，补充观察 MPVView 未观察的属性。
      * 必须在 MPVView.initialize() 之后调用。
      */
-    fun attach(view: MPVView) {
+    fun attach(view: MPVViewLike) {
         this.mpvView = view
         MPVLib.addObserver(this)
         // MPVView.observeProperties() 已观察 time-pos/duration/pause/eof-reached/volume/mute/media-title/track-list
@@ -196,10 +196,10 @@ var onFileError: (() -> Unit)? = null
 
     /** Player 接口实现：转发到 attach(MPVView) */
     override fun attachView(view: Any) {
-        if (view is MPVView) {
+        if (view is MPVViewLike) {
             attach(view)
         } else {
-            Log.w(TAG, "attachView: view is not MPVView (${view.javaClass.name}), ignored")
+            Log.w(TAG, "attachView: view is not MPVViewLike (${view.javaClass.name}), ignored")
         }
     }
 
@@ -387,7 +387,7 @@ var onFileError: (() -> Unit)? = null
     fun getVideoBoundsOnScreen(): android.graphics.Rect? {
         val view = mpvView ?: return null
         val rect = android.graphics.Rect()
-        val visible = view.getGlobalVisibleRect(rect)
+        val visible = view.asView().getGlobalVisibleRect(rect)
         return if (visible) rect else null
     }
 
@@ -1041,7 +1041,7 @@ var onFileError: (() -> Unit)? = null
     private fun postOnUiThread(block: () -> Unit) {
         val v = mpvView
         if (v != null) {
-            v.post { block() }
+            v.asView().post { block() }
         } else {
             Log.w(TAG, "MPVView not attached, skip command")
         }
@@ -1207,7 +1207,7 @@ var onFileError: (() -> Unit)? = null
             if (blackScreenRetryCount < 2) {
                 // 首次检测到黑屏：可能是直播流还在缓冲，3 秒后复查
                 Log.w(TAG, "Possible black screen (attempt $blackScreenRetryCount, videoWidth=$videoWidth, vfps=$estimatedVfps), retrying in 3s...")
-                mpvView?.postDelayed(blackScreenCheckRunnable, 3000)
+                mpvView?.asView()?.postDelayed(blackScreenCheckRunnable, 3000)
                 return@Runnable
             }
             // 连续两次检测到 videoWidth==0，确认黑屏
@@ -1234,7 +1234,7 @@ var onFileError: (() -> Unit)? = null
                     }
                     Log.i(TAG, "fbo-format downgraded to rgba8, reloading...")
                     // 6 秒后再次检测是否恢复
-                    mpvView?.postDelayed(blackScreenCheckRunnable, 6000)
+                    mpvView?.asView()?.postDelayed(blackScreenCheckRunnable, 6000)
                 } catch (e: Throwable) {
                     Log.e(TAG, "fbo-format downgrade failed", e)
                     // 降级失败，直接 fallback 到 mediacodec_embed
@@ -1277,11 +1277,11 @@ var onFileError: (() -> Unit)? = null
      */
     private fun scheduleBlackScreenCheck() {
         val view = mpvView ?: return
-        view.removeCallbacks(blackScreenCheckRunnable)
+        view.asView().removeCallbacks(blackScreenCheckRunnable)
         blackScreenRetryCount = 0
         // 记录诊断信息，方便排查黑屏问题
         Log.i(TAG, "scheduleBlackScreenCheck: diagnostic=${mpvView?.getDiagnosticInfo()}")
-        view.postDelayed(blackScreenCheckRunnable, 6000)
+        view.asView().postDelayed(blackScreenCheckRunnable, 6000)
     }
 
     companion object {

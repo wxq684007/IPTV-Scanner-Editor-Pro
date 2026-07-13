@@ -6,6 +6,7 @@ import android.util.AttributeSet
 import android.util.Log
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import android.view.View
 import `is`.xyz.mpv.MPVLib
 import com.iptv.scanner.editor.pro.data.UserPrefs
 
@@ -32,7 +33,7 @@ import com.iptv.scanner.editor.pro.data.UserPrefs
 class MPVView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null
-) : SurfaceView(context, attrs), SurfaceHolder.Callback {
+) : SurfaceView(context, attrs), SurfaceHolder.Callback, MPVViewLike {
 
     // 保存初始化参数，用于 mpv 核心 shutdown 后重新创建实例
     private var savedConfigDir: String? = null
@@ -43,14 +44,15 @@ class MPVView @JvmOverloads constructor(
      * mpv 核心重建回调。当 ensureInstanceAlive() 重新创建 mpv 实例后调用，
      * 让外部（MpvController）能重新注册 observeProperty 和同步状态。
      */
-    var onInstanceRecreated: (() -> Unit)? = null
+    override var onInstanceRecreated: (() -> Unit)? = null
 
-    @JvmOverloads
-    fun initialize(
+    override fun asView(): View = this
+
+    override fun initialize(
         configDir: String,
         cacheDir: String,
-        vo: String = DEFAULT_VO,
-        hwdec: String = DEFAULT_HWDEC
+        vo: String,
+        hwdec: String
     ) {
         voInUse = vo
         savedConfigDir = configDir
@@ -195,7 +197,7 @@ class MPVView @JvmOverloads constructor(
         }
     }
 
-    fun destroy() {
+    override fun destroy() {
         holder.removeCallback(this)
         if (myGeneration != activeGeneration) {
             Log.i(TAG, "destroy: skipped (myGen=$myGeneration, activeGen=$activeGeneration)")
@@ -238,13 +240,13 @@ class MPVView @JvmOverloads constructor(
     private var myGeneration: Int = 0
 
     @Volatile
-    var pendingResumePos: Double = -1.0
+    override var pendingResumePos: Double = -1.0
 
-    fun setVoInUse(vo: String) {
+    override fun setVoInUse(vo: String) {
         voInUse = vo
     }
 
-    val isSurfaceValid: Boolean
+    override val isSurfaceValid: Boolean
         get() = holder.surface != null && holder.surface.isValid
 
     /**
@@ -260,7 +262,7 @@ class MPVView @JvmOverloads constructor(
      *
      * 调用后需重新 loadfile 触发新 VO 渲染。
      */
-    fun reattachSurfaceWithVo(vo: String) {
+    override fun reattachSurfaceWithVo(vo: String) {
         voInUse = vo
         Log.i(TAG, "reattachSurfaceWithVo: switching to vo=$vo")
         try {
@@ -292,7 +294,7 @@ class MPVView @JvmOverloads constructor(
      * 诊断信息：返回当前 VO、hwdec、surface 状态、视频尺寸等。
      * 用于日志输出和用户报告问题时的诊断。
      */
-    fun getDiagnosticInfo(): String {
+    override fun getDiagnosticInfo(): String {
         val vo = try { MPVLib.getPropertyString("vo") ?: "unknown" } catch (_: Throwable) { "error" }
         val hwdec = try { MPVLib.getPropertyString("hwdec") ?: "unknown" } catch (_: Throwable) { "error" }
         val hwdecCurrent = try { MPVLib.getPropertyString("hwdec-current") ?: "none" } catch (_: Throwable) { "error" }
@@ -306,7 +308,7 @@ class MPVView @JvmOverloads constructor(
             "surfaceValid=$surfaceValid, voInUse=$voInUse"
     }
 
-    fun playFile(path: String) {
+    override fun playFile(path: String) {
         // 确保 mpv 核心存活：如果核心已 shutdown，先重新创建
         if (!ensureInstanceAlive()) {
             Log.e(TAG, "playFile: mpv instance not alive, cannot play")
@@ -329,7 +331,7 @@ class MPVView @JvmOverloads constructor(
      * 此方法重置 nativeInstanceCreated 标志，使下次 initialize/ensureInstanceAlive
      * 能重新创建 mpv 实例。
      */
-    fun markInstanceDead() {
+    override fun markInstanceDead() {
         Log.w(TAG, "markInstanceDead: mpv core shutdown detected, marking instance as dead")
         nativeInstanceCreated = false
         nativeInstanceAlive = false
@@ -393,7 +395,7 @@ class MPVView @JvmOverloads constructor(
         }
     }
 
-    fun stop() {
+    override fun stop() {
         if (!nativeInstanceCreated || !nativeInstanceAlive) return
         try {
             MPVLib.command(arrayOf("stop"))
@@ -461,7 +463,7 @@ class MPVView @JvmOverloads constructor(
          * surfaceDestroyed() 检查此标志，为 false 时跳过 native 调用。
          */
         @Volatile
-        private var nativeInstanceAlive = false
+        internal var nativeInstanceAlive = false
 
         /**
          * native mpv 实例是否已创建（MPVLib.create 至少调用过一次）。
@@ -474,7 +476,7 @@ class MPVView @JvmOverloads constructor(
          * 参见 [nativeHandleCreated]。
          */
         @Volatile
-        private var nativeInstanceCreated = false
+        internal var nativeInstanceCreated = false
 
         /**
          * native mpv 句柄是否已创建（MPVLib.create() 调用成功后置 true，永不重置）。
@@ -491,10 +493,10 @@ class MPVView @JvmOverloads constructor(
          * 修复：用 nativeHandleCreated 标志跳过 create()，直接 init() 重新初始化核心。
          */
         @Volatile
-        private var nativeHandleCreated = false
+        internal var nativeHandleCreated = false
 
         @Volatile
-        private var activeGeneration: Int = 0
+        internal var activeGeneration: Int = 0
 
         /**
          * 强制重建标志：由 forceRecreate() 设置。
@@ -502,7 +504,7 @@ class MPVView @JvmOverloads constructor(
          * 也会强制标记为死亡并重建核心，用于清除卡死的 demuxer。
          */
         @Volatile
-        private var forceRecreatePending = false
+        internal var forceRecreatePending = false
     }
 
     /**
@@ -520,7 +522,7 @@ class MPVView @JvmOverloads constructor(
      * 配合 idle=yes，mpv 核心永不自动关闭，forceRecreate 只需重置状态而非重建核心。
      * demuxer-read-timeout=5 确保卡死的 demuxer 最终会超时释放。
      */
-    fun forceRecreate() {
+    override fun forceRecreate() {
         Log.w(TAG, "forceRecreate: resetting mpv state (stop + playlist-clear, no quit)")
         forceRecreatePending = true
         try {

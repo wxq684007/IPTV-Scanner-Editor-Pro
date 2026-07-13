@@ -50,6 +50,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
@@ -77,11 +79,31 @@ import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
 import com.iptv.scanner.editor.pro.data.ReminderItem
 import com.iptv.scanner.editor.pro.data.UserPrefs
+import com.iptv.scanner.editor.pro.data.IptvChannel
 import com.iptv.scanner.editor.pro.mpv.MPVView
+import com.iptv.scanner.editor.pro.mpv.MPVTextureView
+import com.iptv.scanner.editor.pro.mpv.MPVViewLike
 import com.iptv.scanner.editor.pro.player.PlayerType
+import com.iptv.scanner.editor.pro.player.ProgressHelper
+import com.iptv.scanner.editor.pro.ui.AppViewModel.ChannelTab
 import com.iptv.scanner.editor.pro.ui.theme.PlayerOverlayColors
 import com.iptv.scanner.editor.pro.ui.theme.rememberPlayerOverlayColors
 import androidx.media3.ui.PlayerView
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.layout.PaddingValues
 
 /**
  * 主播放屏：MPVView + 透明控制层 + 面板抽屉 + OSD 浮层。
@@ -135,6 +157,7 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
     val audioVisualizerOpen by viewModel.audioVisualizerOpen.collectAsState()
     val lyricsOpen by viewModel.lyricsOpen.collectAsState()
     val exitConfirmOpen by viewModel.exitConfirmOpen.collectAsState()
+    val channelInfoOpen by viewModel.channelInfoOpen.collectAsState()
     val openUrlDialogOpen by viewModel.openUrlDialogOpen.collectAsState()
     val updateDialogOpen by viewModel.updateDialogOpen.collectAsState()
     val triggeredReminder by viewModel.triggeredReminder.collectAsState()
@@ -194,7 +217,8 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
             reminderPanelOpen || resumePanelOpen || bookmarkPanelOpen ||
             epgTimelineOpen || searchPanelOpen || streamQualityPanelOpen ||
             recentPanelOpen || clipExportPanelOpen || audioVisualizerOpen || lyricsOpen ||
-            exitConfirmOpen || openUrlDialogOpen || updateDialogOpen
+            exitConfirmOpen || openUrlDialogOpen || updateDialogOpen ||
+            channelInfoOpen
     // 控制层是否应该显示
     val showControls = controlsVisible && !anyPanelOpen
 
@@ -206,11 +230,13 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
             reminderPanelOpen || resumePanelOpen || bookmarkPanelOpen ||
             epgTimelineOpen || searchPanelOpen || streamQualityPanelOpen ||
             recentPanelOpen || clipExportPanelOpen || audioVisualizerOpen || lyricsOpen ||
-            exitConfirmOpen || openUrlDialogOpen || updateDialogOpen
+            exitConfirmOpen || openUrlDialogOpen || updateDialogOpen ||
+            channelInfoOpen
     val configuration = LocalConfiguration.current
     val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
     // 竖屏 PHONE 模式：默认上下分屏（视频 16:9 + 频道列表）
     val portraitSplit = uiMode.isPhone && isPortrait && !multiViewState.active && !anyFullScreenPanel
+    Log.e("MainPlayerScreen", "portraitSplit=$portraitSplit uiMode=$uiMode isPortrait=$isPortrait multiView=${multiViewState.active} anyFullScreenPanel=$anyFullScreenPanel")
     // 横屏 PHONE 模式：使用 compact 抽屉
     val landscapeCompact = uiMode.isPhone && !isPortrait
 
@@ -233,10 +259,16 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
         // -----------------------------------------------------------------
         val createPlayerView: (android.content.Context) -> android.view.View = { ctx ->
             val pType = viewModel.playerType.value
-            Log.i("MainPlayerScreen", "Creating player view, uiMode=$uiMode, type=$pType")
+            Log.i("MainPlayerScreen", "Creating player view, uiMode=$uiMode, type=$pType, portraitSplit=$portraitSplit")
             when (pType) {
                 PlayerType.MPV -> {
-                    val mpvView = MPVView(ctx)
+                    // 竖屏用 TextureView（避免 SurfaceView “打孔”覆盖信息栏），
+                    // 横屏/TV 用 SurfaceView（性能更好）
+                    val mpvView: MPVViewLike = if (portraitSplit) {
+                        MPVTextureView(ctx)
+                    } else {
+                        MPVView(ctx)
+                    }
                     val configDir = ctx.getDir("mpv_config", Context.MODE_PRIVATE).absolutePath
                     val cacheDir = ctx.cacheDir.absolutePath
                     val userPrefs = UserPrefs.getInstance()
@@ -245,11 +277,11 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
                     try {
                         mpvView.initialize(configDir, cacheDir, vo = vo, hwdec = hwdec)
                         player.attachView(mpvView)
-                        Log.i("MainPlayerScreen", "MPVView initialized (vo=$vo, hwdec=$hwdec) + attached")
+                        Log.i("MainPlayerScreen", "${mpvView.asView().javaClass.simpleName} initialized (vo=$vo, hwdec=$hwdec) + attached")
                     } catch (e: Throwable) {
                         Log.e("MainPlayerScreen", "MPVView initialize failed", e)
                     }
-                    mpvView
+                    mpvView.asView()
                 }
                 PlayerType.EXO, PlayerType.SYSTEM -> {
                     val exoView = PlayerView(ctx).apply {
@@ -263,9 +295,9 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
             }
         }
         val onReleasePlayer: (android.view.View) -> Unit = { view ->
-            Log.i("MainPlayerScreen", "onRelease: destroying player view")
+            Log.i("MainPlayerScreen", "onRelease: destroying player view (${view.javaClass.simpleName})")
             when (view) {
-                is MPVView -> view.destroy()
+                is MPVViewLike -> view.destroy()
                 is PlayerView -> {
                     view.player = null
                     viewModel.detachOldPlayer()
@@ -276,7 +308,9 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
 
         // 用 movableContentOf 包装主画面 AndroidView，确保 multiViewState.active 变化时
         // AndroidView 在 Compose 树中移动而不销毁重建（避免 MPV 实例销毁导致播放中断）。
-        val primaryPlayer = remember {
+        // key=portraitSplit：横竖屏切换时重建 View（SurfaceView ↔ TextureView），
+        // mpv 实例通过 keep-alive 策略自动复用，不会中断播放。
+        val primaryPlayer = remember(portraitSplit) {
             movableContentOf {
                 AndroidView(
                         factory = createPlayerView,
@@ -295,32 +329,31 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
             // TV 全屏：视频居中 + 统一面板（DPAD 导航）
             // -----------------------------------------------------------------
             if (portraitSplit) {
-                // ---- 竖屏分屏 ----
+                // ---- 竖屏新布局 V2：信息栏→视频→播放控制→动态内容→底部Tab ----
                 Column(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
-                    // 视频区域：16:9 比例，宽度填满（控制层自动隐藏 + 点击呼出）
-                    SplitVideoArea(
+                    // 1. 固定信息栏（台标+频道名+分类，右侧收藏+信息按钮）
+                    PortraitInfoBarV2(viewModel = viewModel)
+                    // 2. 固定视频区域 (16:9)
+                    PortraitVideoArea(
                         primaryPlayer = primaryPlayer,
                         aspectRatio = aspectRatio,
-                        showControls = showControls,
                         anyPanelOpen = anyPanelOpen,
-                        paused = paused,
-                        viewModel = viewModel,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(16f / 9f)
+                        viewModel = viewModel
                     )
-                    // 信息栏：频道名 + 台标 + 媒体信息 + EPG + EPG查看按钮
-                    PortraitInfoBar(viewModel = viewModel)
-                    // 频道列表区域：填满剩余空间（无搜索框）
+                    // 3. 固定播放控制栏（播放/停止 + 圆点进度条）
+                    PortraitControlsV2(viewModel = viewModel)
+                    // 4. 动态内容区域 (根据底部 Tab 切换)
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f)
                     ) {
-                        ChannelsPanel(viewModel = viewModel, inline = true, noSearch = true)
+                        PortraitDynamicContent(viewModel = viewModel)
                     }
+                    // 5. 固定底部 Tab 栏
+                    PortraitBottomTabBar(viewModel = viewModel)
                 }
-                // EPG 节目单（竖屏分屏模式下作为全屏覆盖抽屉）
+                // EPG 节目单（全屏覆盖抽屉）
                 if (epgPanelOpen) {
                     Row(modifier = Modifier.fillMaxSize()) {
                         EpgPanel(viewModel = viewModel)
@@ -589,6 +622,11 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
 
         // 退出确认对话框（BACK 键退出时提示：立即退出 / 进入 PiP）
         ExitConfirmDialog(viewModel = viewModel)
+
+        // 频道信息详情对话框（信息栏"信息"按钮触发）
+        if (channelInfoOpen) {
+            ChannelInfoDialog(viewModel = viewModel)
+        }
 
         // -----------------------------------------------------------------
         // 5. OSD 浮层（顶部居中，最顶层）
@@ -1413,6 +1451,1263 @@ private fun QuickActionItem(
             color = tint,
             fontSize = 9.sp,
             maxLines = 1
+        )
+    }
+}
+
+// ============================================================
+// 竖屏新布局组件
+// ============================================================
+
+/**
+ * 竖屏视频区域（固定 16:9，纯视频无覆盖层）
+ */
+@Composable
+private fun PortraitVideoArea(
+    primaryPlayer: @Composable () -> Unit,
+    aspectRatio: Float,
+    anyPanelOpen: Boolean,
+    viewModel: AppViewModel
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(16f / 9f)
+            .background(Color.Black)
+    ) {
+        // 播放器（居中保持比例）
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .aspectRatio(aspectRatio)
+        ) {
+            primaryPlayer()
+        }
+    }
+}
+
+/**
+ * 竖屏固定工具栏：上一频道/播放暂停/下一频道/静音/音量/截图/比例/画中画
+ */
+@Composable
+private fun PortraitToolbar(viewModel: AppViewModel) {
+    val mpv = viewModel.mpv
+    val paused by mpv.paused.collectAsState()
+    val muted by mpv.muted.collectAsState()
+    val volume by mpv.volume.collectAsState()
+    val showExitCatchup by viewModel.showExitCatchup.collectAsState()
+    val playbackState by viewModel.playbackState.collectAsState()
+    val aspectRatioIdx by viewModel.aspectRatioIdx.collectAsState()
+    val oc = rememberPlayerOverlayColors()
+
+    Surface(
+        color = oc.infoBarBg,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            // 上一频道
+            IconButton(onClick = { viewModel.prevChannel() }, modifier = Modifier.size(34.dp)) {
+                Icon(Icons.Default.SkipPrevious, contentDescription = "上一频道", tint = oc.iconTint, modifier = Modifier.size(22.dp))
+            }
+            // 播放/暂停
+            IconButton(onClick = { mpv.togglePause() }, modifier = Modifier.size(38.dp)) {
+                Icon(
+                    imageVector = if (paused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                    contentDescription = if (paused) "播放" else "暂停",
+                    tint = oc.iconTint,
+                    modifier = Modifier.size(26.dp)
+                )
+            }
+            // 下一频道
+            IconButton(onClick = { viewModel.nextChannel() }, modifier = Modifier.size(34.dp)) {
+                Icon(Icons.Default.SkipNext, contentDescription = "下一频道", tint = oc.iconTint, modifier = Modifier.size(22.dp))
+            }
+            // 静音
+            IconButton(onClick = { mpv.toggleMute() }, modifier = Modifier.size(34.dp)) {
+                Icon(
+                    imageVector = if (muted || volume == 0) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
+                    contentDescription = "静音",
+                    tint = if (muted) oc.iconTintActive else oc.iconTint,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            // 音量滑块
+            Slider(
+                value = volume.toFloat(),
+                onValueChange = { mpv.setVolume(it.toInt()) },
+                valueRange = 0f..130f,
+                modifier = Modifier.weight(1f).height(24.dp),
+                colors = SliderDefaults.colors(
+                    thumbColor = oc.accent,
+                    activeTrackColor = oc.accent,
+                    inactiveTrackColor = oc.trackInactive
+                )
+            )
+            // 截图
+            IconButton(onClick = { viewModel.takeScreenshot("video") }, modifier = Modifier.size(34.dp)) {
+                Icon(Icons.Default.CropFree, contentDescription = "截图", tint = oc.iconTint, modifier = Modifier.size(20.dp))
+            }
+            // 画面比例
+            IconButton(onClick = { viewModel.cycleAspectRatio() }, modifier = Modifier.size(34.dp)) {
+                Icon(Icons.Default.AspectRatio, contentDescription = "画面比例", tint = if (aspectRatioIdx > 0) oc.accent else oc.iconTint, modifier = Modifier.size(20.dp))
+            }
+            // 画中画
+            IconButton(onClick = { viewModel.enterPip() }, modifier = Modifier.size(34.dp)) {
+                Icon(Icons.Default.PictureInPicture, contentDescription = "画中画", tint = oc.iconTint, modifier = Modifier.size(20.dp))
+            }
+            // 回看/时移退出
+            if (showExitCatchup) {
+                IconButton(onClick = { viewModel.exitCatchup() }, modifier = Modifier.size(34.dp)) {
+                    Box(
+                        modifier = Modifier
+                            .size(26.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(oc.iconTintActive),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (playbackState.mode == com.iptv.scanner.editor.pro.player.PlayMode.TIMESHIFT) "时移" else "回看",
+                            color = Color.White,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 竖屏动态内容区域：根据底部 Tab 切换内容
+ */
+@Composable
+private fun PortraitDynamicContent(viewModel: AppViewModel) {
+    val portraitTab by viewModel.portraitTab.collectAsState()
+    when (portraitTab) {
+        AppViewModel.PortraitTab.CHANNELS -> {
+            PortraitChannelList(viewModel = viewModel, showFavoritesOnly = false)
+        }
+        AppViewModel.PortraitTab.FAV -> {
+            PortraitChannelList(viewModel = viewModel, showFavoritesOnly = true)
+        }
+        AppViewModel.PortraitTab.TOOLS -> {
+            PortraitToolsContent(viewModel = viewModel)
+        }
+        AppViewModel.PortraitTab.SETTINGS -> {
+            PortraitSettingsContent(viewModel = viewModel)
+        }
+    }
+}
+
+// -----------------------------------------------------------------
+// EPG 节目单内容（竖屏 Tab 内简化版）
+// -----------------------------------------------------------------
+
+@Composable
+private fun PortraitEpgContent(viewModel: AppViewModel) {
+    val epg by viewModel.currentEpg.collectAsState()
+    val loading by viewModel.epgLoading.collectAsState()
+    val currentChannel by viewModel.currentChannel.collectAsState()
+    val oc = rememberPlayerOverlayColors()
+
+    // 每秒刷新当前时间（用于高亮当前节目）
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            now = System.currentTimeMillis()
+            delay(1000L)
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        // 标题栏
+        Surface(color = oc.infoBarBg, modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "节目单",
+                    color = oc.textPrimary,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = currentChannel?.name ?: "未选择频道",
+                    color = oc.textSecondary,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        // 内容
+        when {
+            loading -> {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("加载中...", color = oc.textSecondary, fontSize = 13.sp)
+                }
+            }
+            epg.isEmpty() -> {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("暂无节目信息", color = oc.textSecondary, fontSize = 13.sp)
+                }
+            }
+            else -> {
+                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    items(epg) { program ->
+                        val isCurrent = portraitIsCurrentProgram(program, now)
+                        val isPast = portraitIsPastProgram(program, now)
+                        PortraitEpgItem(
+                            program = program,
+                            isCurrent = isCurrent,
+                            isPast = isPast,
+                            oc = oc,
+                            onClick = {
+                                if (isPast && !isCurrent) {
+                                    viewModel.startCatchup(program)
+                                } else {
+                                    viewModel.toggleReminder(program, currentChannel)
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PortraitEpgItem(
+    program: com.iptv.scanner.editor.pro.data.IptvEpgProgram,
+    isCurrent: Boolean,
+    isPast: Boolean,
+    oc: PlayerOverlayColors,
+    onClick: () -> Unit
+) {
+    val bg = if (isCurrent) oc.accent.copy(alpha = 0.15f) else Color.Transparent
+    val alpha = if (isPast && !isCurrent) 0.5f else 1f
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(bg)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+    ) {
+        // 时间
+        val timeText = buildString {
+            append(portraitFormatTime(program.start))
+            if (program.stop.isNotEmpty() || program.end.isNotEmpty()) {
+                append(" - ")
+                append(portraitFormatTime(program.stop.ifEmpty { program.end }))
+            }
+        }
+        Text(
+            text = timeText,
+            color = if (isCurrent) oc.accent else oc.textSecondary,
+            fontSize = 11.sp,
+            modifier = Modifier.width(90.dp)
+        )
+        // 节目标题
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = program.title,
+                color = if (isCurrent) oc.textPrimary else oc.textSecondary,
+                fontSize = 13.sp,
+                fontWeight = if (isCurrent) FontWeight.Medium else FontWeight.Normal,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (isCurrent) {
+                Surface(
+                    color = oc.accent.copy(alpha = 0.2f),
+                    shape = RoundedCornerShape(3.dp),
+                    modifier = Modifier.padding(top = 2.dp)
+                ) {
+                    Text(
+                        text = "正在播出",
+                        color = oc.accent,
+                        fontSize = 9.sp,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+// EPG 时间解析/格式化辅助
+private fun portraitParseTimeMs(iso: String, ts: Long): Long {
+    if (ts > 0) return ts * 1000L
+    if (iso.isEmpty()) return 0
+    val patterns = listOf(
+        "yyyy-MM-dd'T'HH:mm:ssXXX",
+        "yyyy-MM-dd'T'HH:mm:ss'Z'",
+        "yyyy-MM-dd'T'HH:mm:ss",
+        "yyyy-MM-dd HH:mm:ss",
+        "yyyy-MM-dd HH:mm"
+    )
+    for (pattern in patterns) {
+        try {
+            return java.text.SimpleDateFormat(pattern, java.util.Locale.US).parse(iso)?.time ?: continue
+        } catch (_: Exception) {}
+    }
+    return 0
+}
+
+private fun portraitFormatTime(iso: String): String {
+    if (iso.isEmpty()) return ""
+    val ms = portraitParseTimeMs(iso, 0)
+    if (ms <= 0) return iso
+    val cal = java.util.Calendar.getInstance().apply { timeInMillis = ms }
+    return String.format(java.util.Locale.US, "%02d:%02d", cal.get(java.util.Calendar.HOUR_OF_DAY), cal.get(java.util.Calendar.MINUTE))
+}
+
+private fun portraitIsCurrentProgram(program: com.iptv.scanner.editor.pro.data.IptvEpgProgram, nowMs: Long): Boolean {
+    val startMs = portraitParseTimeMs(program.start, program.startTs)
+    val endMs = portraitParseTimeMs(program.end.ifEmpty { program.stop }, program.stopTs)
+    return startMs > 0 && endMs > startMs && nowMs >= startMs && nowMs < endMs
+}
+
+private fun portraitIsPastProgram(program: com.iptv.scanner.editor.pro.data.IptvEpgProgram, nowMs: Long): Boolean {
+    val endMs = portraitParseTimeMs(program.end.ifEmpty { program.stop }, program.stopTs)
+    return endMs > 0 && nowMs >= endMs
+}
+
+// -----------------------------------------------------------------
+// 工具内容（竖屏 Tab）
+// -----------------------------------------------------------------
+
+@Composable
+private fun PortraitToolsContent(viewModel: AppViewModel) {
+    val oc = rememberPlayerOverlayColors()
+    val controlsPinned by viewModel.controlsPinned.collectAsState()
+    val themeMode by viewModel.themeMode.collectAsState()
+    val audioVisualizerOpen by viewModel.audioVisualizerOpen.collectAsState()
+    val lyricsOpen by viewModel.lyricsOpen.collectAsState()
+
+    LazyColumn(modifier = Modifier.fillMaxSize()) {
+        item {
+            PortraitSectionHeader("工具", oc)
+        }
+        item {
+            PortraitListRow("截图", "截取当前画面", oc) { viewModel.takeScreenshot("video") }
+        }
+        item {
+            PortraitListRow("切片导出", "导出视频片段", oc) { viewModel.toggleClipExportPanel() }
+        }
+        item {
+            PortraitListRow("音频可视化", "频谱波形显示", oc, active = audioVisualizerOpen) { viewModel.toggleAudioVisualizer() }
+        }
+        item {
+            PortraitListRow("歌词", "加载/显示歌词", oc, active = lyricsOpen) { viewModel.toggleLyricsPanel() }
+        }
+        item {
+            PortraitListRow("锁定控制层", "防止误触", oc, active = controlsPinned) { viewModel.toggleControlsPinned() }
+        }
+        item {
+            PortraitListRow("刷新", "重新加载频道/EPG", oc) { viewModel.refreshUi() }
+        }
+        item {
+            PortraitListRow("另存为 M3U", "导出频道列表到下载目录", oc) { viewModel.saveAsM3u() }
+        }
+        item {
+            PortraitListRow("最近打开", "最近播放的文件", oc) { viewModel.toggleRecentPanel() }
+        }
+        item {
+            val themeLabel = when (themeMode) { "light" -> "浅色"; "system" -> "跟随系统"; else -> "深色" }
+            PortraitListRow("主题切换", "当前: $themeLabel", oc) {
+                val next = when (themeMode) { "dark" -> "light"; "light" -> "system"; else -> "dark" }
+                viewModel.setThemeMode(next)
+            }
+        }
+        item {
+            PortraitSectionHeader("高级工具", oc)
+        }
+        item {
+            PortraitListRow("EPG 时间线", "多频道节目时间线", oc) { viewModel.toggleEpgTimelinePanel() }
+        }
+        item {
+            PortraitListRow("全局搜索", "搜索频道/节目", oc) { viewModel.toggleSearchPanel() }
+        }
+        item {
+            PortraitListRow("流质量检测", "检测流质量", oc) { viewModel.toggleStreamQualityPanel() }
+        }
+        item {
+            PortraitListRow("URL 范围扫描", "扫描整理 URL", oc) { viewModel.toggleScanPanel() }
+        }
+        item {
+            PortraitListRow("节目提醒", "管理提醒", oc) { viewModel.toggleReminderPanel() }
+        }
+        item {
+            PortraitListRow("续播位置", "管理续播", oc) { viewModel.toggleResumePanel() }
+        }
+        item {
+            PortraitListRow("书签管理", "管理书签", oc) { viewModel.toggleBookmarkPanel() }
+        }
+        item {
+            PortraitListRow("A/V 同步监控", "音视频同步", oc) { viewModel.toggleAvSyncPanel() }
+        }
+    }
+}
+
+// -----------------------------------------------------------------
+// 设置内容（竖屏 Tab）
+// -----------------------------------------------------------------
+
+@Composable
+private fun PortraitSettingsContent(viewModel: AppViewModel) {
+    val oc = rememberPlayerOverlayColors()
+    val themeMode by viewModel.themeMode.collectAsState()
+    val autoResume by viewModel.autoResume.collectAsState()
+
+    LazyColumn(modifier = Modifier.fillMaxSize()) {
+        item { PortraitSectionHeader("播放", oc) }
+        item { PortraitListRow("播放器设置", "MPV/ExoPlayer 配置", oc) { viewModel.togglePlayerSettings() } }
+        item { PortraitListRow("视频设置", "画面/解码/比例", oc) { viewModel.toggleVideoSettings() } }
+        item { PortraitListRow("音频设置", "音轨/音量/均衡器", oc) { viewModel.toggleAudioSettings() } }
+        item { PortraitListRow("字幕设置", "字幕/外挂字幕", oc) { viewModel.toggleSubtitleSettings() } }
+        item { PortraitListRow("播放设置", "速度/循环/续播", oc) { viewModel.togglePlaybackPanel() } }
+        item { PortraitListRow("截图设置", "截图格式/路径", oc) { viewModel.toggleScreenshotPanel() } }
+        item { PortraitListRow("视图设置", "界面/缩放/旋转", oc) { viewModel.toggleViewSettings() } }
+
+        item { PortraitSectionHeader("频道与源", oc) }
+        item { PortraitListRow("订阅源管理", "添加/删除订阅源", oc) { viewModel.toggleSourceManager() } }
+        item { PortraitListRow("频道映射", "频道号映射", oc) { viewModel.toggleMappingPanel() } }
+        item { PortraitListRow("网络增强", "缓存/重连/代理", oc) { viewModel.toggleNetworkPanel() } }
+
+        item { PortraitSectionHeader("通用", oc) }
+        item {
+            val themeLabel = when (themeMode) { "light" -> "浅色"; "system" -> "跟随系统"; else -> "深色" }
+            PortraitListRow("主题模式", "当前: $themeLabel", oc) {
+                val next = when (themeMode) { "dark" -> "light"; "light" -> "system"; else -> "dark" }
+                viewModel.setThemeMode(next)
+            }
+        }
+        item {
+            PortraitListRow("启动自动续播", if (autoResume) "已开启" else "已关闭", oc, active = autoResume) {
+                viewModel.setAutoResume(!autoResume)
+            }
+        }
+        item { PortraitListRow("关于", "版本/更新信息", oc) { viewModel.toggleAboutPanel() } }
+    }
+}
+
+// -----------------------------------------------------------------
+// 竖屏底部 Tab 栏
+// -----------------------------------------------------------------
+
+@Composable
+private fun PortraitBottomTabBar(viewModel: AppViewModel) {
+    val portraitTab by viewModel.portraitTab.collectAsState()
+    val oc = rememberPlayerOverlayColors()
+
+    Surface(
+        color = oc.topBarBg,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            PortraitTabItem(
+                icon = Icons.Default.VideoLibrary,
+                label = "频道",
+                isSelected = portraitTab == AppViewModel.PortraitTab.CHANNELS,
+                oc = oc,
+                onClick = { viewModel.setPortraitTab(AppViewModel.PortraitTab.CHANNELS) }
+            )
+            PortraitTabItem(
+                icon = Icons.Default.Favorite,
+                label = "收藏",
+                isSelected = portraitTab == AppViewModel.PortraitTab.FAV,
+                oc = oc,
+                onClick = { viewModel.setPortraitTab(AppViewModel.PortraitTab.FAV) }
+            )
+            PortraitTabItem(
+                icon = Icons.Default.Build,
+                label = "工具",
+                isSelected = portraitTab == AppViewModel.PortraitTab.TOOLS,
+                oc = oc,
+                onClick = { viewModel.setPortraitTab(AppViewModel.PortraitTab.TOOLS) }
+            )
+            PortraitTabItem(
+                icon = Icons.Default.Settings,
+                label = "设置",
+                isSelected = portraitTab == AppViewModel.PortraitTab.SETTINGS,
+                oc = oc,
+                onClick = { viewModel.setPortraitTab(AppViewModel.PortraitTab.SETTINGS) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun PortraitTabItem(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    isSelected: Boolean,
+    oc: PlayerOverlayColors,
+    onClick: () -> Unit
+) {
+    val tint = if (isSelected) oc.accent else oc.iconTint
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = tint,
+            modifier = Modifier.size(24.dp)
+        )
+        Text(
+            text = label,
+            color = tint,
+            fontSize = 11.sp,
+            maxLines = 1
+        )
+    }
+}
+
+/** 竖屏列表行（工具/设置项通用） */
+@Composable
+private fun PortraitListRow(
+    title: String,
+    subtitle: String,
+    oc: PlayerOverlayColors,
+    active: Boolean = false,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                color = if (active) oc.accent else oc.textPrimary,
+                fontSize = 14.sp,
+                fontWeight = if (active) FontWeight.Medium else FontWeight.Normal
+            )
+            if (subtitle.isNotEmpty()) {
+                Text(
+                    text = subtitle,
+                    color = oc.textSecondary,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        if (active) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(oc.accent)
+            )
+        }
+    }
+}
+
+/** 竖屏分组标题 */
+@Composable
+private fun PortraitSectionHeader(
+    title: String,
+    oc: PlayerOverlayColors
+) {
+    Text(
+        text = title,
+        color = oc.accent,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Medium,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(oc.badgeBg)
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+    )
+}
+
+// ============================================================
+// 竖屏新布局 V2 组件
+// ============================================================
+
+/**
+ * 第一排：信息栏
+ * 居中显示台标+频道名+分类，右侧收藏和信息按钮
+ */
+@Composable
+private fun PortraitInfoBarV2(viewModel: AppViewModel) {
+    val currentChannel by viewModel.currentChannel.collectAsState()
+    val favorites by viewModel.favorites.collectAsState()
+    val currentIdx by viewModel.currentIdx.collectAsState()
+    val oc = rememberPlayerOverlayColors()
+
+    Surface(
+        color = oc.topBarBg,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(44.dp)
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            // 居中：台标 + 频道名 + 分类
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f),
+                horizontalArrangement = Arrangement.Center
+            ) {
+                // 台标
+                if (currentChannel != null && currentChannel!!.logo.isNotEmpty()) {
+                    AsyncImage(
+                        model = currentChannel!!.logo,
+                        contentDescription = currentChannel!!.name,
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(RoundedCornerShape(4.dp)),
+                        contentScale = ContentScale.Fit
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
+                // 频道名
+                Text(
+                    text = currentChannel?.name ?: "未选择频道",
+                    color = oc.textPrimary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                // 分类
+                if (currentChannel != null && currentChannel!!.group.isNotEmpty()) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Surface(
+                        color = oc.badgeBg,
+                        shape = RoundedCornerShape(4.dp)
+                    ) {
+                        Text(
+                            text = currentChannel!!.group,
+                            color = oc.badgeText,
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+            // 右侧：收藏 + 信息按钮
+            IconButton(
+                onClick = { viewModel.toggleFavorite() },
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(
+                    imageVector = if (favorites.contains(currentIdx)) Icons.Default.Star else Icons.Default.Star,
+                    contentDescription = "收藏",
+                    tint = if (favorites.contains(currentIdx)) Color(0xFFFFC107) else oc.iconTint,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+            IconButton(
+                onClick = { viewModel.toggleChannelInfo() },
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(
+                    Icons.Default.Info,
+                    contentDescription = "频道信息",
+                    tint = oc.iconTint,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 第三排：播放控制栏
+ * 播放/停止按钮 + 圆点进度条
+ */
+@Composable
+private fun PortraitControlsV2(viewModel: AppViewModel) {
+    val mpv = viewModel.mpv
+    val paused by mpv.paused.collectAsState()
+    val oc = rememberPlayerOverlayColors()
+
+    // 进度数据（1秒刷新）
+    var tick by remember { mutableStateOf(0L) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            tick = System.currentTimeMillis()
+            delay(1000L)
+        }
+    }
+    val progressInfo = remember(tick, viewModel.playbackState.value, viewModel.currentChannel.value, viewModel.currentEpg.value) {
+        viewModel.computeProgress()
+    }
+    var dragging by remember { mutableStateOf(false) }
+    var dragPercent by remember { mutableStateOf(0f) }
+
+    Surface(
+        color = oc.infoBarBg,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // 播放/暂停按钮
+            IconButton(
+                onClick = { mpv.togglePause() },
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    imageVector = if (paused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                    contentDescription = if (paused) "播放" else "暂停",
+                    tint = oc.iconTint,
+                    modifier = Modifier.size(28.dp)
+                )
+            }
+            // 停止按钮
+            IconButton(
+                onClick = { viewModel.stopPlay() },
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(
+                    Icons.Default.Stop,
+                    contentDescription = "停止",
+                    tint = oc.iconTint,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+            // 时间标签 - 开始
+            Text(
+                text = progressInfo.startLabel,
+                color = oc.textSecondary,
+                fontSize = 10.sp,
+                modifier = Modifier.padding(start = 4.dp)
+            )
+            // 圆点进度条
+            DotProgressBar(
+                progress = if (dragging) dragPercent else (progressInfo.percent / 100f),
+                onSeek = { percent ->
+                    dragPercent = percent
+                    dragging = true
+                },
+                onSeekEnd = {
+                    viewModel.seekProgress(dragPercent * 100f)
+                    dragging = false
+                },
+                accentColor = oc.accent,
+                trackColor = oc.trackInactive,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 8.dp)
+                    .height(24.dp)
+            )
+            // 时间标签 - 结束
+            Text(
+                text = progressInfo.endLabel,
+                color = oc.textSecondary,
+                fontSize = 10.sp
+            )
+        }
+    }
+}
+
+/**
+ * 圆点进度条：用 Canvas 绘制轨道 + 圆点指示器
+ */
+@Composable
+private fun DotProgressBar(
+    progress: Float,
+    onSeek: (Float) -> Unit,
+    onSeekEnd: () -> Unit,
+    accentColor: Color,
+    trackColor: Color,
+    modifier: Modifier = Modifier
+) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val trackHeight = with(density) { 3.dp.toPx() }
+    val dotRadius = with(density) { 6.dp.toPx() }
+
+    Canvas(
+        modifier = modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = { offset ->
+                        val w = size.width.toFloat()
+                        if (w > 0) {
+                            val percent = (offset.x / w).coerceIn(0f, 1f)
+                            onSeek(percent)
+                            onSeekEnd()
+                        }
+                    }
+                )
+            }
+    ) {
+        val canvasW = size.width
+        val canvasH = size.height
+        val centerY = canvasH / 2f
+        val progressW = canvasW * progress
+
+        // 背景轨道
+        drawRoundRect(
+            color = trackColor,
+            topLeft = androidx.compose.ui.geometry.Offset(0f, centerY - trackHeight / 2),
+            size = androidx.compose.ui.geometry.Size(canvasW, trackHeight),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(trackHeight / 2, trackHeight / 2)
+        )
+        // 已播放轨道
+        if (progressW > 0) {
+            drawRoundRect(
+                color = accentColor,
+                topLeft = androidx.compose.ui.geometry.Offset(0f, centerY - trackHeight / 2),
+                size = androidx.compose.ui.geometry.Size(progressW, trackHeight),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(trackHeight / 2, trackHeight / 2)
+            )
+        }
+        // 圆点指示器
+        drawCircle(
+            color = accentColor,
+            radius = dotRadius,
+            center = androidx.compose.ui.geometry.Offset(progressW.coerceIn(0f, canvasW), centerY)
+        )
+    }
+}
+
+/**
+ * 竖屏频道列表（频道Tab和收藏Tab共用）
+ * 左列分组 + 右列频道（双列布局），无搜索框
+ * 每项：台标 + 频道名(+回看标识) + 当前节目名 + 节目单按钮
+ */
+@Composable
+private fun PortraitChannelList(
+    viewModel: AppViewModel,
+    showFavoritesOnly: Boolean
+) {
+    val channels by viewModel.channels.collectAsState()
+    val currentIdx by viewModel.currentIdx.collectAsState()
+    val favorites by viewModel.favorites.collectAsState()
+    val selectedGroup by viewModel.selectedGroup.collectAsState()
+    val allGroups by viewModel.groups.collectAsState()
+    val channelsTab by viewModel.channelsTab.collectAsState()
+    val oc = rememberPlayerOverlayColors()
+
+    // 分组列表
+    val groups = remember(allGroups, channels, showFavoritesOnly) {
+        if (showFavoritesOnly) {
+            channels.mapIndexed { idx, c -> c to idx }
+                .filter { (c, idx) -> favorites.contains(idx) }
+                .map { it.first.group }
+                .filter { it.isNotEmpty() }
+                .distinct()
+        } else if (channelsTab == ChannelTab.LOCAL) {
+            channels
+                .filter { it.source.isEmpty() || ProgressHelper.isLocalFile(it.url) }
+                .map { it.group }
+                .filter { it.isNotEmpty() }
+                .distinct()
+        } else {
+            allGroups
+        }
+    }
+    val showGroups = groups.isNotEmpty()
+
+    // 根据是否收藏模式过滤频道
+    val filteredChannels = remember(channels, favorites, showFavoritesOnly, selectedGroup, channelsTab) {
+        val all = channels.mapIndexed { idx, c -> c to idx }
+        val filtered = if (showFavoritesOnly) {
+            all.filter { (c, idx) -> favorites.contains(idx) }
+        } else if (channelsTab == ChannelTab.LOCAL) {
+            all.filter { (c, _) -> c.source.isEmpty() || ProgressHelper.isLocalFile(c.url) }
+        } else {
+            all
+        }
+        filtered.filter { (c, _) ->
+            val groupMatch = selectedGroup.isEmpty() || c.group == selectedGroup
+            groupMatch
+        }
+    }
+
+    if (filteredChannels.isEmpty()) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = if (showFavoritesOnly) "暂无收藏\n点击信息栏星标添加" else "暂无频道",
+                color = oc.textSecondary,
+                fontSize = 13.sp,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+        }
+    } else {
+        if (showGroups) {
+            Row(modifier = Modifier.fillMaxSize()) {
+                // 左列：分组列表
+                PortraitGroupList(
+                    groups = groups,
+                    selectedGroup = selectedGroup,
+                    onGroupSelected = { viewModel.setSelectedGroup(it) },
+                    oc = oc,
+                    modifier = Modifier.weight(0.35f)
+                )
+                // 分隔线
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .width(1.dp)
+                        .background(oc.trackInactive)
+                )
+                // 右列：频道列表
+                LazyColumn(
+                    modifier = Modifier.weight(0.65f).fillMaxHeight(),
+                    contentPadding = PaddingValues(vertical = 4.dp)
+                ) {
+                    items(
+                        items = filteredChannels,
+                        key = { (channel, idx) -> idx }
+                    ) { (channel, idx) ->
+                        PortraitChannelListItem(
+                            channel = channel,
+                            channelIdx = idx,
+                            isPlaying = idx == currentIdx,
+                            oc = oc,
+                            viewModel = viewModel,
+                            onPlay = { viewModel.playChannel(idx) },
+                            onEpg = { viewModel.playChannelAndShowEpg(idx) }
+                        )
+                    }
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(vertical = 4.dp)
+            ) {
+                items(
+                    items = filteredChannels,
+                    key = { (channel, idx) -> idx }
+                ) { (channel, idx) ->
+                    PortraitChannelListItem(
+                        channel = channel,
+                        channelIdx = idx,
+                        isPlaying = idx == currentIdx,
+                        oc = oc,
+                        viewModel = viewModel,
+                        onPlay = { viewModel.playChannel(idx) },
+                        onEpg = { viewModel.playChannelAndShowEpg(idx) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 竖屏分组列表（左列）
+ */
+@Composable
+private fun PortraitGroupList(
+    groups: List<String>,
+    selectedGroup: String,
+    onGroupSelected: (String) -> Unit,
+    oc: PlayerOverlayColors,
+    modifier: Modifier = Modifier
+) {
+    val allItems = remember(groups) { listOf("") + groups }
+    LazyColumn(
+        modifier = modifier.fillMaxHeight(),
+        contentPadding = PaddingValues(vertical = 4.dp)
+    ) {
+        items(allItems, key = { it }) { group ->
+            val isSelected = selectedGroup == group
+            val label = if (group.isEmpty()) "全部" else group
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onGroupSelected(group) }
+                    .padding(horizontal = 8.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(3.dp)
+                        .height(16.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(if (isSelected) oc.accent else Color.Transparent)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = label,
+                    color = if (isSelected) oc.accent else oc.textSecondary,
+                    fontSize = 12.sp,
+                    fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 竖屏频道列表项
+ * 台标 + 频道名(+回看标识) + 当前节目名 + 节目单按钮
+ */
+@Composable
+private fun PortraitChannelListItem(
+    channel: IptvChannel,
+    channelIdx: Int,
+    isPlaying: Boolean,
+    oc: PlayerOverlayColors,
+    viewModel: AppViewModel,
+    onPlay: () -> Unit,
+    onEpg: () -> Unit
+) {
+    // 获取缓存的当前节目
+    var currentProgram by remember { mutableStateOf<com.iptv.scanner.editor.pro.data.IptvEpgProgram?>(null) }
+    LaunchedEffect(channelIdx) {
+        while (true) {
+            currentProgram = viewModel.getCachedCurrentProgram(channelIdx)
+            delay(3_000L)
+        }
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onPlay)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // 台标
+        if (channel.logo.isNotEmpty()) {
+            AsyncImage(
+                model = channel.logo,
+                contentDescription = channel.name,
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(4.dp)),
+                contentScale = ContentScale.Fit
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+        } else {
+            // 无台标占位
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(oc.badgeBg),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = channel.name.take(1),
+                    color = oc.textSecondary,
+                    fontSize = 14.sp
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+        }
+
+        // 频道名 + 节目名
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = channel.name,
+                    color = if (isPlaying) oc.accent else oc.textPrimary,
+                    fontSize = 14.sp,
+                    fontWeight = if (isPlaying) FontWeight.Medium else FontWeight.Normal,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                // 回看标识
+                if (channel.catchup.isNotEmpty() && channel.catchup != "none") {
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Surface(
+                        color = oc.accent.copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(3.dp)
+                    ) {
+                        Text(
+                            text = "回看",
+                            color = oc.accent,
+                            fontSize = 9.sp,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                        )
+                    }
+                }
+            }
+            // 当前节目名
+            if (currentProgram != null && currentProgram!!.title.isNotEmpty()) {
+                Text(
+                    text = currentProgram!!.title,
+                    color = oc.textSecondary,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            } else {
+                Text(
+                    text = "精彩节目",
+                    color = oc.textSecondary,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+
+        // 节目单按钮
+        IconButton(
+            onClick = onEpg,
+            modifier = Modifier.size(32.dp)
+        ) {
+            Icon(
+                Icons.Default.CalendarMonth,
+                contentDescription = "节目单",
+                tint = oc.iconTint,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+    }
+}
+
+/**
+ * 频道信息详情对话框
+ */
+@Composable
+private fun ChannelInfoDialog(viewModel: AppViewModel) {
+    val currentChannel by viewModel.currentChannel.collectAsState()
+    val mpv = viewModel.mpv
+    val videoWidth by mpv.videoWidth.collectAsState()
+    val videoHeight by mpv.videoHeight.collectAsState()
+    val currentProgram = viewModel.getCurrentProgram()
+    val oc = rememberPlayerOverlayColors()
+
+    AlertDialog(
+        onDismissRequest = { viewModel.toggleChannelInfo() },
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (currentChannel != null && currentChannel!!.logo.isNotEmpty()) {
+                    AsyncImage(
+                        model = currentChannel!!.logo,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(RoundedCornerShape(4.dp)),
+                        contentScale = ContentScale.Fit
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
+                Text(
+                    text = currentChannel?.name ?: "频道信息",
+                    color = oc.textPrimary,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                currentChannel?.let { ch ->
+                    InfoRow("频道名", ch.name, oc)
+                    if (ch.group.isNotEmpty()) InfoRow("分类", ch.group, oc)
+                    if (ch.tvgId.isNotEmpty()) InfoRow("TVG-ID", ch.tvgId, oc)
+                    if (ch.tvgName.isNotEmpty()) InfoRow("TVG-Name", ch.tvgName, oc)
+                    if (ch.tvgChno.isNotEmpty()) InfoRow("频道号", ch.tvgChno, oc)
+                    if (ch.resolution.isNotEmpty()) InfoRow("分辨率", ch.resolution, oc)
+                    if (videoWidth > 0 && videoHeight > 0) {
+                        InfoRow("视频尺寸", "${videoWidth}x${videoHeight}", oc)
+                    }
+                    if (ch.catchup.isNotEmpty() && ch.catchup != "none") {
+                        InfoRow("回看", "支持 (${ch.catchup})", oc)
+                        if (ch.catchupDays.isNotEmpty()) InfoRow("回看天数", ch.catchupDays, oc)
+                    }
+                    if (ch.source.isNotEmpty()) InfoRow("来源", ch.source, oc)
+                    if (ch.status.isNotEmpty()) InfoRow("状态", ch.status, oc)
+                    InfoRow("URL", ch.url, oc)
+                    // 当前节目
+                    if (currentProgram != null && currentProgram.title.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "当前节目",
+                            color = oc.accent,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = currentProgram.title,
+                            color = oc.textPrimary,
+                            fontSize = 13.sp,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
+                } ?: run {
+                    Text(
+                        text = "未选择频道",
+                        color = oc.textSecondary,
+                        fontSize = 14.sp
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { viewModel.toggleChannelInfo() },
+                colors = ButtonDefaults.buttonColors(containerColor = oc.accent)
+            ) {
+                Text("关闭", color = Color.White)
+            }
+        }
+    )
+}
+
+@Composable
+private fun InfoRow(label: String, value: String, oc: PlayerOverlayColors) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Text(
+            text = "$label:",
+            color = oc.textSecondary,
+            fontSize = 12.sp,
+            modifier = Modifier.width(60.dp)
+        )
+        Text(
+            text = value,
+            color = oc.textPrimary,
+            fontSize = 12.sp,
+            modifier = Modifier.weight(1f),
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
