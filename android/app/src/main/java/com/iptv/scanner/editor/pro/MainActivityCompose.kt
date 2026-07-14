@@ -290,14 +290,7 @@ class MainActivityCompose : ComponentActivity() {
                     viewModel.mpv.toggleMute()
                     return true
                 }
-                KeyEvent.KEYCODE_VOLUME_UP -> {
-                    viewModel.mpv.adjustVolume(5)
-                    return true
-                }
-                KeyEvent.KEYCODE_VOLUME_DOWN -> {
-                    viewModel.mpv.adjustVolume(-5)
-                    return true
-                }
+                // 音量键交给系统处理（PHONE 模式不拦截，显示系统音量条）
             }
             return super.onKeyDown(keyCode, event)
         }

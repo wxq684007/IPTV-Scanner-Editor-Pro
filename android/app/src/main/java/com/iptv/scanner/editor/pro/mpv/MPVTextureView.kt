@@ -68,8 +68,9 @@ class MPVTextureView @JvmOverloads constructor(
         myGeneration = ++MPVView.activeGeneration
         Log.i(TAG, "initialize: generation=$myGeneration, vo=$vo, hwdec=$hwdec")
 
-        // TextureView 透明背景，让 Compose 层可以正确显示
-        isOpaque = false
+        // TextureView 必须设为不透明！
+        // isOpaque=false 会导致 surface 带 alpha 通道，mpv GPU VO 渲染的视频变成透明（不可见）。
+        isOpaque = true
 
         if (MPVView.nativeInstanceCreated) {
             // 复用现有 native mpv 实例
@@ -83,6 +84,22 @@ class MPVTextureView @JvmOverloads constructor(
             filePath = null
             MPVView.nativeInstanceAlive = true
             surfaceTextureListener = this
+            // 关键：SurfaceTexture 可能已经可用（TextureView 在 initialize 之前已布局），
+            // 此时 onSurfaceTextureAvailable 不会再触发，需要手动 attach。
+            val st = surfaceTexture
+            if (st != null) {
+                Log.i(TAG, "initialize: SurfaceTexture already available, manually attaching")
+                val s = Surface(st)
+                surface = s
+                try {
+                    MPVLib.attachSurface(s)
+                    MPVLib.setPropertyString("force-window", "yes")
+                    MPVLib.setPropertyString("vo", voInUse)
+                    Log.i(TAG, "initialize: manual attachSurface OK (TextureView), vo=$voInUse")
+                } catch (e: Throwable) {
+                    Log.e(TAG, "initialize: manual attachSurface FAILED", e)
+                }
+            }
             return
         }
 

@@ -126,6 +126,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     )
     val playerType: StateFlow<PlayerType> = _playerType.asStateFlow()
 
+    /** 内核切换后待播放的 URL（延迟播放机制：等 Compose 重建视图后再 playFile） */
+    private val _pendingSwitchPlayUrl = MutableStateFlow("")
+    val pendingSwitchPlayUrl: StateFlow<String> = _pendingSwitchPlayUrl.asStateFlow()
+
     /**
      * 当前活跃的 Player 实例。
      *
@@ -170,45 +174,51 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val savedUrl = currentPlaybackUrl
         val savedIdx = _currentIdx.value
 
-        // 关键修复：取消超时换源和重连定时器，防止切换内核后旧定时器继续触发 nextChannel()。
-        // 问题场景：切到坏频道 → 超时换源定时器启动 → 用户手动切换内核 →
-        // 旧定时器仍在运行 → 5s 后触发 nextChannel() → 又启动新定时器 → 死循环。
-        // 即使用户切换到其他播放器内核，定时器也会继续触发，导致"换了内核还是一直自动换台"。
+        // 取消所有定时器
         timeoutSwitchJob?.cancel()
         timeoutSwitchJob = null
         reconnectJob?.cancel()
         reconnectJob = null
-        // 重置连续超时计数器，给新播放器一个干净的起点
+        switchPlayJob?.cancel()
+        switchPlayJob = null
         consecutiveTimeoutCount = 0
 
-        // 停止当前播放器
+        // 1. 先停止当前播放器（同步停止，防止旧播放器继续播放声音）
         _player.value.stop()
         _player.value.detach()
 
-        // 切换到新播放器
+        // 2. 先更新 _playerType，触发 Compose 重组
+        //    key(playerType) 会销毁旧 View（触发 onRelease）并创建新 View（触发 factory + attachView）
+        _playerType.value = newType
+
+        // 3. 创建新播放器实例
         val newPlayer: Player = when (newType) {
             PlayerType.MPV -> {
+                // MPV 单例已被 detach，attachView 时会重新绑定
                 mpvSingleton
             }
             PlayerType.EXO, PlayerType.SYSTEM -> {
-                exoWrapper ?: ExoPlayerWrapper(getApplication(), newType).also {
-                    exoWrapper = it
-                    // 同步当前硬解设置到 ExoPlayerWrapper
-                    it.setHardwareDecode(_hardwareDecode.value)
+                // 每次都重建 ExoPlayer wrapper，确保渲染器配置正确
+                exoWrapper?.detach()
+                exoWrapper = ExoPlayerWrapper(getApplication(), newType).also {
+                    it.setHardwareDecode(newType == PlayerType.EXO)
                 }
+                exoWrapper!!
             }
         }
-
-        _playerType.value = newType
         _player.value = newPlayer
         userPrefs.setPlayerType(newType.name)
 
         showOsd("播放器已切换到 ${newType.displayName}")
 
-        // 恢复播放
+        // 设置待播放 URL，由 MainPlayerScreen 的 update 回调在 attachView 后播放
         if (savedIdx >= 0 && savedUrl.isNotEmpty()) {
-            _player.value.playFile(savedUrl)
+            _pendingSwitchPlayUrl.value = savedUrl
         }
+    }
+
+    fun clearPendingSwitchPlayUrl() {
+        _pendingSwitchPlayUrl.value = ""
     }
 
     /**
@@ -364,6 +374,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 超时换源定时器：播放超时后自动切到下一个源 */
     private var timeoutSwitchJob: Job? = null
+private var switchPlayJob: Job? = null
 
     /**
      * 连续超时换源计数器：防止所有频道都无法播放时无限循环换台。
@@ -414,6 +425,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // -----------------------------------------------------------------
     /** key=channel idx, value=EPG 节目列表 */
     private val epgCache = mutableMapOf<Int, List<IptvEpgProgram>>()
+
+    /** EPG 缓存版本号，每次更新缓存时递增，用于触发 UI 刷新 */
+    private val _epgCacheVersion = MutableStateFlow(0)
+    val epgCacheVersion: StateFlow<Int> = _epgCacheVersion.asStateFlow()
 
     private val _currentEpg = MutableStateFlow<List<IptvEpgProgram>>(emptyList())
     val currentEpg: StateFlow<List<IptvEpgProgram>> = _currentEpg.asStateFlow()
@@ -2469,9 +2484,10 @@ private var _channelInputJob: kotlinx.coroutines.Job? = null
             result.fold(
                 onSuccess = { epgList ->
                     val programs = epgList.programmes
-                    epgCache[idx] = programs
-                    _currentEpg.value = programs
-                    Log.i(TAG, "fetchEpgForCurrent: ${programs.size} programs for ${channel.name}")
+epgCache[idx] = programs
+_epgCacheVersion.value++
+_currentEpg.value = programs
+Log.i(TAG, "fetchEpgForCurrent: ${programs.size} programs for ${channel.name}")
                 },
                 onFailure = { e ->
                     Log.w(TAG, "fetchEpgForCurrent failed: ${e.message}")
@@ -2513,6 +2529,7 @@ private var _channelInputJob: kotlinx.coroutines.Job? = null
                 onSuccess = { epgList ->
                     val programs = epgList.programmes
                     epgCache[idx] = programs
+                    _epgCacheVersion.value++
                     _focusedEpg.value = programs
                     Log.i(TAG, "fetchEpgForChannel: ${programs.size} programs for ${channel.name}")
                 },
@@ -2522,6 +2539,49 @@ private var _channelInputJob: kotlinx.coroutines.Job? = null
                 }
             )
             _focusedEpgLoading.value = false
+        }
+    }
+
+    /**
+     * 批量预加载所有频道的 EPG（用于频道列表自动显示当前节目）。
+     * 只加载未缓存的频道，每次最多并发 5 个，避免请求风暴。
+     */
+    fun preloadEpgForAllChannels() {
+        val channels = _channels.value
+        if (channels.isEmpty()) return
+        val uncachedIdxs = channels.indices.filter { it !in epgCache }
+        if (uncachedIdxs.isEmpty()) return
+        Log.i(TAG, "preloadEpgForAllChannels: ${uncachedIdxs.size} channels need EPG preload")
+        viewModelScope.launch {
+            // 分批并发，每批 5 个
+            uncachedIdxs.chunked(5).forEach { batch ->
+                batch.forEach { idx ->
+                    launch {
+                        val channel = channels.getOrNull(idx) ?: return@launch
+                        try {
+                            val result = repository.getEpg(
+                                channelName = channel.name,
+                                tvgId = channel.tvgId,
+                                tvgName = channel.tvgName,
+                                commaName = channel.name
+                            )
+                            result.fold(
+                                onSuccess = { epgList ->
+                                    val programs = epgList.programmes
+                                    if (programs.isNotEmpty()) {
+                                        epgCache[idx] = programs
+                                        _epgCacheVersion.value++
+                                        Log.d(TAG, "preloadEpg: ${programs.size} programs for ${channel.name}")
+                                    }
+                                },
+                                onFailure = { /* 静默失败，不打扰用户 */ }
+                            )
+                        } catch (_: Throwable) {}
+                    }
+                }
+                // 等待当前批次完成
+                kotlinx.coroutines.delay(500)
+            }
         }
     }
 
@@ -4581,30 +4641,64 @@ private var _channelInputJob: kotlinx.coroutines.Job? = null
     }
 
     private var spectrumJob: kotlinx.coroutines.Job? = null
+    private var visualizer: android.media.audiofx.Visualizer? = null
 
     private fun startSpectrumSampling() {
         spectrumJob?.cancel()
-        spectrumJob = viewModelScope.launch {
-            while (_audioVisualizerOpen.value) {
-                try {
-                    if (mpv.fileLoaded.value) {
-                        // 从 mpv 读取音频电平（af-lavfi spectrumsynth 或 peak level）
-                        // 简化方案：读取 audio-params 和 volume 模拟频谱
-                        val volume = mpv.getPropertyDouble("volume") ?: 100.0
-                        val volFactor = (volume / 100.0).coerceIn(0.0, 1.0).toFloat()
-                        // 生成模拟频谱数据（32 频段）
-                        val spectrum = FloatArray(32) { i ->
-                            val freq = (i + 1).toFloat() / 32f
-                            val noise = kotlin.math.abs(kotlin.math.sin(System.currentTimeMillis() / 200.0 + i * 0.5)).toFloat()
-                            val decay = 1f - freq * 0.3f
-                            (noise * decay * volFactor).coerceIn(0f, 1f)
+        // 用 Android Visualizer API 获取真实音频频谱
+        try {
+            visualizer?.release()
+            visualizer = android.media.audiofx.Visualizer(0)  // 0 = 全局音频输出
+            visualizer?.captureSize = android.media.audiofx.Visualizer.getCaptureSizeRange()[1]
+            visualizer?.setDataCaptureListener(object : android.media.audiofx.Visualizer.OnDataCaptureListener {
+                override fun onWaveFormDataCapture(v: android.media.audiofx.Visualizer?, waveform: ByteArray?, samplingRate: Int) {}
+                override fun onFftDataCapture(v: android.media.audiofx.Visualizer?, fft: ByteArray?, samplingRate: Int) {
+                    if (fft == null) return
+                    // FFT 数据格式：[re0, im0, re1, im1, ...]
+                    // 计算 32 个频段的幅度
+                    val bands = 32
+                    val spectrum = FloatArray(bands) { 0f }
+                    val n = fft.size / 2
+                    val binsPerBand = n / bands
+                    for (i in 0 until bands) {
+                        var maxMag = 0f
+                        for (j in 0 until binsPerBand) {
+                            val idx = (i * binsPerBand + j) * 2
+                            if (idx + 1 < fft.size) {
+                                val re = fft[idx].toFloat()
+                                val im = fft[idx + 1].toFloat()
+                                val mag = kotlin.math.sqrt(re * re + im * im)
+                                if (mag > maxMag) maxMag = mag
+                            }
                         }
-                        _audioSpectrum.value = spectrum
+                        // 归一化到 0-1（Visualizer FFT 范围约 0-128）
+                        spectrum[i] = (maxMag / 128f).coerceIn(0f, 1f)
                     }
-                } catch (e: Exception) {
-                    // 忽略采样错误
+                    _audioSpectrum.value = spectrum
                 }
-                kotlinx.coroutines.delay(80) // ~12.5 fps
+            }, android.media.audiofx.Visualizer.getMaxCaptureRate() / 2, true, true)
+            visualizer?.enabled = true
+            Log.i(TAG, "Visualizer started for real-time spectrum")
+        } catch (e: Exception) {
+            Log.w(TAG, "Visualizer not available: ${e.message}, falling back to mock")
+            // fallback：用 MPV 属性模拟
+            spectrumJob = viewModelScope.launch {
+                while (_audioVisualizerOpen.value) {
+                    try {
+                        if (mpv.fileLoaded.value) {
+                            val volume = mpv.getPropertyDouble("volume") ?: 100.0
+                            val volFactor = (volume / 100.0).coerceIn(0.0, 1.0).toFloat()
+                            val spectrum = FloatArray(32) { i ->
+                                val freq = (i + 1).toFloat() / 32f
+                                val noise = kotlin.math.abs(kotlin.math.sin(System.currentTimeMillis() / 200.0 + i * 0.5)).toFloat()
+                                val decay = 1f - freq * 0.3f
+                                (noise * decay * volFactor).coerceIn(0f, 1f)
+                            }
+                            _audioSpectrum.value = spectrum
+                        }
+                    } catch (_: Exception) {}
+                    kotlinx.coroutines.delay(80)
+                }
             }
         }
     }
@@ -4612,6 +4706,9 @@ private var _channelInputJob: kotlinx.coroutines.Job? = null
     private fun stopSpectrumSampling() {
         spectrumJob?.cancel()
         spectrumJob = null
+        visualizer?.enabled = false
+        visualizer?.release()
+        visualizer = null
         _audioSpectrum.value = FloatArray(32) { 0f }
     }
 

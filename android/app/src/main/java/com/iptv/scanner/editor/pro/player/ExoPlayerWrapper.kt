@@ -3,6 +3,8 @@ package com.iptv.scanner.editor.pro.player
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player as Media3Player
@@ -126,7 +128,15 @@ class ExoPlayerWrapper(
         playerView = view
         ensurePlayer()
         view.player = player
-        Log.i(TAG, "attachView: PlayerView attached, type=$type")
+        // SYSTEM 模式：禁用硬件解码器，只允许软件解码
+        if (type == PlayerType.SYSTEM) {
+            player?.let { p ->
+                p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+                    .build()
+            }
+            setHardwareDecode(false)
+        }
+        Log.i(TAG, "attachView: PlayerView attached, type=$type, hwdec=$hardwareDecodeEnabled")
     }
 
     /** 解绑 View，释放 ExoPlayer 资源 */
@@ -162,19 +172,22 @@ class ExoPlayerWrapper(
             val dataSourceFactory = DefaultDataSource.Factory(context, httpDataSourceFactory)
             val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
 
-            // 硬解：优先 MediaCodec 硬件解码器，FFmpeg 扩展作为 fallback
-            // 软解：优先 FFmpeg 扩展解码器（软件解码），绕过 MediaCodec
+            // 渲染器配置：EXO 和 SYSTEM 都用相同的渲染器
+            // SYSTEM 模式通过禁用硬件解码器来实现纯软解（见 attachView 后的 setHardwareDecode）
             val renderersFactory = DefaultRenderersFactory(context)
                 .setEnableDecoderFallback(true)
-                .setExtensionRendererMode(
-                    if (hardwareDecodeEnabled)
-                        DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
-                    else
-                        DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
-                )
+                .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
             player = ExoPlayer.Builder(context, renderersFactory)
                 .setMediaSourceFactory(mediaSourceFactory)
                 .setUseLazyPreparation(true)
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(C.USAGE_MEDIA)
+                        .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                        .build(),
+                    true  // handleAudioFocus = true
+                )
+                .setHandleAudioBecomingNoisy(true)
                 .build().also { p ->
                     p.addListener(object : Media3Player.Listener {
                         override fun onPlaybackStateChanged(playbackState: Int) {
@@ -450,6 +463,80 @@ class ExoPlayerWrapper(
         // 等待加载完成后 seek
         if (timePosSec > 0) {
             player?.seekTo((timePosSec * 1000).toLong())
+        }
+    }
+
+    /**
+     * 获取媒体信息（与 MpvController.getMediaInfo 对齐）。
+     * 通过 ExoPlayer 的 TrackInfo 提取视频/音频编码、分辨率、HDR 等信息。
+     */
+    override fun getMediaInfo(): Map<String, String?> {
+        val p = player ?: return emptyMap()
+        return try {
+            val tracks = p.currentTracks
+            var videoCodec: String? = null
+            var audioCodec: String? = null
+            var videoBitrate: String? = null
+            var audioBitrate: String? = null
+            var fps: String? = null
+            var primaries: String? = null
+            var gamma: String? = null
+            var colorRange: String? = null
+
+            for (trackGroup in tracks.groups) {
+                val trackType = trackGroup.type
+                if (trackGroup.length == 0) continue
+                val format = trackGroup.getTrackFormat(0)
+                when (trackType) {
+                    androidx.media3.common.C.TRACK_TYPE_VIDEO -> {
+                        videoCodec = format.sampleMimeType
+                        videoBitrate = if (format.bitrate > 0) format.bitrate.toString() else null
+                        if (format.frameRate > 0f) fps = format.frameRate.toString()
+                        val colorInfo = format.colorInfo
+                        if (colorInfo != null) {
+                            primaries = when (colorInfo.colorSpace) {
+                                androidx.media3.common.C.COLOR_SPACE_BT709 -> "bt.709"
+                                androidx.media3.common.C.COLOR_SPACE_BT601 -> "bt.601"
+                                androidx.media3.common.C.COLOR_SPACE_BT2020 -> "bt.2020"
+                                else -> null
+                            }
+                            gamma = when (colorInfo.colorTransfer) {
+                                androidx.media3.common.C.COLOR_TRANSFER_SDR -> "sdr"
+                                androidx.media3.common.C.COLOR_TRANSFER_HLG -> "hlg"
+                                androidx.media3.common.C.COLOR_TRANSFER_ST2084 -> "pq"
+                                else -> null
+                            }
+                            colorRange = when (colorInfo.colorRange) {
+                                androidx.media3.common.C.COLOR_RANGE_FULL -> "full"
+                                androidx.media3.common.C.COLOR_RANGE_LIMITED -> "limited"
+                                else -> null
+                            }
+                        }
+                    }
+                    androidx.media3.common.C.TRACK_TYPE_AUDIO -> {
+                        audioCodec = format.sampleMimeType
+                        audioBitrate = if (format.bitrate > 0) format.bitrate.toString() else null
+                    }
+                }
+            }
+
+            mapOf(
+                "videoCodec" to videoCodec,
+                "audioCodec" to audioCodec,
+                "videoRes" to "${_videoWidth.value}x${_videoHeight.value}",
+                "fps" to fps,
+                "bitrate" to videoBitrate,
+                "audioBitrate" to audioBitrate,
+                "containerFormat" to p.currentMediaItem?.localConfiguration?.mimeType,
+                "hwdec" to if (type == PlayerType.EXO) "mediacodec" else "soft",
+                "vo" to "exo",
+                "videoPrimaries" to primaries,
+                "videoGamma" to gamma,
+                "videoColorRange" to colorRange
+            )
+        } catch (e: Throwable) {
+            Log.w(TAG, "getMediaInfo failed: ${e.message}")
+            emptyMap()
         }
     }
 

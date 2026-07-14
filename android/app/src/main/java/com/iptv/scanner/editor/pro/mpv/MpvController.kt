@@ -205,20 +205,34 @@ var onFileError: (() -> Unit)? = null
 
     /**
      * 解绑 MPVView，移除 EventObserver。
-     * 在 Activity.onDestroy 时调用。
+     * 在 Activity.onDestroy 或切换内核时调用。
+     *
+     * 关键：先同步停止 MPV 播放，再清空 mpvView。
+     * 如果不先停止，stop() 通过 postOnUiThread 异步执行，
+     * 但 detach 会立即把 mpvView 设为 null，导致异步的 stop lambda 变成空操作。
      */
-    override fun detach() {
-        MPVLib.removeObserver(this)
-        mpvView?.onInstanceRecreated = null
-        this.mpvView = null
-        // 重置状态（避免 Compose 用旧值）
-        _fileLoaded.value = false
-        _eofReached.value = false
-        _timePos.value = 0.0
-        _duration.value = 0.0
-        _paused.value = true
-        Log.i(TAG, "MpvController detached")
-    }
+override fun detach() {
+// 同步停止播放，防止切换内核后旧 MPV 实例继续播放音频/视频
+try {
+if (mpvView != null) {
+mpvView?.stop()
+}
+} catch (e: Throwable) {
+Log.w(TAG, "detach: sync stop failed: ${e.message}")
+}
+// 不调用 removeObserver！保持 MpvController 作为观察者，
+// 这样切回 MPV 时不需要重新注册，避免遗漏属性观察。
+// removeObserver 只在 Activity onDestroy 时调用。
+mpvView?.onInstanceRecreated = null
+this.mpvView = null
+// 重置状态（避免 Compose 用旧值）
+_fileLoaded.value = false
+_eofReached.value = false
+_timePos.value = 0.0
+_duration.value = 0.0
+_paused.value = true
+Log.i(TAG, "MpvController detached")
+}
 
     /**
      * 运行时切换 vo/hwdec（用户在播放器设置面板切换时调用）。
@@ -952,7 +966,7 @@ var onFileError: (() -> Unit)? = null
     override fun getMediaInfo(): Map<String, String?> {
         if (mpvView == null) return emptyMap()
         return try {
-            mapOf(
+                mapOf(
                 "videoCodec" to safeGet("video-format"),
                 "audioCodec" to safeGet("audio-codec-name"),
                 "videoRes" to "${_videoWidth.value}x${_videoHeight.value}",
@@ -964,7 +978,10 @@ var onFileError: (() -> Unit)? = null
                 "avdiff" to safeGet("total-avsync-change"),
                 "containerFormat" to safeGet("file-format"),
                 "hwdec" to safeGet("hwdec-current"),
-                "vo" to safeGet("vo")
+                "vo" to safeGet("vo"),
+                "videoPrimaries" to safeGet("video-params/primaries"),
+                "videoGamma" to safeGet("video-params/gamma"),
+                "videoColorRange" to safeGet("video-params/color-range")
             )
         } catch (e: Throwable) {
             Log.w(TAG, "getMediaInfo failed: ${e.message}")

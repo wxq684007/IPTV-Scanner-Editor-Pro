@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.iptv.scanner.editor.pro.ui.UiMode
 import com.iptv.scanner.editor.pro.ui.theme.tvFocusBorder
 import kotlinx.coroutines.delay
 
@@ -56,6 +57,7 @@ import kotlinx.coroutines.delay
 fun StreamQualityPanel(viewModel: AppViewModel) {
     val mpv = viewModel.mpv
     val fileLoaded by mpv.fileLoaded.collectAsState()
+    val isTv = viewModel.uiMode.value == UiMode.TV
 
     // 每秒刷新（与 Web 端 setInterval 1000ms 一致）
     var tick by remember { mutableIntStateOf(0) }
@@ -140,57 +142,57 @@ fun StreamQualityPanel(viewModel: AppViewModel) {
             ) {
                 // 视频信息
                 item { SectionLabel("视频") }
-                item { InfoRow("编解码器", info.videoCodec, focusRequester = firstRowFocus) }
-                item { InfoRow("分辨率", info.resolution) }
-                item { InfoRow("显示分辨率", info.displayResolution) }
-                item { InfoRow("帧率", info.fps) }
-                item { InfoRow("视频码率", info.videoBitrate) }
-                item { InfoRow("像素格式", info.pixelFormat) }
-                item { InfoRow("色彩矩阵", info.colormatrix) }
-                item { InfoRow("色彩原色", info.primaries) }
-                item { InfoRow("传输特性", info.gamma) }
-                item { InfoRow("HDR 类型", info.hdrType) }
-                item { InfoRow("视频位深", info.videoDepth) }
-                item { InfoRow("宽高比", info.aspectRatio) }
+                item { InfoRow("编解码器", info.videoCodec, focusRequester = firstRowFocus, isTv = isTv) }
+                item { InfoRow("分辨率", info.resolution, isTv = isTv) }
+                item { InfoRow("显示分辨率", info.displayResolution, isTv = isTv) }
+                item { InfoRow("帧率", info.fps, isTv = isTv) }
+                item { InfoRow("视频码率", info.videoBitrate, isTv = isTv) }
+                item { InfoRow("像素格式", info.pixelFormat, isTv = isTv) }
+                item { InfoRow("色彩矩阵", info.colormatrix, isTv = isTv) }
+                item { InfoRow("色彩原色", info.primaries, isTv = isTv) }
+                item { InfoRow("传输特性", info.gamma, isTv = isTv) }
+                item { InfoRow("HDR 类型", info.hdrType, isTv = isTv) }
+                item { InfoRow("视频位深", info.videoDepth, isTv = isTv) }
+                item { InfoRow("宽高比", info.aspectRatio, isTv = isTv) }
 
                 item { Spacer(modifier = Modifier.height(16.dp)) }
 
                 // 音频信息
                 item { SectionLabel("音频") }
-                item { InfoRow("编解码器", info.audioCodec) }
-                item { InfoRow("声道数", info.audioChannels) }
-                item { InfoRow("声道布局", info.audioLayout) }
-                item { InfoRow("采样率", info.sampleRate) }
-                item { InfoRow("音频码率", info.audioBitrate) }
-                item { InfoRow("音频位深", info.audioDepth) }
+                item { InfoRow("编解码器", info.audioCodec, isTv = isTv) }
+                item { InfoRow("声道数", info.audioChannels, isTv = isTv) }
+                item { InfoRow("声道布局", info.audioLayout, isTv = isTv) }
+                item { InfoRow("采样率", info.sampleRate, isTv = isTv) }
+                item { InfoRow("音频码率", info.audioBitrate, isTv = isTv) }
+                item { InfoRow("音频位深", info.audioDepth, isTv = isTv) }
 
                 item { Spacer(modifier = Modifier.height(16.dp)) }
 
                 // 网络与缓存
                 item { SectionLabel("网络与缓存") }
-                item { InfoRow("容器格式", info.container) }
-                item { InfoRow("协议", info.protocol) }
-                item { InfoRow("解复用器", info.demuxer) }
-                item { InfoRow("缓存时长", info.cacheDuration) }
-                item { InfoRow("缓存大小", info.cacheSize) }
-                item { InfoRow("缓存速度", info.cacheSpeed) }
-                item { InfoRow("缓冲状态", info.buffering) }
-                item { InfoRow("解复用码率", info.demuxerBitrate) }
+                item { InfoRow("容器格式", info.container, isTv = isTv) }
+                item { InfoRow("协议", info.protocol, isTv = isTv) }
+                item { InfoRow("解复用器", info.demuxer, isTv = isTv) }
+                item { InfoRow("缓存时长", info.cacheDuration, isTv = isTv) }
+                item { InfoRow("缓存大小", info.cacheSize, isTv = isTv) }
+                item { InfoRow("缓存速度", info.cacheSpeed, isTv = isTv) }
+                item { InfoRow("缓冲状态", info.buffering, isTv = isTv) }
+                item { InfoRow("解复用码率", info.demuxerBitrate, isTv = isTv) }
 
                 item { Spacer(modifier = Modifier.height(16.dp)) }
 
                 // 丢帧统计
                 item { SectionLabel("丢帧统计") }
-                item { InfoRow("VO 丢帧", info.voDropCount) }
-                item { InfoRow("解码器丢帧", info.decoderDropCount) }
-                item { InfoRow("音视频偏差", info.avdiff) }
+                item { InfoRow("VO 丢帧", info.voDropCount, isTv = isTv) }
+                item { InfoRow("解码器丢帧", info.decoderDropCount, isTv = isTv) }
+                item { InfoRow("音视频偏差", info.avdiff, isTv = isTv) }
 
                 item { Spacer(modifier = Modifier.height(16.dp)) }
 
                 // 硬件与渲染
                 item { SectionLabel("硬件与渲染") }
-                item { InfoRow("硬解", info.hwdec) }
-                item { InfoRow("视频输出", info.vo) }
+                item { InfoRow("硬解", info.hwdec, isTv = isTv) }
+                item { InfoRow("视频输出", info.vo, isTv = isTv) }
             }
         }
     }
@@ -399,14 +401,14 @@ private fun SectionLabel(text: String) {
 private fun InfoRow(
     label: String,
     value: String,
-    focusRequester: FocusRequester? = null
+    focusRequester: FocusRequester? = null,
+    isTv: Boolean = false
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-            .tvFocusBorder()
-            .focusable()
+            .then(if (isTv) Modifier.tvFocusBorder().focusable() else Modifier)
             .padding(vertical = 3.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {

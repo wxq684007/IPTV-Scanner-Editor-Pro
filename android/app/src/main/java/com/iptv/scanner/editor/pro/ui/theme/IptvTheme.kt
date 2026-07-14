@@ -168,17 +168,17 @@ fun rememberPlayerOverlayColors(): PlayerOverlayColors {
     return if (dark) {
         PlayerOverlayColors(
             scrim = Color(0x66000000),
-            topBarBg = Color(0xCC000000),
-            infoBarBg = Color(0xFF1A1A1A),
+            topBarBg = Color(0xF0202A40),      // 深蓝（信息栏背景，与纯黑视频区域区分）
+            infoBarBg = Color(0xF0202A40),      // 与信息栏同色（控制栏/活动区域背景）
             iconTint = Color.White,
             iconTintActive = Color(0xFFFFA500),
             textPrimary = Color.White,
-            textSecondary = Color(0xFFCCCCCC),
+            textSecondary = Color(0xFFAAAAAA),
             accent = Color(0xFF4A9EFF),
-            trackInactive = Color(0xFF444444),
-            badgeBg = Color(0xFFBDBDBD).copy(alpha = 0.12f),
-            badgeText = Color(0xFFBDBDBD),
-            divider = Color(0xFF333333),
+            trackInactive = Color(0xFF3A3A5C),
+            badgeBg = Color(0xFF4A9EFF).copy(alpha = 0.15f),
+            badgeText = Color(0xFF8AB4F8),
+            divider = Color(0xFF2A2A4E),
         )
     } else {
         PlayerOverlayColors(
