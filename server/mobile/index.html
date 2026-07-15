@@ -23,7 +23,120 @@ html,body{width:100%;height:100%;overflow:hidden;background:transparent;color:#e
   --accent:#4a7eff;--accent-soft:rgba(74,126,255,.15);
   --danger:#f44336;--warn:#ff9800;--ok:#4caf50;--purple:#9c27b0;
   --radius:12px;--radius-sm:8px;
+  --overlay-bg:rgba(0,0,0,.4);
+  --input-bg:rgba(255,255,255,.06);
+  --chip-bg:rgba(255,255,255,.04);
+  --chip-active-bg:rgba(255,255,255,.1);
+  --item-hover-bg:rgba(255,255,255,.06);
+  --item-active-bg:rgba(255,255,255,.12);
+  --ctrl-bg:rgba(255,255,255,.04);
+  --titlebar-color:rgba(255,255,255,.95);
+  --subtitle-color:rgba(255,255,255,.85);
+  --meta-color:rgba(255,255,255,.75);
+  --placeholder-color:#555;
+  --scrollbar-color:rgba(255,255,255,.15);
+  --svg-fill:#fff;
 }
+
+/* 浅色模式：跟随系统或用户手动切换 */
+body.theme-light{
+  --bg:#f5f5f5;--panel:rgba(255,255,255,.96);--panel-solid:#ffffff;
+  --border:rgba(0,0,0,.1);--border-strong:rgba(0,0,0,.18);
+  --text:#1a1a1a;--text-dim:rgba(0,0,0,.55);--text-faint:rgba(0,0,0,.35);
+  --accent:#2563eb;--accent-soft:rgba(37,99,235,.12);
+  --danger:#dc2626;--warn:#ea580c;--ok:#16a34a;--purple:#7c3aed;
+  --overlay-bg:rgba(0,0,0,.2);
+  --input-bg:rgba(0,0,0,.04);
+  --chip-bg:rgba(0,0,0,.03);
+  --chip-active-bg:rgba(0,0,0,.08);
+  --item-hover-bg:rgba(0,0,0,.04);
+  --item-active-bg:rgba(0,0,0,.08);
+  --ctrl-bg:rgba(0,0,0,.03);
+  --titlebar-color:#1a1a1a;
+  --subtitle-color:#333;
+  --meta-color:#555;
+  --placeholder-color:#999;
+  --scrollbar-color:rgba(0,0,0,.2);
+  --svg-fill:#333;
+}
+
+/* 浅色模式全局覆盖 */
+body.theme-light{background:transparent;color:var(--text)}
+body.theme-light #splashScreen{background:#f5f5f5}
+body.theme-light #splashScreen h1{color:#1a1a1a}
+body.theme-light #splashScreen .splash-sub{color:rgba(0,0,0,.35)}
+body.theme-light #splashScreen .splash-bar{background:rgba(0,0,0,.08)}
+body.theme-light #osd .ch-name{color:#1a1a1a;text-shadow:0 1px 4px rgba(255,255,255,.8)}
+body.theme-light #osd .ch-group{color:rgba(0,0,0,.65)}
+body.theme-light #osd .ch-extra{color:rgba(0,0,0,.45)}
+body.theme-light #topBar{background:linear-gradient(180deg,rgba(255,255,255,.5) 0%,transparent 100%)}
+body.theme-light #topBar .tb-btn{background:rgba(0,0,0,.08);color:#1a1a1a}
+body.theme-light #topBar .tb-btn:active{background:rgba(0,0,0,.15)}
+body.theme-light #topBar .tb-btn svg{fill:#1a1a1a}
+body.theme-light #topBar .tb-title{color:#1a1a1a;text-shadow:0 1px 2px rgba(255,255,255,.8)}
+body.theme-light #topBar .tb-status{color:rgba(0,0,0,.6);background:rgba(0,0,0,.08)}
+body.theme-light .panel-titlebar .title{color:var(--titlebar-color)}
+body.theme-light .panel-titlebar .close-btn{color:var(--text-dim)}
+body.theme-light .panel-titlebar .close-btn:active{background:var(--item-active-bg);color:var(--text)}
+body.theme-light .panel-search input{background:var(--input-bg);border-color:var(--border);color:var(--text)}
+body.theme-light .panel-search input::placeholder{color:var(--placeholder-color)}
+body.theme-light .panel-group-filter select{background:var(--input-bg);border-color:var(--border);color:var(--text)}
+body.theme-light .ch-sidebar{border-right-color:var(--border)}
+body.theme-light .ch-sidebar-search input{background:var(--input-bg);border-color:var(--border);color:var(--text)}
+body.theme-light .ch-sidebar-search input::placeholder{color:var(--placeholder-color)}
+body.theme-light .ch-sidebar-list::-webkit-scrollbar-thumb{background:var(--scrollbar-color)}
+body.theme-light .gf-chip{background:var(--chip-bg);color:var(--text-dim)}
+body.theme-light .gf-chip:active{background:var(--chip-active-bg)}
+body.theme-light .gf-chip.active{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+body.theme-light .gf-count{color:var(--text-faint)}
+body.theme-light .panel-tab{color:var(--text-dim)}
+body.theme-light .panel-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+body.theme-light .group-header{color:var(--subtitle-color)}
+body.theme-light .group-header:active{background:var(--item-hover-bg)}
+body.theme-light .ch-item{color:var(--meta-color)}
+body.theme-light .ch-item:active{background:var(--item-hover-bg)}
+body.theme-light .ch-item.playing{color:var(--accent);background:var(--accent-soft)}
+body.theme-light .ch-item:not(.playing) .ch-dot{background:var(--scrollbar-color)}
+body.theme-light .ch-item .ch-meta{color:var(--text-faint)}
+body.theme-light .epg-item:active{background:var(--item-hover-bg)}
+body.theme-light .epg-item .epg-title{color:var(--subtitle-color)}
+body.theme-light .epg-item .epg-desc{color:var(--text-faint)}
+body.theme-light .epg-item.now{background:var(--accent-soft);border-left-color:var(--accent)}
+body.theme-light .epg-item.now .epg-title{color:var(--text)}
+body.theme-light .form-section-title{color:var(--text-faint)}
+body.theme-light .form-row .label{color:var(--text-dim)}
+body.theme-light .form-row .value{color:var(--text)}
+body.theme-light .form-row input[type=range]{background:var(--scrollbar-color)}
+body.theme-light .form-row select,body.theme-light .form-row input[type=text],body.theme-light .form-row input[type=number]{background:var(--input-bg);border-color:var(--border);color:var(--text)}
+body.theme-light .btn{background:var(--input-bg);border-color:var(--border);color:var(--text)}
+body.theme-light .btn:active{background:var(--item-active-bg)}
+body.theme-light .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+body.theme-light .menu-section{color:var(--text-faint)}
+body.theme-light .list-item:active{background:var(--item-hover-bg)}
+body.theme-light .list-item .li-title{color:var(--text)}
+body.theme-light .list-item .li-sub{color:var(--text-dim)}
+body.theme-light .bb-btn{background:var(--chip-bg);color:var(--text)}
+body.theme-light .bb-btn:active{background:var(--chip-active-bg)}
+body.theme-light .bb-btn.active{background:var(--accent);color:#fff}
+body.theme-light .bb-btn svg{fill:var(--svg-fill)}
+body.theme-light .bb-btn.active svg{fill:#fff}
+body.theme-light .bb-progress{background:var(--scrollbar-color)}
+body.theme-light .bb-time{color:var(--text-dim)}
+body.theme-light .bb-vol{background:var(--scrollbar-color)}
+body.theme-light #splitVideoBar{background:rgba(245,245,245,.9)}
+body.theme-light #splitVideoBar .svb-name{color:#1a1a1a}
+body.theme-light #splitVideoBar .svb-btn{background:var(--chip-bg);color:var(--text)}
+body.theme-light #splitVideoBar .svb-btn:active{background:var(--chip-active-bg)}
+body.theme-light #splitVideoBar .svb-btn svg{fill:var(--svg-fill)}
+body.theme-light #splitToggleBtn{background:rgba(0,0,0,.3)}
+body.theme-light #splitToggleBtn svg{fill:#fff}
+body.theme-light .ctrl-badge{color:var(--text-dim)!important;background:var(--ctrl-bg)!important}
+body.theme-light #ctrlName{color:var(--text)!important}
+body.theme-light #ctrlProgram{color:var(--accent)!important}
+body.theme-light #ctrlDesc{color:var(--text-faint)!important}
+body.theme-light #ctrlLogo{background:var(--ctrl-bg);color:var(--text-faint)}
+body.theme-light #panelOverlay{background:var(--overlay-bg)}
+body.theme-light .floating-panel{background:var(--panel);border-color:var(--border);box-shadow:0 8px 32px rgba(0,0,0,.15)}
 
 /* Splash */
 #splashScreen{position:fixed;inset:0;z-index:200;background:#1a1a1a;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity .6s ease}
@@ -445,6 +558,7 @@ body.split-mode .panel-titlebar .title{font-size:13px}
   <button class="svb-btn" id="svbPrev" title="上一频道"><svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg></button>
   <button class="svb-btn" id="svbNext" title="下一频道"><svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg></button>
   <span class="svb-name" id="svbName">ISEP</span>
+  <button class="svb-btn" id="svbOpenFile" title="打开本地文件"><svg viewBox="0 0 24 24"><path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-6 10H6v-2h8v2zm4-4H6v-2h12v2z"/></svg></button>
   <button class="svb-btn" id="svbMenu" title="菜单"><svg viewBox="0 0 24 24"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg></button>
   <button class="svb-btn" id="svbFullscreen" title="全屏"><svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg></button>
 </div>
@@ -755,8 +869,15 @@ const api = {
       renderChannelList();
     }
   },
-  async fetchEPG(channelId){
-    const d=await this.get('/api/epg?id='+encodeURIComponent(channelId));
+  async fetchEPG(channelId, opts={}){
+    /* 与 PC 端 get_channel_epg 多参数匹配对齐：
+       匹配优先级 tvg_name > tvg_id > comma_name > channel_name > EpgMatcher 模糊匹配 */
+    let qs='id='+encodeURIComponent(channelId);
+    if(opts.tvg_id) qs+='&tvg_id='+encodeURIComponent(opts.tvg_id);
+    if(opts.tvg_name) qs+='&tvg_name='+encodeURIComponent(opts.tvg_name);
+    if(opts.name) qs+='&name='+encodeURIComponent(opts.name);
+    if(opts.comma_name) qs+='&comma_name='+encodeURIComponent(opts.comma_name);
+    const d=await this.get('/api/epg?'+qs);
     if(!d || !d.success) return [];
     return d.programmes || (d.data && (d.data.programmes||d.data.channels)) || d.channels || [];
   },
@@ -1039,36 +1160,73 @@ function toggleFullscreen(){
  * - 时移：拖进度条超出缓冲区（需 catchup_source 支持）
  * 退出：点击"退出回看"按钮或切换频道自动退出 */
 
-/* 格式化时间为指定格式（与 PC 端 replace_catchup_variables 的 fmt_map 对齐） */
+/* 格式化时间为指定格式（与 PC 端 replace_catchup_variables 的 format_time 对齐）
+ * 支持时区后缀：|utc / |local / |+HH:MM / |-HH:MM（以及旧式 :utc / :local）
+ * 例：${(b)yyyyMMddHHmmss|utc} → UTC 时间
+ *     ${(b)yyyyMMddHHmmss|+08:00} → 东八区时间 */
 function formatCatchupTime(date, fmt){
   if(!fmt) return '';
-  const y = date.getFullYear();
-  const mo = String(date.getMonth()+1).padStart(2,'0');
-  const d = String(date.getDate()).padStart(2,'0');
-  const h = String(date.getHours()).padStart(2,'0');
-  const mi = String(date.getMinutes()).padStart(2,'0');
-  const s = String(date.getSeconds()).padStart(2,'0');
-  switch(fmt){
-    case 'yyyyMMddHHmmss': return y+mo+d+h+mi+s;
-    case 'yyyyMMddHHmm': return y+mo+d+h+mi;
-    case 'yyyyMMdd': return y+mo+d;
+  /* 解析时区后缀（与 PC 端 format_time 的 | 和 : 分隔符对齐） */
+  let baseFmt = fmt;
+  let tzSpec = null;
+  const pipeIdx = fmt.indexOf('|');
+  if(pipeIdx >= 0){
+    baseFmt = fmt.substring(0, pipeIdx);
+    tzSpec = fmt.substring(pipeIdx + 1).trim();
+  } else {
+    const lowerFmt = fmt.toLowerCase();
+    const utcIdx = lowerFmt.indexOf(':utc');
+    const localIdx = lowerFmt.indexOf(':local');
+    if(utcIdx >= 0){ baseFmt = fmt.substring(0, utcIdx); tzSpec = 'utc'; }
+    else if(localIdx >= 0){ baseFmt = fmt.substring(0, localIdx); tzSpec = 'local'; }
+  }
+  /* 确定使用本地方法还是 UTC 方法读取时间值
+   * local/无时区 → 本地方法；utc → UTC 方法；+HH:MM → 偏移后用 UTC 方法 */
+  let d = date;
+  let useUTC = false;
+  if(tzSpec){
+    const tzLower = tzSpec.toLowerCase();
+    if(tzLower === 'utc'){ d = date; useUTC = true; }
+    else if(tzLower === 'local'){ d = date; useUTC = false; }
+    else {
+      const m = tzSpec.match(/^([+-])(\d{1,2}):?(\d{2})$/);
+      if(m){
+        const sign = m[1] === '+' ? 1 : -1;
+        const hours = parseInt(m[2], 10);
+        const minutes = parseInt(m[3], 10);
+        const offsetMs = sign * (hours * 60 + minutes) * 60000;
+        d = new Date(date.getTime() + offsetMs);
+        useUTC = true;
+      }
+    }
+  }
+  const y = useUTC ? d.getUTCFullYear() : d.getFullYear();
+  const mo = String((useUTC ? d.getUTCMonth() : d.getMonth()) + 1).padStart(2, '0');
+  const day = String(useUTC ? d.getUTCDate() : d.getDate()).padStart(2, '0');
+  const h = String(useUTC ? d.getUTCHours() : d.getHours()).padStart(2, '0');
+  const mi = String(useUTC ? d.getUTCMinutes() : d.getMinutes()).padStart(2, '0');
+  const s = String(useUTC ? d.getUTCSeconds() : d.getSeconds()).padStart(2, '0');
+  switch(baseFmt){
+    case 'yyyyMMddHHmmss': return y+mo+day+h+mi+s;
+    case 'yyyyMMddHHmm': return y+mo+day+h+mi;
+    case 'yyyyMMdd': return y+mo+day;
     case 'HHmmss': return h+mi+s;
     case 'HHmm': return h+mi;
-    case 'yyyy-MM-dd': return y+'-'+mo+'-'+d;
-    case 'yyyy-MM-ddTHH:mm:ss': return y+'-'+mo+'-'+d+'T'+h+':'+mi+':'+s;
-    case 'yyyy-MM-dd HH:mm:ss': return y+'-'+mo+'-'+d+' '+h+':'+mi+':'+s;
+    case 'yyyy-MM-dd': return y+'-'+mo+'-'+day;
+    case 'yyyy-MM-ddTHH:mm:ss': return y+'-'+mo+'-'+day+'T'+h+':'+mi+':'+s;
+    case 'yyyy-MM-dd HH:mm:ss': return y+'-'+mo+'-'+day+' '+h+':'+mi+':'+s;
     case 'yyyy': return String(y);
     case 'yy': return String(y).slice(-2);
     case 'MM': return mo;
-    case 'dd': return d;
+    case 'dd': return day;
     case 'HH': return h;
     case 'mm': return mi;
     case 'ss': return s;
-    case 'unix': return String(Math.floor(date.getTime()/1000));
-    case 'unix_ms': return String(date.getTime());
-    case '10': return String(Math.floor(date.getTime()/1000));
-    case '13': return String(date.getTime());
-    default: return y+mo+d+h+mi+s;
+    case 'unix': return String(Math.floor(d.getTime()/1000));
+    case 'unix_ms': return String(d.getTime());
+    case '10': return String(Math.floor(d.getTime()/1000));
+    case '13': return String(d.getTime());
+    default: return y+mo+day+h+mi+s;
   }
 }
 
@@ -1082,8 +1240,10 @@ function replaceCatchupVariables(url, startTime, endTime){
   const duration = Math.max(0, tsEnd - tsStart);
   const offset = Math.max(0, Math.floor(Date.now()/1000) - tsEnd);
   let result = url;
-  /* 花括号变量 ${(prefix)fmt} 或 ${(prefix)fmt|tz} */
-  result = result.replace(/\$\{\((b|e|start|end)\)([^}|]+)(?:\|([^}]+))?\}/g, (match, prefix, fmt) => {
+  /* 花括号变量 ${(prefix)fmt} 或 ${(prefix)fmt|tz}
+   * 与 PC 端 replace_braced_vars 的 regex r'\$\{\(prefix\)([^}]+)\}' 对齐
+   * 使用 [^}]+ 捕获完整 fmt（含 |utc 等时区后缀），由 formatCatchupTime 解析 */
+  result = result.replace(/\$\{\((b|e|start|end)\)([^}]+)\}/g, (match, prefix, fmt) => {
     const d = (prefix==='b'||prefix==='start') ? start : end;
     return formatCatchupTime(d, fmt);
   });
@@ -1096,13 +1256,13 @@ function replaceCatchupVariables(url, startTime, endTime){
     '${end_utc}': String(tsEnd),
     '${start_ms}': String(tsStart*1000),
     '${end_ms}': String(tsEnd*1000),
-    '${offset}': String(offset),
+    '${offset}': String(tsStart),
     '${duration}': String(duration),
     '${duration_ms}': String(duration*1000),
     '{start}': String(tsStart),
     '{end}': String(tsEnd),
     '{timestamp}': String(tsStart),
-    '{offset}': String(offset),
+    '{offset}': String(tsStart),
     '${duration_seconds}': String(duration)
   };
   for(const [k, v] of Object.entries(vars)){
@@ -1156,12 +1316,21 @@ function detectCatchupPattern(url){
 }
 
 /* 构建 catchup URL（与 PC 端 build_catchup_url 对齐）
- * 支持：default/append/shift/flussonic/xc/pltv */
+ * 支持：default/append/shift/flussonic/xc/pltv
+ * 支持 catchup_correction 时区偏移修正（与 PC 端一致） */
 function buildCatchupUrl(channel, startTime, endTime){
   if(!channel) return '';
   const catchupType = (channel.catchup || '').toLowerCase();
   const catchupSource = channel.catchup_source || '';
+  const catchupCorrection = parseFloat(channel.catchup_correction) || 0;
   const liveUrl = channel.url || '';
+  /* catchup_correction：时区偏移修正（与 PC 端 catchup_controller.py 一致）
+   * 某些 IPTV 源的 catchup URL 使用特定时区的时间，需要修正 */
+  if(catchupCorrection){
+    const offsetMs = catchupCorrection * 3600000;
+    startTime = startTime + offsetMs/1000;
+    endTime = endTime + offsetMs/1000;
+  }
   const tsStart = Math.floor(startTime);
   const tsEnd = Math.floor(endTime);
   /* Fallback：catchup 字段为空时，即时从 URL 检测可回看模式（PLTV/TVOD、SNM/TVOD）
@@ -1177,8 +1346,11 @@ function buildCatchupUrl(channel, startTime, endTime){
   }
   switch(effType){
     case 'append': {
-      const sep = liveUrl.includes('?') ? '&' : '?';
+      /* 与 PC 端对齐：source 为空时返回 liveUrl；source 以 ?/& 开头时直接拼接 */
+      if(!effSource) return liveUrl;
       const built = replaceCatchupVariables(effSource, startTime, endTime);
+      if(built.startsWith('?') || built.startsWith('&')) return liveUrl + built;
+      const sep = liveUrl.includes('?') ? '&' : '?';
       return liveUrl + sep + built;
     }
     case 'flussonic':
@@ -1190,17 +1362,21 @@ function buildCatchupUrl(channel, startTime, endTime){
     case 'xtream': {
       if(effSource) return replaceCatchupVariables(effSource, startTime, endTime);
       const dur = tsEnd - tsStart;
-      return liveUrl + '?start=' + tsStart + '&end=' + tsEnd + '&duration=' + dur;
+      const sep = liveUrl.includes('?') ? '&' : '?';
+      return liveUrl + sep + 'start=' + tsStart + '&end=' + tsEnd + '&duration=' + dur;
     }
     case 'shift': {
       if(effSource) return replaceCatchupVariables(effSource, startTime, endTime);
-      const offset = Math.max(0, Math.floor(Date.now()/1000) - tsEnd);
-      return liveUrl + '?timeshift=' + offset;
+      /* 与 PC 端对齐：offset = now - start_time（从节目开始到现在的秒数） */
+      const offset = Math.max(0, Math.floor(Date.now()/1000) - tsStart);
+      const sep = liveUrl.includes('?') ? '&' : '?';
+      return liveUrl + sep + 'timeshift=' + offset;
     }
     case 'pltv': {
       if(effSource) return replaceCatchupVariables(effSource, startTime, endTime);
-      /* pltv 但无 catchup_source：即时从 URL 构建（仅 PLTV 路径，SNM 由 detectCatchupPattern 处理） */
-      const tvodUrl = liveUrl.replace(/\/PLTV\//i, '/TVOD/');
+      /* pltv 但无 catchup_source：即时从 URL 构建
+       * 支持 PLTV→TVOD 和 SNM→TVOD 两种路径替换（与 PC 端 detect_catchup_pattern 对齐） */
+      const tvodUrl = liveUrl.replace(/\/PLTV\//i, '/TVOD/').replace(/\/SNM\//i, '/TVOD/');
       const s = new Date(startTime*1000);
       const e = new Date(endTime*1000);
       const fmtStr = d => {
@@ -1209,7 +1385,8 @@ function buildCatchupUrl(channel, startTime, endTime){
         const mi=String(d.getMinutes()).padStart(2,'0'); const se=String(d.getSeconds()).padStart(2,'0');
         return y+mo+da+h+mi+se;
       };
-      return tvodUrl + '?playseek=' + fmtStr(s) + '-' + fmtStr(e);
+      const sep = tvodUrl.includes('?') ? '&' : '?';
+      return tvodUrl + sep + 'playseek=' + fmtStr(s) + '-' + fmtStr(e);
     }
     case 'default':
     case 'vod':
@@ -1220,9 +1397,10 @@ function buildCatchupUrl(channel, startTime, endTime){
   }
 }
 
-/* 启动回看（与 PC 端 start_catchup 对齐）
- * 触发：点击 EPG 过去节目 */
-function startCatchup(program){
+/* 启动回看/时移（与 PC 端 start_catchup 对齐）
+ * 触发：点击 EPG 过去节目（回看）或当前节目（时移）
+ * isLive=true 时以时移模式启动（与 PC 端 start_live_timeshift_from_progress 对齐） */
+function startCatchup(program, isLive){
   if(!program || !USE_MPV) return;
   const ch = state.channels[state.currentIdx];
   if(!ch){ showOSD('回看','无当前频道'); return; }
@@ -1234,11 +1412,16 @@ function startCatchup(program){
     return;
   }
   /* 解析节目时间 */
-  const startTs = program.start_ts || (program.start ? Date.parse(program.start)/1000 : 0);
-  const endTs = program.stop_ts || program.end_ts || (program.stop||program.end ? Date.parse(program.stop||program.end)/1000 : 0);
+  let startTs = program.start_ts || (program.start ? Date.parse(program.start)/1000 : 0);
+  let endTs = program.stop_ts || program.end_ts || (program.stop||program.end ? Date.parse(program.stop||program.end)/1000 : 0);
   if(!startTs || !endTs){
     showOSD('回看','节目时间无效');
     return;
+  }
+  /* 时移模式：当前节目，结束时间设为当前时间（与 PC 端 start_live_timeshift_from_progress 对齐） */
+  if(isLive){
+    const now = Math.floor(Date.now()/1000);
+    endTs = Math.max(endTs, now);
   }
   /* 构建 catchup URL */
   const catchupUrl = buildCatchupUrl(ch, startTs, endTs);
@@ -1257,11 +1440,11 @@ function startCatchup(program){
     title: program.title || '',
     desc: program.desc || ''
   };
-  state.playMode = 'catchup';
-  state.liveTimeshiftSeconds = 0;
+  state.playMode = isLive ? 'timeshift' : 'catchup';
+  state.liveTimeshiftSeconds = isLive ? Math.max(0, Math.floor(Date.now()/1000) - endTs) : 0;
   /* 播放 catchup URL */
   Mpv.playChannel(catchupUrl);
-  showOSD('回看', program.title || ch.name);
+  showOSD(isLive?'时移':'回看', program.title || ch.name);
   /* 显示退出回看按钮 */
   const btn = $('#bbExitCatchup');
   if(btn) btn.style.display = '';
@@ -1571,7 +1754,12 @@ function fetchEpgForCurrent(){
   if(!ch) return;
   const id = ch.tvg_id || ch.name;
   if(!id) return;
-  api.fetchEPG(id).then(p=>{
+  /* 传递所有可用的频道标识，与 PC 端 get_channel_epg 多参数匹配对齐 */
+  api.fetchEPG(id, {
+    tvg_id: ch.tvg_id||'',
+    tvg_name: ch.tvg_name||'',
+    name: ch.name||'',
+  }).then(p=>{
     if(p && p.length){
       state.epgCache.set(state.currentIdx, p);
       /* 若控制面板已展开则立即刷新节目信息（控制面板由 controlsVisible 标记，不走 panelOpen） */
@@ -2087,7 +2275,11 @@ function renderEPGList(){
   const ch=state.channels[state.currentIdx];
   $('#epgTitle').textContent = '节目单 - '+ch.name;
   $('#epgList').innerHTML='<div class="spinner"></div>';
-  api.fetchEPG(ch.tvg_id||ch.name).then(p=>{
+  api.fetchEPG(ch.tvg_id||ch.name, {
+    tvg_id: ch.tvg_id||'',
+    tvg_name: ch.tvg_name||'',
+    name: ch.name||'',
+  }).then(p=>{
     if(!p||!p.length){ $('#epgList').innerHTML='<div style="padding:40px;text-align:center;color:var(--text-faint);font-size:13px">暂无节目单</div>'; return; }
     state.epgCache.set(state.currentIdx, p);
     const filter = ($('#epgSearchInput').value||'').toLowerCase();
@@ -2096,6 +2288,9 @@ function renderEPGList(){
      * （与 PC 端 EPG 列表点击调用 start_catchup(program) 对齐） */
     state.epgRenderedList = list;
     const now = Date.now();
+    /* 检查当前频道是否支持回看（与 PC 端 channel_supports_catchup 对齐） */
+    const curCh = state.currentIdx>=0 ? state.channels[state.currentIdx] : null;
+    const supportsCatchup = curCh && !!(curCh.catchup_source || curCh.catchup || detectCatchupPattern(curCh.url||''));
     let html='';
     let currentIdx=-1;  /* 当前正在播放的节目索引（用于滚动定位） */
     for(let i=0;i<list.length;i++){
@@ -2105,15 +2300,28 @@ function renderEPGList(){
       if(isNow) currentIdx=i;
       const liveBadge = isNow ? '<span style="background:#f44336;color:#fff;font-size:9px;padding:1px 5px;border-radius:3px;margin-left:6px;font-weight:600;animation:pulse 2s infinite">LIVE</span>' : '';
       const pastClass = isPast && !isNow ? 'opacity:.5' : '';
-      /* 过去节目（已结束且非当前）：调用 startCatchup 触发回看
-       * 当前/未来节目：调用 setReminder 添加提醒
-       * 与 PC 端 controllers/catchup_controller.py:on_epg_clicked 对齐 */
-      const onClick = isPast && !isNow
-        ? `startCatchup(state.epgRenderedList[${i}])`
+      /* 回看/时移可用标签（与 PC 端 _get_active_catchup_label 对齐） */
+      let catchupBadge = '';
+      if(supportsCatchup && (isPast || isNow)){
+        if(isNow){
+          /* 当前节目：显示"可时移"标签 */
+          catchupBadge = '<span style="background:var(--accent);color:#fff;font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;font-weight:600">可时移</span>';
+        } else {
+          /* 过去节目：显示"可回放"标签 */
+          catchupBadge = '<span style="background:var(--purple);color:#fff;font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;font-weight:600">可回放</span>';
+        }
+      }
+      /* 与 PC 端 on_epg_item_clicked 对齐：
+       * - 已结束节目：点击触发回看（startCatchup）
+       * - 当前播放节目：点击触发时移（startCatchup 以 timeshift 模式）
+       * - 未来节目：点击添加提醒 */
+      const canCatchup = supportsCatchup && (isPast || isNow);
+      const onClick = canCatchup
+        ? `startCatchup(state.epgRenderedList[${i}], ${isNow?true:false})`
         : `setReminder(${state.currentIdx},'${esc(e.title||'')}',${e.start_ts||0})`;
-      const cursorStyle = (isPast && !isNow) ? 'cursor:pointer' : '';
+      const cursorStyle = canCatchup ? 'cursor:pointer' : '';
       html+=`<div class="epg-item ${isNow?'now':''}" data-idx="${i}" style="${pastClass};${cursorStyle}" onclick="${onClick}">
-        <div class="epg-time">${esc(e.start||'')} - ${esc(e.stop||'')}${liveBadge}</div>
+        <div class="epg-time">${esc(e.start||'')} - ${esc(e.stop||'')}${liveBadge}${catchupBadge}</div>
         <div class="epg-title">${esc(e.title||'')}</div>
         ${e.desc?`<div class="epg-desc">${esc(e.desc)}</div>`:''}
       </div>`;
@@ -2201,6 +2409,10 @@ function closeFuncPanel(){
   p.classList.remove('open');
   p.classList.add('hidden');
   if(!state.panelOpen) $('#panelOverlay').classList.remove('show');
+  /* 分屏模式下关闭功能面板时刷新分组筛选，确保侧边栏状态正确 */
+  if(state.splitMode && state.panelOpen==='channels'){
+    updateGroupFilter();
+  }
 }
 function renderFuncPanel(name){
   const body=$('#funcBody'), title=$('#funcTitle');
@@ -2523,7 +2735,7 @@ function openPanel(which){
   else { $('#panelEPG').classList.remove('open'); }
   state.panelOpen = which;
   if(!state.splitMode) $('#panelOverlay').classList.add('show');
-  if(which==='channels'){ $('#panelChannels').classList.add('open'); renderChannelList(); }
+  if(which==='channels'){ $('#panelChannels').classList.add('open'); updateGroupFilter(); renderChannelList(); }
   else if(which==='epg'){ $('#panelEPG').classList.add('open'); renderEPGList(); }
 }
 function closePanels(){
@@ -2742,6 +2954,7 @@ $('#splitToggleBtn').addEventListener('click', toggleSplitMode);
 $('#svbPlay').addEventListener('click', ()=>{ togglePlay(); updateSplitVideoBar(); });
 $('#svbPrev').addEventListener('click', prevChannel);
 $('#svbNext').addEventListener('click', nextChannel);
+$('#svbOpenFile').addEventListener('click', openLocalFile);
 $('#svbMenu').addEventListener('click', openMainMenu);
 $('#svbFullscreen').addEventListener('click', toggleFullscreen);
 /* 进度条 Seek：与 PC 端 mixins/progress_mixin.py:_seek_live/_seek_vod 对齐
@@ -3986,6 +4199,7 @@ registerFunc('view', { title:'视图' }, body=>{
     <div class="form-section">
       <div class="form-section-title">界面</div>
       <div class="btn-row">
+        <button class="btn sm" onclick="toggleTheme()">切换深色/浅色</button>
         <button class="btn sm" onclick="toggleTopBars()">切换顶/底栏</button>
         <button class="btn sm" onclick="closeFuncPanel();closePanels()">隐藏所有面板</button>
       </div>
@@ -3997,6 +4211,32 @@ function toggleFullscreen(){
   else { document.exitFullscreen().catch(()=>{}); state.fullscreen=false; }
   document.addEventListener('fullscreenchange', ()=>{ state.fullscreen=!!document.fullscreenElement; }, {once:true});
   showOSD('全屏', state.fullscreen?'开启':'关闭');
+}
+/* 主题切换：深色/浅色 */
+function toggleTheme(){
+  const isLight = document.body.classList.toggle('theme-light');
+  localStorage.setItem('isep_theme', isLight?'light':'dark');
+  /* 更新 meta theme-color */
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if(meta) meta.content = isLight ? '#f5f5f5' : '#1a1a1a';
+  showOSD('主题', isLight?'浅色':'深色');
+}
+function applyTheme(){
+  const saved = localStorage.getItem('isep_theme');
+  if(saved === 'light'){
+    document.body.classList.add('theme-light');
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if(meta) meta.content = '#f5f5f5';
+  } else if(saved === 'dark'){
+    document.body.classList.remove('theme-light');
+  } else {
+    /* 未设置时跟随系统 */
+    if(window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches){
+      document.body.classList.add('theme-light');
+      const meta = document.querySelector('meta[name="theme-color"]');
+      if(meta) meta.content = '#f5f5f5';
+    }
+  }
 }
 function setAspect(a){
   state.aspect=a;
@@ -4746,6 +4986,8 @@ function forceQuit(){
  *  5. 启动后台任务（提醒检查 / 续播自动保存 / 控件自动隐藏）
  */
 async function initApp(){
+  /* 0. 应用主题（尽早执行避免闪烁） */
+  applyTheme();
   /* 1. 加载持久化 */
   storage.loadAll();
   /* favorites 是 Set，需要恢复 */

@@ -102,13 +102,14 @@ object CatchupHelper {
     /**
      * 检测 URL 是否包含 PLTV/SNM 模式（与 PC 端 m3u_parser.detect_catchup_pattern 对齐）。
      * 返回检测到的 catchup 类型，或 null 表示不支持。
+     * PLTV 和 SNM 均返回 "pltv"（与 PC 端/JS 端一致，都使用 /TVOD/ + playseek 格式）。
      */
     fun detectCatchupPattern(url: String): String? {
         if (url.isEmpty()) return null
-        // PLTV/.../TVOD 或 PLTV 模式
-        if (url.contains("/PLTV/") || url.contains("PLTV")) return "pltv"
-        // SNM 模式（部分运营商）
-        if (url.contains("/SNM/")) return "shift"
+        // PLTV/.../TVOD 或 PLTV 模式（华为/电信/移动 IPTV 平台）
+        if (url.contains("/PLTV/", ignoreCase = true) || url.contains("PLTV", ignoreCase = true)) return "pltv"
+        // SNM 模式（华为 IPTV 平台另一种路径，与 PC 端一致返回 pltv）
+        if (url.contains("/SNM/", ignoreCase = true)) return "pltv"
         // 默认：含 catchup-source 的频道已在外部处理
         return null
     }
@@ -125,9 +126,13 @@ object CatchupHelper {
     // -----------------------------------------------------------------
 
     private fun buildAppendUrl(liveUrl: String, source: String, startMs: Long, endMs: Long): String? {
-        val replaced = if (source.isNotEmpty()) replaceCatchupVariables(source, startMs, endMs) else ""
+        // 与 PC 端对齐：source 为空时返回 liveUrl
+        if (source.isEmpty()) return liveUrl
+        val replaced = replaceCatchupVariables(source, startMs, endMs)
+        // source 以 ?/& 开头时直接拼接（与 PC 端一致）
+        if (replaced.startsWith("?") || replaced.startsWith("&")) return liveUrl + replaced
         val sep = if (liveUrl.contains('?')) "&" else "?"
-        return if (replaced.isNotEmpty()) "$liveUrl$sep$replaced" else null
+        return "$liveUrl$sep$replaced"
     }
 
     private fun buildFlussonicUrl(liveUrl: String, source: String, startMs: Long, endMs: Long): String? {
@@ -158,11 +163,12 @@ object CatchupHelper {
 
     private fun buildPltvUrl(liveUrl: String, source: String, startMs: Long, endMs: Long): String? {
         if (source.isNotEmpty()) return replaceCatchupVariables(source, startMs, endMs)
-        // 将 /PLTV/ 替换为 /TVOD/，追加 ?playseek={start}-{end}（yyyyMMddHHmmss 格式）
-        val tvodUrl = liveUrl.replace("/PLTV/", "/TVOD/")
-        val fmt = SimpleDateFormat("yyyyMMddHHmmss", Locale.US).apply {
-            timeZone = TimeZone.getTimeZone("UTC")
-        }
+        // 将 /PLTV/ 或 /SNM/ 替换为 /TVOD/，追加 ?playseek={start}-{end}（yyyyMMddHHmmss 格式）
+        // 与 PC 端 build_catchup_url 的 pltv 分支对齐：使用本地时区（非 UTC）
+        val tvodUrl = liveUrl
+            .replace("/PLTV/", "/TVOD/", ignoreCase = true)
+            .replace("/SNM/", "/TVOD/", ignoreCase = true)
+        val fmt = SimpleDateFormat("yyyyMMddHHmmss", Locale.US)
         val startStr = fmt.format(Date(startMs))
         val endStr = fmt.format(Date(endMs))
         val sep = if (tvodUrl.contains('?')) "&" else "?"
@@ -188,8 +194,8 @@ object CatchupHelper {
      */
     fun replaceCatchupVariables(url: String, startMs: Long, endMs: Long): String {
         if (url.isEmpty()) return url
-        val now = System.currentTimeMillis()
-        val offsetSec = ((now - startMs) / 1000).coerceAtLeast(0L)
+        val startSec = startMs / 1000
+        val endSec = endMs / 1000
         val durationSec = ((endMs - startMs) / 1000).coerceAtLeast(0L)
 
         var result = url
@@ -197,8 +203,6 @@ object CatchupHelper {
         // 1. 花括号带括号前缀变量：${(b)fmt} / ${(e)fmt} / ${(start)fmt} / ${(end)fmt}
         // 与 PC 端 catchup_controller.replace_braced_vars 的 regex 完全对齐：
         //   re.finditer(r'\$\{\(' + re.escape(prefix) + r'\)([^}]+)\}', url)
-        // 注意：PC 端只匹配带括号的格式 ${(prefix)fmt}，不匹配不带括号的 ${prefix}。
-        // 不带括号的 ${start}/${end} 等是简单变量，在下面第 2 步处理（返回 unix 时间戳）。
         val prefixedPattern = Regex("""\$\{\((b|e|start|end)\)([^}]*)\}""")
         result = prefixedPattern.replace(result) { m ->
             val prefix = m.groupValues[1]
@@ -212,18 +216,19 @@ object CatchupHelper {
         }
 
         // 2. 简单变量：${name}
+        // 与 PC 端 replace_catchup_variables 的 replacements 对齐
         val simplePattern = Regex("""\$\{(\w+)\}""")
         result = simplePattern.replace(result) { m ->
             val name = m.groupValues[1]
             when (name) {
-                "start" -> (startMs / 1000).toString()
-                "end" -> (endMs / 1000).toString()
-                "timestamp" -> (now / 1000).toString()
-                "start_utc" -> (startMs / 1000).toString()
-                "end_utc" -> (endMs / 1000).toString()
+                "start" -> startSec.toString()
+                "end" -> endSec.toString()
+                "timestamp" -> startSec.toString()  // PC 端: '${timestamp}': start_ts
+                "start_utc" -> startSec.toString()
+                "end_utc" -> endSec.toString()
                 "start_ms" -> startMs.toString()
                 "end_ms" -> endMs.toString()
-                "offset" -> offsetSec.toString()
+                "offset" -> startSec.toString()  // PC 端: '${offset}': start_ts
                 "duration" -> durationSec.toString()
                 "duration_ms" -> (durationSec * 1000).toString()
                 // 日期组件
@@ -244,13 +249,14 @@ object CatchupHelper {
         }
 
         // 3. 无 $ 简单变量：{start} / {end} / {timestamp} / {offset}
+        // 与 PC 端 replacements 中的无 $ 变量对齐
         val noDollarPattern = Regex("""\{(start|end|timestamp|offset)\}""")
         result = noDollarPattern.replace(result) { m ->
             when (m.groupValues[1]) {
-                "start" -> (startMs / 1000).toString()
-                "end" -> (endMs / 1000).toString()
-                "timestamp" -> (now / 1000).toString()
-                "offset" -> offsetSec.toString()
+                "start" -> startSec.toString()
+                "end" -> endSec.toString()
+                "timestamp" -> startSec.toString()  // PC 端: '{timestamp}': start_ts
+                "offset" -> startSec.toString()  // PC 端: '{offset}': start_ts
                 else -> m.value
             }
         }
@@ -270,18 +276,29 @@ object CatchupHelper {
      */
     fun formatCatchupTime(tsMs: Long, fmt: String): String {
         if (fmt.isEmpty()) {
-            // 默认格式：UTC yyyyMMddHHmmss
+            // 默认格式：本地时区 yyyyMMddHHmmss（与 PC 端 strftime 行为一致）
             return SimpleDateFormat("yyyyMMddHHmmss", Locale.US)
-                .apply { timeZone = TimeZone.getTimeZone("UTC") }
                 .format(Date(tsMs))
         }
 
-        // 解析时区后缀
-        val (formatPart, tzPart) = if (fmt.contains("|")) {
-            val idx = fmt.lastIndexOf('|')
-            fmt.substring(0, idx) to fmt.substring(idx + 1)
+        // 解析时区后缀（与 PC 端 format_time 对齐，支持 | 和 : 两种分隔符）
+        var formatPart = fmt
+        var tzPart = ""
+        val pipeIdx = fmt.indexOf('|')
+        if (pipeIdx >= 0) {
+            formatPart = fmt.substring(0, pipeIdx)
+            tzPart = fmt.substring(pipeIdx + 1).trim()
         } else {
-            fmt to ""
+            val lowerFmt = fmt.lowercase()
+            val utcIdx = lowerFmt.indexOf(":utc")
+            val localIdx = lowerFmt.indexOf(":local")
+            if (utcIdx >= 0) {
+                formatPart = fmt.substring(0, utcIdx)
+                tzPart = "utc"
+            } else if (localIdx >= 0) {
+                formatPart = fmt.substring(0, localIdx)
+                tzPart = "local"
+            }
         }
 
         // unix 时间戳特殊处理
@@ -292,8 +309,8 @@ object CatchupHelper {
 
         // 时区选择
         val tz = when {
-            tzPart.isEmpty() || tzPart == "local" -> TimeZone.getDefault()
-            tzPart == "utc" -> TimeZone.getTimeZone("UTC")
+            tzPart.isEmpty() || tzPart.equals("local", ignoreCase = true) -> TimeZone.getDefault()
+            tzPart.equals("utc", ignoreCase = true) -> TimeZone.getTimeZone("UTC")
             tzPart.startsWith("+") || tzPart.startsWith("-") -> TimeZone.getTimeZone("GMT$tzPart")
             else -> TimeZone.getTimeZone(tzPart)
         }

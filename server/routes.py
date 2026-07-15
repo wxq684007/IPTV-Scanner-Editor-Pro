@@ -1409,11 +1409,23 @@ async def handle_epg(request):
         return _json_error('EPG解析器未初始化', 503)
     search = request.rel_url.query.get('search', '').strip().lower()
     channel_id = request.rel_url.query.get('id', '').strip()
+    # 额外的频道标识参数（与 PC 端 get_channel_epg 的多参数匹配对齐）
+    tvg_id = request.rel_url.query.get('tvg_id', '').strip()
+    tvg_name = request.rel_url.query.get('tvg_name', '').strip()
+    channel_name = request.rel_url.query.get('name', '').strip()
+    comma_name = request.rel_url.query.get('comma_name', '').strip()
     try:
         # SubscriptionManager 接口（standalone 模式）
         if hasattr(epg_parser, 'get_channel_epg'):
             if channel_id:
-                programmes = epg_parser.get_channel_epg(channel_id) or []
+                # 优先使用多参数匹配（与 PC 端 EPG 匹配逻辑一致）
+                # 匹配优先级：tvg_name > tvg_id > comma_name > channel_name > EpgMatcher 模糊匹配
+                programmes = epg_parser.get_channel_epg(
+                    channel_name or channel_id,
+                    tvg_id=tvg_id or (channel_id if not channel_name else None),
+                    tvg_name=tvg_name or None,
+                    comma_name=comma_name or None,
+                ) or []
                 # 给每个节目添加 Unix 时间戳字段（前端用此判断当前节目）
                 for p in programmes:
                     if 'start_ts' not in p:
