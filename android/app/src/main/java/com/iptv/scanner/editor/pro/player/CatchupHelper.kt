@@ -114,11 +114,34 @@ object CatchupHelper {
         return null
     }
 
-    /** 判断频道是否支持回看（catchup_source/catchup/detectCatchupPattern 任一存在） */
+    /** 无 catchup_source 也能自行生成 catchup URL 的类型 */
+    private val CATCHUP_TYPES_WITHOUT_SOURCE = setOf(
+        "flussonic", "fs", "xc", "xtream", "shift", "pltv"
+    )
+
+    /**
+     * 判断频道是否真正支持回看（比仅检查 catchup 字段非空更严格）。
+     *
+     * 仅凭 catchup="default" 但无 catchup_source 的频道不算支持回看，
+     * 因为 buildCatchupUrl 对 default 类型无 source 时返回 null。
+     *
+     * 判定规则：
+     *   1. catchup_source 非空 → 有模板 URL，支持回看
+     *   2. catchup_source 为空但 catchup 类型可自行生成 URL → 支持
+     *   3. URL 匹配 PLTV/SNM 模式 → 支持
+     *   4. 其他情况（default/vod/timemachine/append/空 无 source）→ 不支持
+     */
     fun isCatchupEnabled(channel: IptvChannel): Boolean {
-        if (channel.catchupSource.trim().isNotEmpty()) return true
-        if (channel.catchup.trim().isNotEmpty()) return true
-        return detectCatchupPattern(channel.url) != null
+        val catchupSource = channel.catchupSource.trim()
+        val catchupType = channel.catchup.trim().lowercase()
+        // 1. 有 catchup_source 模板
+        if (catchupSource.isNotEmpty()) return true
+        // 2. 无 source 但类型可自行生成 URL
+        if (catchupType in CATCHUP_TYPES_WITHOUT_SOURCE) return true
+        // 3. URL 匹配 PLTV/SNM 模式
+        if (detectCatchupPattern(channel.url) != null) return true
+        // 4. 其他情况不支持
+        return false
     }
 
     // -----------------------------------------------------------------

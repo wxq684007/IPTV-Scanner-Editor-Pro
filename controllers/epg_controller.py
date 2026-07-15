@@ -114,6 +114,46 @@ class EPGController:
         self._current_date = None
         self._last_epg_key = None
 
+    # 无 catchup_source 也能自行生成 catchup URL 的类型
+    _CATCHUP_TYPES_WITHOUT_SOURCE = frozenset(
+        {'flussonic', 'fs', 'xc', 'xtream', 'shift', 'pltv'}
+    )
+
+    def _channel_supports_catchup(self, channel: dict) -> bool:
+        """判断频道是否真正支持回看（比仅检查 catchup 字段非空更严格）。
+
+        仅凭 catchup="default" 但无 catchup_source 的频道不算支持回看，
+        因为 build_catchup_url 对 default 类型无 source 时返回空字符串。
+
+        判定规则：
+          1. catchup_source 非空 → 有模板 URL，支持回看
+          2. catchup_source 为空但 catchup 类型可自行生成 URL → 支持
+          3. URL 匹配 PLTV/SNM 模式 → 支持
+          4. 其他情况（default/vod/timemachine/append/空 无 source）→ 不支持
+        """
+        if not channel:
+            return False
+        catchup_source = channel.get('catchup_source', '') or ''
+        catchup_type = (channel.get('catchup', '') or '').lower().strip()
+        live_url = channel.get('url', '') or ''
+
+        # 1. 有 catchup_source 模板
+        if catchup_source:
+            return True
+        # 2. 无 source 但类型可自行生成 URL
+        if catchup_type in self._CATCHUP_TYPES_WITHOUT_SOURCE:
+            return True
+        # 3. URL 匹配 PLTV/SNM 模式
+        if live_url:
+            try:
+                from services.m3u_parser import detect_catchup_pattern
+                if detect_catchup_pattern(live_url):
+                    return True
+            except Exception:
+                pass
+        # 4. 其他情况不支持
+        return False
+
     @property
     def tr(self):
         if hasattr(self.window, 'language_manager'):
@@ -332,9 +372,8 @@ class EPGController:
             # 获取当前时间用于判断节目状态
             now = datetime.now()
 
-            channel_supports_catchup = bool(
-                self.window.current_channel.get('catchup_source', '')
-                or self.window.current_channel.get('catchup', '')
+            channel_supports_catchup = self._channel_supports_catchup(
+                self.window.current_channel
             ) if hasattr(self.window, 'current_channel') and self.window.current_channel else False
 
             new_key = self._compute_epg_key(filtered_list, channel_name, target_date)

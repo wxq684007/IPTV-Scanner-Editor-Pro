@@ -2592,7 +2592,7 @@ fun ScanPanel(viewModel: AppViewModel) {
 
     PanelScaffold(
         title = "URL 范围扫描",
-        subtitle = "扫描 IP 范围内的 IPTV 服务（支持 [1-255] 表达式）",
+        subtitle = "扫描 IP 范围内的 IPTV 服务（支持方括号范围表达式）",
         onClose = { viewModel.toggleScanPanel() }
     ) {
         // 参数表单
@@ -2601,12 +2601,17 @@ fun ScanPanel(viewModel: AppViewModel) {
             value = baseUrl,
             onValueChange = { baseUrl = it },
             label = { Text("基础 URL") },
-            placeholder = { Text("http://192.168.1.[1-255]:8080") },
+            placeholder = { Text("rtp://239.1.1.[1-255]:5002 或 http://x.com/[1-100:n]/{n}.m3u8") },
             singleLine = true,
             enabled = !running,
             modifier = Modifier.fillMaxWidth().tvTextField()
         )
-        DescText("支持 [1-255] 范围表达式，扫描该范围内所有 IP 的指定端口")
+        DescText("支持方括号范围表达式：")
+        DescText("· [1-255] 数字范围（如 192.168.1.[1-255]）")
+        DescText("· [1,5,10] 列表枚举")
+        DescText("· [1-10,20-30] 范围与列表混合")
+        DescText("· [1-255:n] 命名变量，可用 {n} 在 URL 其他位置引用并同步变化")
+        DescText("· 多个独立表达式按笛卡尔积展开")
 
         Row(
             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),

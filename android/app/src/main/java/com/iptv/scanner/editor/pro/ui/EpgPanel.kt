@@ -58,6 +58,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.iptv.scanner.editor.pro.data.IptvEpgProgram
+import com.iptv.scanner.editor.pro.player.CatchupHelper
 import com.iptv.scanner.editor.pro.ui.theme.tvFocusBorder
 import com.iptv.scanner.editor.pro.ui.theme.tvTextField
 import kotlinx.coroutines.delay
@@ -211,6 +212,7 @@ fun EpgPanel(viewModel: AppViewModel, compact: Boolean = false) {
                             programs = filtered,
                             searchActive = searchQuery.isNotEmpty(),
                             hasReminder = { program -> viewModel.isReminderSet(program) },
+                            supportsCatchup = currentChannel?.let { CatchupHelper.isCatchupEnabled(it) } ?: false,
                             onProgramClick = { program ->
                                 handleProgramClick(program, viewModel)
                             }
@@ -244,6 +246,7 @@ private fun EpgList(
     programs: List<IptvEpgProgram>,
     searchActive: Boolean,
     hasReminder: (IptvEpgProgram) -> Boolean,
+    supportsCatchup: Boolean,
     onProgramClick: (IptvEpgProgram) -> Unit
 ) {
     val listState = rememberLazyListState()
@@ -298,6 +301,7 @@ private fun EpgList(
                 isCurrent = isCurrent,
                 isPast = isPast,
                 hasReminder = hasReminder(program),
+                supportsCatchup = supportsCatchup,
                 onClick = { onProgramClick(program) }
             )
         }
@@ -313,6 +317,7 @@ private fun EpgItem(
     isCurrent: Boolean,
     isPast: Boolean,
     hasReminder: Boolean,
+    supportsCatchup: Boolean,
     onClick: () -> Unit
 ) {
     val bgColor = if (isCurrent) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else Color.Transparent
@@ -359,6 +364,11 @@ private fun EpgItem(
                 if (isCurrent) {
                     Spacer(modifier = Modifier.width(6.dp))
                     LiveBadge()
+                }
+                // 回看/时移标识（仅当频道真正支持回看时显示）
+                if (supportsCatchup && (isPast || isCurrent)) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    CatchupBadge(isCurrent = isCurrent)
                 }
                 if (hasReminder) {
                     Spacer(modifier = Modifier.width(6.dp))
@@ -446,6 +456,29 @@ private fun LiveBadge() {
 }
 
 /**
+ * 回看/时移徽章（与移动端 channelSupportsCatchup 对齐，仅支持回看的频道显示）。
+ * isCurrent=true → "可时移"（蓝色），isCurrent=false → "可回放"（紫色）
+ */
+@Composable
+private fun CatchupBadge(isCurrent: Boolean) {
+    val bgColor = if (isCurrent) MaterialTheme.colorScheme.primary else Color(0xFF9C27B0)
+    val text = if (isCurrent) "可时移" else "可回放"
+    Surface(
+        color = bgColor.copy(alpha = 0.15f),
+        shape = RoundedCornerShape(3.dp),
+        modifier = Modifier.clip(RoundedCornerShape(3.dp))
+    ) {
+        Text(
+            text = text,
+            color = bgColor,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+        )
+    }
+}
+
+/**
  * 空状态占位。
  */
 @Composable
@@ -470,8 +503,8 @@ private fun EmptyState(text: String) {
 
 /**
  * 节目点击处理：
- * - past 程序（已结束且非当前）→ startCatchup
- * - current/future 程序 → toggleReminder（设置/取消提醒）
+ * - past 程序（已结束且非当前）且频道支持回看 → startCatchup
+ * - 其他情况 → toggleReminder（设置/取消提醒）
  */
 private fun handleProgramClick(program: IptvEpgProgram, viewModel: AppViewModel) {
     val now = System.currentTimeMillis()
@@ -479,8 +512,14 @@ private fun handleProgramClick(program: IptvEpgProgram, viewModel: AppViewModel)
     val isCurrent = isProgramCurrent(program, now)
 
     if (isPast && !isCurrent) {
-        // 过去节目 → 触发回看
-        viewModel.startCatchup(program)
+        // 过去节目 → 检查频道是否支持回看
+        val channel = viewModel.currentChannel.value
+        if (channel != null && CatchupHelper.isCatchupEnabled(channel)) {
+            viewModel.startCatchup(program)
+        } else {
+            // 不支持回看 → 回退到提醒
+            viewModel.toggleReminder(program, channel)
+        }
     } else {
         // 当前/未来节目 → 切换提醒
         viewModel.toggleReminder(program, viewModel.currentChannel.value)

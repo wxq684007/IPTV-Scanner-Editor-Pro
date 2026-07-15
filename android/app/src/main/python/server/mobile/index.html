@@ -1315,6 +1315,29 @@ function detectCatchupPattern(url){
   return null;
 }
 
+/* 判断频道是否真正支持回看（与 PC 端 channel_supports_catchup 对齐，但更严格）
+ * 仅凭 catchup="default" 但无 catchup_source 的频道不算支持回看
+ * 因为 buildCatchupUrl 对 default 类型无 source 时返回空字符串
+ * 判定规则：
+ *   1. catchup_source 非空 → 有模板 URL，支持回看
+ *   2. catchup_source 为空但 catchup 类型可自行生成 URL（flussonic/fs/xc/xtream/shift/pltv）→ 支持
+ *   3. URL 匹配 PLTV/SNM 模式 → 支持
+ *   4. 其他情况（default/vod/timemachine/append/空 无 source）→ 不支持 */
+function channelSupportsCatchup(ch){
+  if(!ch) return false;
+  const catchupSource = ch.catchup_source || '';
+  const catchupType = (ch.catchup || '').toLowerCase().trim();
+  const liveUrl = ch.url || '';
+  /* 1. 有 catchup_source 模板 → 支持 */
+  if(catchupSource) return true;
+  /* 2. 无 source 但类型可自行生成 URL */
+  if(['flussonic','fs','xc','xtream','shift','pltv'].includes(catchupType)) return true;
+  /* 3. URL 匹配 PLTV/SNM 模式 */
+  if(detectCatchupPattern(liveUrl)) return true;
+  /* 4. 其他情况不支持 */
+  return false;
+}
+
 /* 构建 catchup URL（与 PC 端 build_catchup_url 对齐）
  * 支持：default/append/shift/flussonic/xc/pltv
  * 支持 catchup_correction 时区偏移修正（与 PC 端一致） */
@@ -1407,10 +1430,10 @@ function startCatchup(program, isLive){
   /* 检查频道是否支持回看 */
   const catchupSource = ch.catchup_source || '';
   const catchupType = ch.catchup || '';
-  if(!catchupSource && !catchupType && !detectCatchupPattern(ch.url||'')){
-    showOSD('回看','该频道不支持回看');
-    return;
-  }
+if(!channelSupportsCatchup(ch)){
+showOSD('回看','该频道不支持回看');
+return;
+}
   /* 解析节目时间 */
   let startTs = program.start_ts || (program.start ? Date.parse(program.start)/1000 : 0);
   let endTs = program.stop_ts || program.end_ts || (program.stop||program.end ? Date.parse(program.stop||program.end)/1000 : 0);
@@ -1463,10 +1486,10 @@ function startLiveTimeshift(targetWallclock){
   /* 检查频道是否支持回看（时移需要 catchup_source） */
   const catchupSource = ch.catchup_source || '';
   const catchupType = ch.catchup || '';
-  if(!catchupSource && !catchupType && !detectCatchupPattern(ch.url||'')){
-    showOSD('时移','该频道不支持时移');
-    return false;
-  }
+if(!channelSupportsCatchup(ch)){
+showOSD('时移','该频道不支持时移');
+return false;
+}
   /* 限制不超过当前时间（留 5 秒余量） */
   const now = Math.floor(Date.now()/1000);
   if(targetWallclock >= now) targetWallclock = now - 5;
@@ -2290,7 +2313,7 @@ function renderEPGList(){
     const now = Date.now();
     /* 检查当前频道是否支持回看（与 PC 端 channel_supports_catchup 对齐） */
     const curCh = state.currentIdx>=0 ? state.channels[state.currentIdx] : null;
-    const supportsCatchup = curCh && !!(curCh.catchup_source || curCh.catchup || detectCatchupPattern(curCh.url||''));
+    const supportsCatchup = channelSupportsCatchup(curCh);
     let html='';
     let currentIdx=-1;  /* 当前正在播放的节目索引（用于滚动定位） */
     for(let i=0;i<list.length;i++){
