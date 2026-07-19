@@ -41,6 +41,7 @@ class MPVTextureView @JvmOverloads constructor(
     override fun asView(): View = this
 
     /** 当前 Surface（从 SurfaceTexture 创建） */
+    @Volatile
     private var surface: Surface? = null
 
     @Volatile
@@ -325,6 +326,7 @@ class MPVTextureView @JvmOverloads constructor(
     override fun onSurfaceTextureAvailable(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
         Log.i(TAG, "onSurfaceTextureAvailable: attaching surface (vo=$voInUse, ${width}x${height})")
         try {
+            surface?.release()
             val s = Surface(surfaceTexture)
             surface = s
             // 使用 reattachSurfaceWithVo 而非 attachSurface：它会先 vo=null 再 vo=voInUse，

@@ -4,8 +4,12 @@
 -dontwarn com.chaquo.python.**
 -dontwarn org.python.**
 
-# 应用自身代码（含 Python 桥接调用、数据模型反射）
--keep class com.iptv.scanner.editor.pro.** { *; }
+# 应用自身代码：仅保留 Python 桥接入口和数据模型（@Serializable 反射）
+# 其他 Kotlin 类由 R8 正常优化/混淆
+-keep class com.iptv.scanner.editor.pro.data.** { *; }
+-keep class com.iptv.scanner.editor.pro.mpv.MPVLib { *; }
+-keep class com.iptv.scanner.editor.pro.mpv.MPVLib$* { *; }
+-keepclassmembers class com.iptv.scanner.editor.pro.IptvApplication { <init>(...); }
 
 # JNI native 方法（MPV 的 native 绑定）
 -keepclasseswithmembernames class * {
@@ -33,8 +37,7 @@
     kotlinx.serialization.KSerializer serializer(...);
 }
 
-# Compose（部分反射 + 修饰符保留）
--keep class androidx.compose.** { *; }
+# Compose（Compose BOM 已自带 R8 规则，无需手动 keep）
 -dontwarn androidx.compose.**
 
 # Coil 图片加载（反射加载解码器）

@@ -501,7 +501,11 @@ private fun EmptyHint(text: String) {
  */
 @Composable
 private fun AdminAutoStopToggle(viewModel: AppViewModel) {
+    val adminRunning by viewModel.adminServerRunning.collectAsState()
     var autoStop by remember { mutableStateOf(viewModel.getAdminAutoStop()) }
+    LaunchedEffect(adminRunning) {
+        autoStop = viewModel.getAdminAutoStop()
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -562,7 +566,7 @@ private fun LanAdminInfoBar(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "$url/admin/" + (if (token.isNotEmpty()) "?token=$token" else ""),
+                        text = "$url/admin/" + (if (token.isNotEmpty()) "?token=****" else ""),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary,
                         maxLines = 1,
@@ -632,10 +636,12 @@ private fun LanAdminInfoBar(
                     // 显示访问令牌（PC 浏览器用户需手动输入）
                     if (token.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(12.dp))
+                        var tokenVisible by remember { mutableStateOf(false) }
                         Surface(
                             color = MaterialTheme.colorScheme.surfaceVariant,
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.fillMaxWidth()
+                                .clickable { tokenVisible = !tokenVisible }
                         ) {
                             Column(
                                 modifier = Modifier.padding(12.dp),
@@ -648,16 +654,16 @@ private fun LanAdminInfoBar(
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = token,
+                                    text = if (tokenVisible) token else "••••",
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = MaterialTheme.colorScheme.onSurface,
                                     fontWeight = FontWeight.Bold
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = "PC 浏览器打开地址后输入此令牌",
+                                    text = if (tokenVisible) "点击隐藏令牌" else "点击显示令牌",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.primary
                                 )
                             }
                         }
@@ -691,7 +697,7 @@ private fun LanAdminTokenInput(viewModel: AppViewModel) {
             )
             if (adminToken.isNotEmpty()) {
                 Text(
-                    text = if (showInput) "" else adminToken,
+                    text = if (showInput) "" else "••••",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Medium

@@ -29,10 +29,12 @@ if (versionFile.exists()) {
 def versionParts = versionNameStr.split("\\.")
 def versionCodeVal = 1
 if (versionParts.length >= 2) {
-    versionCodeVal = versionParts[0].toInteger() * 1000000 + versionParts[1].toInteger() * 1000
+    versionCodeVal = (versionParts[0].toInteger() * 1000000 + versionParts[1].toInteger() * 1000)
     if (versionParts.length >= 3) {
         versionCodeVal += versionParts[2].toInteger()
     }
+    // 溢出保护：Google Play 最大 versionCode 为 2100000000
+    versionCodeVal = Math.min(versionCodeVal, 2100000000)
 }
 
 android {

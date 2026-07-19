@@ -306,7 +306,8 @@ object ProgressHelper {
     // 工具函数
     // -----------------------------------------------------------------
 
-    /** 判断是否为本地文件（非 http/https/rtp/udp/rtsp 协议） */
+    /** 判断是否为本地文件（非 http/https/rtp/udp/rtsp 协议）。
+     *  content:// (SAF) 和 file:// 均视为本地文件。 */
     fun isLocalFile(url: String): Boolean {
         if (url.isEmpty()) return false
         val lower = url.lowercase(Locale.US)

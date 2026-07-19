@@ -88,9 +88,8 @@ fun EpgPanel(viewModel: AppViewModel, compact: Boolean = false) {
     val loading by viewModel.epgLoading.collectAsState()
     val currentIdx by viewModel.currentIdx.collectAsState()
 
-    var searchQuery by remember { mutableStateOf("") }
-    // EPG 日期切换（±7 天，0=今天）
-    var epgDateOffset by remember { mutableStateOf(0) }
+
+    // EPG 日期切换（±7 天，0=今天）    var epgDateOffset by remember { mutableStateOf(0) }
 
     // TV 焦点管理：面板打开时请求焦点到关闭按钮，确保 DPAD 可操作。
     val closeFocusRequester = remember { FocusRequester() }
@@ -202,15 +201,9 @@ fun EpgPanel(viewModel: AppViewModel, compact: Boolean = false) {
                     if (dateFiltered.isEmpty()) {
                         EmptyState("该日期无节目数据")
                     } else {
-                        val filtered = if (searchQuery.isEmpty()) dateFiltered else {
-                            dateFiltered.filter {
-                                it.title.contains(searchQuery, ignoreCase = true) ||
-                                        it.desc.contains(searchQuery, ignoreCase = true)
-                            }
-                        }
                         EpgList(
-                            programs = filtered,
-                            searchActive = searchQuery.isNotEmpty(),
+                            programs = dateFiltered,
+                            searchActive = false,
                             hasReminder = { program -> viewModel.isReminderSet(program) },
                             supportsCatchup = currentChannel?.let { CatchupHelper.isCatchupEnabled(it) } ?: false,
                             onProgramClick = { program ->
@@ -541,21 +534,23 @@ private fun isProgramCurrent(program: IptvEpgProgram, nowMs: Long): Boolean {
     return startMs > 0 && endMs > startMs && nowMs >= startMs && nowMs < endMs
 }
 
-private fun parseTimeToMs(iso: String, ts: Long): Long {
-    if (ts > 0) return ts * 1000L
-    if (iso.isEmpty()) return 0
-    val patterns = listOf(
+private val DATE_FORMATS by lazy {
+    listOf(
         "yyyy-MM-dd'T'HH:mm:ssXXX",
         "yyyy-MM-dd'T'HH:mm:ss'Z'",
         "yyyy-MM-dd'T'HH:mm:ss",
         "yyyy-MM-dd HH:mm:ss",
         "yyyy-MM-dd HH:mm"
-    )
-    for (pattern in patterns) {
+    ).map { java.text.SimpleDateFormat(it, Locale.US) }
+}
+
+private fun parseTimeToMs(iso: String, ts: Long): Long {
+    if (ts > 0) return ts * 1000L
+    if (iso.isEmpty()) return 0
+    for (fmt in DATE_FORMATS) {
         try {
-            return SimpleDateFormat(pattern, Locale.US).parse(iso)?.time ?: continue
+            return fmt.parse(iso)?.time ?: continue
         } catch (_: Exception) {
-            // 尝试下一个格式
         }
     }
     return iso.toLongOrNull()?.let { if (it > 1_000_000_000_000L) it else it * 1000 } ?: 0

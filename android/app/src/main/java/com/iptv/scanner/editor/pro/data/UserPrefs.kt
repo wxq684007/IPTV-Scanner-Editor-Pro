@@ -129,15 +129,15 @@ class UserPrefs private constructor() {
     // -----------------------------------------------------------------
 
     fun setFavorites(favorites: Set<Int>) {
-        prefs.edit().putString(KEY_FAVORITES, JSONArray(favorites.toList()).toString()).apply()
+        prefs.edit().putString(KEY_FAVORITES, JSONArray(favorites.toList()).toString()).commit()
     }
 
     fun setHistory(history: List<Int>) {
-        prefs.edit().putString(KEY_HISTORY, JSONArray(history).toString()).apply()
+        prefs.edit().putString(KEY_HISTORY, JSONArray(history).toString()).commit()
     }
 
     fun setQueue(queue: List<Int>) {
-        prefs.edit().putString(KEY_QUEUE, JSONArray(queue).toString()).apply()
+        prefs.edit().putString(KEY_QUEUE, JSONArray(queue).toString()).commit()
     }
 
     // -----------------------------------------------------------------

@@ -79,6 +79,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
@@ -302,32 +303,41 @@ fun MainPlayerScreen(viewModel: AppViewModel) {
     }
 
     // 是否有任何面板或对话框打开（控制层在面板/对话框打开时自动隐藏）
-    val anyPanelOpen = channelsPanelOpen || epgPanelOpen || menuPanelOpen ||
-            tvUnifiedPanelOpen ||
-            sourceManagerOpen || playerSettingsOpen ||
-            videoSettingsOpen || audioSettingsOpen || subtitleSettingsOpen || subtitleSearchOpen ||
-            playbackPanelOpen || screenshotPanelOpen || viewSettingsOpen || aboutPanelOpen ||
-            mappingPanelOpen || avSyncPanelOpen || networkPanelOpen || toolsPanelOpen || scanPanelOpen ||
-            reminderPanelOpen || resumePanelOpen || bookmarkPanelOpen ||
-            epgTimelineOpen || searchPanelOpen || streamQualityPanelOpen ||
-            recentPanelOpen || clipExportPanelOpen || audioVisualizerOpen || lyricsOpen ||
-            exitConfirmOpen || openUrlDialogOpen || updateDialogOpen ||
-            channelInfoOpen
+    // 使用 derivedStateOf 避免每次单个面板状态变化都触发重组
+    val anyPanelOpen by remember {
+        derivedStateOf {
+            channelsPanelOpen || epgPanelOpen || menuPanelOpen ||
+                    tvUnifiedPanelOpen ||
+                    sourceManagerOpen || playerSettingsOpen ||
+                    videoSettingsOpen || audioSettingsOpen || subtitleSettingsOpen || subtitleSearchOpen ||
+                    playbackPanelOpen || screenshotPanelOpen || viewSettingsOpen || aboutPanelOpen ||
+                    mappingPanelOpen || avSyncPanelOpen || networkPanelOpen || toolsPanelOpen || scanPanelOpen ||
+                    reminderPanelOpen || resumePanelOpen || bookmarkPanelOpen ||
+                    epgTimelineOpen || searchPanelOpen || streamQualityPanelOpen ||
+                    recentPanelOpen || clipExportPanelOpen || audioVisualizerOpen || lyricsOpen ||
+                    exitConfirmOpen || openUrlDialogOpen || updateDialogOpen ||
+                    channelInfoOpen
+        }
+    }
     // 控制层是否应该显示
     val showControls = controlsVisible && !anyPanelOpen
 
     // PHONE 竖屏分屏：竖屏 PHONE 模式且非多画面时生效
     // 注意：不检查面板状态！面板作为叠加层显示在竖屏布局上方，
     // 避免 portraitSplit 切换导致播放器视图重建（TextureView ↔ SurfaceView）引发崩溃。
-    val anyFullScreenPanel = menuPanelOpen || sourceManagerOpen || playerSettingsOpen ||
-            videoSettingsOpen || audioSettingsOpen || subtitleSettingsOpen || subtitleSearchOpen ||
-            playbackPanelOpen || screenshotPanelOpen || viewSettingsOpen || aboutPanelOpen ||
-            mappingPanelOpen || avSyncPanelOpen || networkPanelOpen || toolsPanelOpen || scanPanelOpen ||
-            reminderPanelOpen || resumePanelOpen || bookmarkPanelOpen ||
-            epgTimelineOpen || searchPanelOpen || streamQualityPanelOpen ||
-            recentPanelOpen || clipExportPanelOpen || audioVisualizerOpen || lyricsOpen ||
-            exitConfirmOpen || openUrlDialogOpen || updateDialogOpen ||
-            channelInfoOpen
+    val anyFullScreenPanel by remember {
+        derivedStateOf {
+            menuPanelOpen || sourceManagerOpen || playerSettingsOpen ||
+                    videoSettingsOpen || audioSettingsOpen || subtitleSettingsOpen || subtitleSearchOpen ||
+                    playbackPanelOpen || screenshotPanelOpen || viewSettingsOpen || aboutPanelOpen ||
+                    mappingPanelOpen || avSyncPanelOpen || networkPanelOpen || toolsPanelOpen || scanPanelOpen ||
+                    reminderPanelOpen || resumePanelOpen || bookmarkPanelOpen ||
+                    epgTimelineOpen || searchPanelOpen || streamQualityPanelOpen ||
+                    recentPanelOpen || clipExportPanelOpen || audioVisualizerOpen || lyricsOpen ||
+                    exitConfirmOpen || openUrlDialogOpen || updateDialogOpen ||
+                    channelInfoOpen
+        }
+    }
     val configuration = LocalConfiguration.current
     val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
     // 竖屏 PHONE 模式：默认上下分屏（视频 16:9 + 频道列表）

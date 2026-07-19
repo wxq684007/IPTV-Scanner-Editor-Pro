@@ -294,7 +294,7 @@ private fun readStreamInfo(mpv: com.iptv.scanner.editor.pro.player.Player): Stre
         primaries = gs("video-params/primaries").ifEmpty { "N/A" },
         gamma = gamma.ifEmpty { "N/A" },
         hdrType = hdrType,
-        videoDepth = gs("video-params/bits-per-component").ifEmpty { "N/A" } + " bit",
+        videoDepth = gs("video-params/bits-per-component").let { if (it.isEmpty()) "N/A" else "$it bit" },
         aspectRatio = gs("video-params/aspect").ifEmpty { "N/A" },
         // 音频
         audioCodec = gs("audio-codec").ifEmpty { gs("audio-codec-name") }.ifEmpty { "N/A" },

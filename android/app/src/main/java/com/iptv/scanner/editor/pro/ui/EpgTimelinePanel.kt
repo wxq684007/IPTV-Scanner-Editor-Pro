@@ -107,7 +107,13 @@ fun EpgTimelinePanel(viewModel: AppViewModel) {
     // 自动滚动到当前时间（首次加载或日期变化时，仅今天滚动）
     LaunchedEffect(rows, dateOffset) {
         if (rows.isNotEmpty() && dateOffset == 0) {
-            val now = System.currentTimeMillis()
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(60_000L)
+            now = System.currentTimeMillis()
+        }
+    }
             val cal = Calendar.getInstance().apply {
                 set(Calendar.HOUR_OF_DAY, 0)
                 set(Calendar.MINUTE, 0)
@@ -329,6 +335,9 @@ private fun TimelineGrid(
     val outlineColor = MaterialTheme.colorScheme.outline
     val secondaryColor = MaterialTheme.colorScheme.secondary
     val surfaceVariantArgb = MaterialTheme.colorScheme.surfaceVariant.toArgb()
+    val errorColor = MaterialTheme.colorScheme.error
+    val tertiaryColor = MaterialTheme.colorScheme.tertiary
+    val primaryColor = MaterialTheme.colorScheme.primary
     val surfaceArgb = MaterialTheme.colorScheme.surface.toArgb()
     val onSurfaceVariantArgb = onSurfaceVariantColor.toArgb()
     val outlineArgb = outlineColor.toArgb()
@@ -358,7 +367,7 @@ private fun TimelineGrid(
     }
     val nowLabelPaint = remember(density) {
         android.graphics.Paint().apply {
-            color = android.graphics.Color.parseColor("#F44336")
+            color = errorColor.toArgb()
             textSize = with(density) { 10.sp.toPx() }
             isFakeBoldText = true
             isAntiAlias = true
@@ -604,8 +613,8 @@ private fun TimelineGrid(
 
                                 // 节目块背景
                                 val bgColor = when {
-                                    isSelected -> Color(0xFFFFC107)  // 选中：金色（语义色）
-                                    isCurrent -> Color(0xFF4A9EFF)   // 当前：蓝色（语义色）
+                                    isSelected -> tertiaryColor  // 选中：主题 tertiary
+                                    isCurrent -> primaryColor     // 当前：主题 primary
                                     isPast -> Color(surfaceVariantArgb)  // 过去：随主题变
                                     else -> secondaryColor.copy(alpha = 0.3f)  // 普通：浅蓝
                                 }
@@ -649,7 +658,7 @@ private fun TimelineGrid(
                     if (now in dayStartMs until dayEndMs) {
                         val nowX = ((now - dayStartMs) / 3600000.0).toFloat() * hourWidthPx
                         drawLine(
-                            color = Color(0xFFF44336),
+                            color = errorColor,
                             start = Offset(nowX, 0f),
                             end = Offset(nowX, gridHeightPx),
                             strokeWidth = 2f

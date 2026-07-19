@@ -353,10 +353,16 @@ class MPVView @JvmOverloads constructor(
         // 核心存活检查：如果核心已创建且活跃，直接返回
         if (nativeInstanceCreated && nativeInstanceAlive) {
             return true
-        } else if (nativeInstanceCreated) {
-            // nativeInstanceCreated=true 但 nativeInstanceAlive=false：
+        } else if (nativeInstanceCreated && !nativeHandleCreated) {
+            // nativeInstanceCreated=true 但 nativeInstanceAlive=false 且无 native 句柄：
             // 实例存在但未活跃（destroy() 后状态），surfaceCreated 会恢复
             return true
+        } else if (nativeInstanceCreated) {
+            // nativeInstanceCreated=true + nativeHandleCreated=true 但 nativeInstanceAlive=false：
+            // mpv 核心已 shutdown（markInstanceDead），native 句柄仍存在（keep-alive）。
+            // idle=yes 下核心不应 shutdown，但若发生，返回 false 防止在已死句柄上操作。
+            Log.w(TAG, "ensureInstanceAlive: instance created but not alive (core shutdown?), returning false")
+            return false
         }
         // 核心 shutdown 后需要重建（idle=yes 下不应发生，此处为安全兜底）
         // 安全检查：如果 native 句柄已存在（keep-alive），不要尝试在已终止的句柄上

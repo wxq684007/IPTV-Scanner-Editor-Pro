@@ -236,9 +236,9 @@ fun GlassCard(
             )
         }
         Surface(
-            color = if (isAndroid12Plus) oc.topBarBg.copy(alpha = 0.25f) else oc.topBarBg.copy(alpha = 0.75f),
+            color = if (isAndroid12Plus) oc.topBarBg.copy(alpha = 0.25f) else oc.topBarBg.copy(alpha = 0.85f),
             shape = shape,
-            border = androidx.compose.foundation.BorderStroke(1.dp, oc.accent.copy(alpha = 0.30f)),
+            border = androidx.compose.foundation.BorderStroke(1.dp, oc.accent.copy(alpha = if (isAndroid12Plus) 0.30f else 0.15f)),
             modifier = Modifier.matchParentSize()
         ) {
             content()

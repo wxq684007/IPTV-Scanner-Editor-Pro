@@ -9,6 +9,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player as Media3Player
 import androidx.media3.common.TrackSelectionParameters
+import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.datasource.DefaultDataSource
@@ -341,16 +342,22 @@ class ExoPlayerWrapper(
 
     override fun cycleAudio() {
         val p = player ?: return
-        val tracks = p.currentTracks.groups.filter { it.type == androidx.media3.common.C.TRACK_TYPE_AUDIO }
-        if (tracks.isEmpty()) return
-        // 简单切换到下一个音轨
-        val current = p.currentTracks.groups.indexOfFirst { it.isSelected }
-        val next = if (current >= 0 && current < tracks.size - 1) current + 1 else 0
+        val audioGroups = p.currentTracks.groups.filter { it.type == androidx.media3.common.C.TRACK_TYPE_AUDIO }
+        if (audioGroups.isEmpty()) return
         try {
-            val group = tracks[next]
+            val currentSelectedIdx = audioGroups.indexOfFirst { it.isSelected }
+            val nextIdx = if (currentSelectedIdx >= 0 && currentSelectedIdx < audioGroups.size - 1) currentSelectedIdx + 1 else 0
+            val nextGroup = audioGroups[nextIdx]
+            val trackIndices = mutableListOf<Int>()
+            for (i in 0 until nextGroup.length) {
+                if (nextGroup.isTrackSupported(i)) trackIndices.add(i)
+            }
+            if (trackIndices.isEmpty()) return
             p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
-                .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_AUDIO, false)
+                .setOverrideForType(TrackSelectionOverride(nextGroup.mediaTrackGroup, trackIndices))
+                .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
                 .build()
+            Log.i(TAG, "cycleAudio: switched to audio track $nextIdx")
         } catch (e: Exception) {
             Log.w(TAG, "cycleAudio failed: ${e.message}")
         }
@@ -358,19 +365,68 @@ class ExoPlayerWrapper(
 
     override fun cycleSub() {
         val p = player ?: return
-        // 切换字幕轨开关
-        val subEnabled = p.trackSelectionParameters.disabledTrackTypes
-            .contains(androidx.media3.common.C.TRACK_TYPE_TEXT).not()
-        p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
-            .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, subEnabled)
-            .build()
+        val subGroups = p.currentTracks.groups.filter { it.type == androidx.media3.common.C.TRACK_TYPE_TEXT }
+        if (subGroups.isEmpty()) {
+            val subEnabled = p.trackSelectionParameters.disabledTrackTypes
+                .contains(androidx.media3.common.C.TRACK_TYPE_TEXT).not()
+            p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+                .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, subEnabled)
+                .build()
+            return
+        }
+        try {
+            val currentSelectedIdx = subGroups.indexOfFirst { it.isSelected }
+            val nextIdx = if (currentSelectedIdx >= 0 && currentSelectedIdx < subGroups.size - 1) currentSelectedIdx + 1 else 0
+            p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+                .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, false)
+                .build()
+            Log.i(TAG, "cycleSub: switched to subtitle track $nextIdx")
+        } catch (e: Exception) {
+            Log.w(TAG, "cycleSub failed: ${e.message}")
+        }
     }
 
     override fun setAudioTrack(id: Int) {
-        // ExoPlayer 通过 trackSelectionParameters 控制，此处简化处理
+        val p = player ?: return
+        val audioGroups = p.currentTracks.groups.filter { it.type == androidx.media3.common.C.TRACK_TYPE_AUDIO }
+        if (audioGroups.isEmpty() || id < 0 || id >= audioGroups.size) return
+        try {
+            val targetGroup = audioGroups[id]
+            val trackIndices = mutableListOf<Int>()
+            for (i in 0 until targetGroup.length) {
+                if (targetGroup.isTrackSupported(i)) trackIndices.add(i)
+            }
+            if (trackIndices.isEmpty()) return
+            p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+                .setOverrideForType(androidx.media3.common.TrackSelectionOverride(targetGroup.mediaTrackGroup, trackIndices))
+                .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_AUDIO, false)
+                .build()
+            Log.i(TAG, "setAudioTrack: set to track $id")
+        } catch (e: Exception) {
+            Log.w(TAG, "setAudioTrack failed: ${e.message}")
+        }
     }
 
-    override fun setSubTrack(id: Int) {}
+    override fun setSubTrack(id: Int) {
+        val p = player ?: return
+        val subGroups = p.currentTracks.groups.filter { it.type == androidx.media3.common.C.TRACK_TYPE_TEXT }
+        if (subGroups.isEmpty() || id < 0 || id >= subGroups.size) return
+        try {
+            val targetGroup = subGroups[id]
+            val trackIndices = mutableListOf<Int>()
+            for (i in 0 until targetGroup.length) {
+                if (targetGroup.isTrackSupported(i)) trackIndices.add(i)
+            }
+            if (trackIndices.isEmpty()) return
+            p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+                .setOverrideForType(androidx.media3.common.TrackSelectionOverride(targetGroup.mediaTrackGroup, trackIndices))
+                .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, false)
+                .build()
+            Log.i(TAG, "setSubTrack: set to track $id")
+        } catch (e: Exception) {
+            Log.w(TAG, "setSubTrack failed: ${e.message}")
+        }
+    }
 
     override fun addSubtitleFile(path: String) {
         // ExoPlayer 支持外挂字幕通过 MediaItem.subtitleConfigurations
@@ -464,9 +520,18 @@ class ExoPlayerWrapper(
 
     override fun restorePlaybackState(url: String, timePosSec: Double) {
         playFile(url)
-        // 等待加载完成后 seek
         if (timePosSec > 0) {
-            player?.seekTo((timePosSec * 1000).toLong())
+            val targetMs = (timePosSec * 1000).toLong()
+            val p = player ?: return
+            val listener = object : Media3Player.Listener {
+                override fun onPlaybackStateChanged(playbackState: Int) {
+                    if (playbackState == Media3Player.STATE_READY) {
+                        p.seekTo(targetMs)
+                        p.removeListener(this)
+                    }
+                }
+            }
+            p.addListener(listener)
         }
     }
 

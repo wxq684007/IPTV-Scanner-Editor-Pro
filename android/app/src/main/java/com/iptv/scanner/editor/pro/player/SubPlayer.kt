@@ -81,9 +81,20 @@ class SubPlayer(private val context: Context) {
             val dataSourceFactory = DefaultDataSource.Factory(context, httpDataSourceFactory)
             val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
 
-            player = ExoPlayer.Builder(context)
+            val renderersFactory = androidx.media3.exoplayer.DefaultRenderersFactory(context)
+                .setEnableDecoderFallback(true)
+                .setExtensionRendererMode(androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+            player = ExoPlayer.Builder(context, renderersFactory)
                 .setMediaSourceFactory(mediaSourceFactory)
                 .setUseLazyPreparation(true)
+                .setAudioAttributes(
+                    androidx.media3.common.AudioAttributes.Builder()
+                        .setUsage(androidx.media3.common.C.USAGE_MEDIA)
+                        .setContentType(androidx.media3.common.C.AUDIO_CONTENT_TYPE_MOVIE)
+                        .build(),
+                    true
+                )
+                .setHandleAudioBecomingNoisy(true)
                 .build().also { p ->
                     p.addListener(object : Media3Player.Listener {
                         override fun onPlaybackStateChanged(playbackState: Int) {

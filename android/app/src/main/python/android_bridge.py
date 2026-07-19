@@ -69,9 +69,14 @@ def _setup_android_paths(ext_files_dir='', files_dir='', native_lib_dir=''):
             candidate = os.path.join(ext_storage, 'ISEP')
             os.makedirs(candidate, exist_ok=True)
             test_file = os.path.join(candidate, '.write_test')
-            with open(test_file, 'w') as f:
-                f.write('ok')
-            os.remove(test_file)
+            try:
+                with open(test_file, 'w') as f:
+                    f.write('ok')
+            finally:
+                try:
+                    os.remove(test_file)
+                except Exception:
+                    pass
             target_dir = candidate
             _log(f'_setup_android_paths: using external storage {target_dir}')
         except Exception as e:

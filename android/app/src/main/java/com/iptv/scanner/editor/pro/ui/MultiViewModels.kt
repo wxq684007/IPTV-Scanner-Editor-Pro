@@ -46,7 +46,7 @@ data class MultiViewport(
     val channelName: String = "",
     val isError: Boolean = false,
     val errorMessage: String = "",
-    val isMuted: Boolean = false
+    val isMuted: Boolean = !isPrimary
 ) {
     /** 是否为空画面（未播放） */
     val isEmpty: Boolean get() = channelIdx < 0

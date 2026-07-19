@@ -1,16 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- 允许明文 HTTP 流量：IPTV 直播流大量使用 HTTP（非 HTTPS）协议，
-         ExoPlayer 使用 Android HTTP 栈受此配置限制。
-         MPV 使用自己的网络栈（libmpv 内部），不受此配置影响。 -->
+    <!-- IPTV 应用必须允许明文 HTTP 流量：
+         1. IPTV 直播流大量使用 HTTP（非 HTTPS）协议，源地址不可预知，无法做 domain 级白名单
+         2. ExoPlayer 使用 Android HTTP 栈受此配置限制
+         3. MPV 使用自己的网络栈（libmpv 内部），不受此配置影响
+         安全措施：TLS 验证由 mpv 的 tls-verify=yes / stream-lavf-o=verify=1 单独控制 -->
     <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>
     </base-config>
-    <!-- localhost 明文（内置 HTTP 管理服务器需要） -->
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="false">localhost</domain>
-        <domain includeSubdomains="false">127.0.0.1</domain>
-    </domain-config>
 </network-security-config>

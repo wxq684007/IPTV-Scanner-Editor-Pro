@@ -65,6 +65,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import java.io.File
@@ -99,6 +100,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val repository = IptvRepository.getInstance()
     private val userPrefs = UserPrefs.getInstance().also { it.init(app) }
     private val fccService = FccService()
+
+    // 辅助类：从 AppViewModel 拆分出的独立业务模块
+    internal val scanHelper = ScanHelper(repository, viewModelScope, userPrefs)
+    internal val mappingHelper = MappingHelper(repository, viewModelScope)
+    internal val updateHelper = UpdateHelper(app, repository, viewModelScope)
 
     // -----------------------------------------------------------------
     // 播放器架构：MPV / ExoPlayer / 系统解码 三内核可切换
@@ -1108,8 +1114,14 @@ private var _channelInputJob: kotlinx.coroutines.Job? = null
     private val _currentLyricLine = MutableStateFlow(-1)
     val currentLyricLine: StateFlow<Int> = _currentLyricLine.asStateFlow()
 
-    /** PiP 回调（Activity 注入，ViewModel 不能直接调用 Activity 方法） */
-    var onEnterPip: (() -> Unit)? = null
+    /** PiP 回调（Activity 注入，ViewModel 不能直接调用 Activity 方法）
+     *  使用 WeakReference 防止 Configuration Change 后旧 Activity 泄漏 */
+    private var _onEnterPip: java.lang.ref.WeakReference<() -> Unit>? = null
+    var onEnterPip: (() -> Unit)?
+        get() = _onEnterPip?.get()
+        set(value) {
+            _onEnterPip = if (value != null) java.lang.ref.WeakReference(value) else null
+        }
 
     /** 刷新 UI 状态 */
     private val _refreshing = MutableStateFlow(false)

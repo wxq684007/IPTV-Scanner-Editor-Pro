@@ -107,6 +107,7 @@ class MpvController : MPVLib.EventObserver, Player {
      * VO 自动 fallback 回调（由黑屏检测触发）。
      * AppViewModel 注册此回调以同步 UI 状态（_currentVo / _currentHwdec）。
      */
+    @Volatile
     var onVoFallback: ((String, String) -> Unit)? = null
 
 /**
@@ -114,6 +115,7 @@ class MpvController : MPVLib.EventObserver, Player {
  * AppViewModel 注册此回调以在文件加载出错时立即换源，
  * 而不必等待超时定时器触发（默认 5-30s 太慢，坏流可能在几秒内耗尽内存）。
  */
+@Volatile
 var onFileError: (() -> Unit)? = null
 
     private val _speed = MutableStateFlow(1.0)
@@ -207,16 +209,31 @@ var onFileError: (() -> Unit)? = null
      * 解绑 MPVView，移除 EventObserver。
      * 在 Activity.onDestroy 或切换内核时调用。
      *
-     * 关键：先同步停止 MPV 播放，再清空 mpvView。
-     * 如果不先停止，stop() 通过 postOnUiThread 异步执行，
-     * 但 detach 会立即把 mpvView 设为 null，导致异步的 stop lambda 变成空操作。
+     * 线程安全：stop() 和 onInstanceRecreated 清理通过 postOnUiThread 在 mpv 线程执行，
+     * 避免在调用线程直接调用 MPVLib.command 违反 mpv 线程安全要求。
+     * mpvView 引用在 post 之前捕获（val v = mpvView），确保异步 lambda 能正确访问。
+     * this.mpvView = null 在 post 之后立即执行，阻止后续命令进入旧 view。
      */
-override fun detach() {
-// 同步停止播放，防止切换内核后旧 MPV 实例继续播放音频/视频
-try {
-if (mpvView != null) {
-mpvView?.stop()
-}
+    override fun detach() {
+        val v = mpvView
+        if (v != null) {
+            v.asView().post {
+                try {
+                    v.stop()
+                } catch (e: Throwable) {
+                    Log.w(TAG, "detach: stop failed: ${e.message}")
+                }
+                v.onInstanceRecreated = null
+            }
+        }
+        this.mpvView = null
+        _fileLoaded.value = false
+        _eofReached.value = false
+        _timePos.value = 0.0
+        _duration.value = 0.0
+        _paused.value = true
+        Log.i(TAG, "MpvController detached")
+    }
 } catch (e: Throwable) {
 Log.w(TAG, "detach: sync stop failed: ${e.message}")
 }
@@ -257,7 +274,9 @@ Log.i(TAG, "MpvController detached")
                 // 并初始化新 VO（尤其是 gpu↔mediacodec_embed 跨类型切换），
                 // 导致用户以为切换了 VO 但实际仍在用旧 VO（黑屏）。
                 MPVLib.setPropertyString("hwdec", hwdec)
+                _hwdecCache = hwdec
                 mpvView?.reattachSurfaceWithVo(vo)
+                _voCache = vo
 
                 // 重新加载当前文件以触发新 vo 渲染
                 val path = MPVLib.getPropertyString("path")
@@ -293,18 +312,15 @@ Log.i(TAG, "MpvController detached")
      */
     override fun setHardwareDecode(enabled: Boolean): Boolean {
         val currentVo = try {
-            MPVLib.getPropertyString("vo") ?: "gpu"
+            _voCache
         } catch (e: Throwable) { "gpu" }
 
-        // vo=mediacodec_embed 固定硬解，不支持软解
         if (!enabled && currentVo == "mediacodec_embed") {
             Log.w(TAG, "setHardwareDecode: vo=mediacodec_embed 不支持软解")
             return false
         }
 
-        val currentHwdec = try {
-            MPVLib.getPropertyString("hwdec") ?: "auto-copy"
-        } catch (e: Throwable) { "auto-copy" }
+        val currentHwdec = _hwdecCache
         val hwdec = when {
             !enabled -> "no"
             currentVo == "mediacodec_embed" -> "mediacodec"
@@ -320,10 +336,16 @@ Log.i(TAG, "MpvController detached")
     /** 查询当前是否使用硬件解码 */
     override fun isHardwareDecodeEnabled(): Boolean {
         return try {
-            val hwdec = MPVLib.getPropertyString("hwdec") ?: "auto-copy"
+            val hwdec = _hwdecCache
             hwdec != "no"
         } catch (e: Throwable) { true }
     }
+
+    @Volatile
+    private var _hwdecCache: String = "auto-copy"
+
+    @Volatile
+    private var _voCache: String = "gpu"
 
     /**
      * 设置反交错（deinterlace）。
@@ -442,10 +464,9 @@ Log.i(TAG, "MpvController detached")
     }
 
     override fun refreshSurface() {
-        // 重新 attach surface（解决从 Tab 覆盖层返回后画面黑屏）
         postOnUiThread {
             try {
-                val vo = try { MPVLib.getPropertyString("vo") ?: "gpu" } catch (_: Exception) { "gpu" }
+                val vo = _voCache
                 mpvView?.reattachSurfaceWithVo(vo)
                 Log.i(TAG, "refreshSurface: reattached surface with vo=$vo")
             } catch (e: Exception) {
@@ -652,9 +673,9 @@ Log.i(TAG, "MpvController detached")
     override fun setSubDelay(delaySec: Double) =
         postOnUiThread { MPVLib.setPropertyDouble("sub-delay", delaySec) }
 
-    override fun adjustSubDelay(delta: Double) {
-        val cur = MPVLib.getPropertyDouble("sub-delay") ?: 0.0
-        setSubDelay(cur + delta)
+    override fun adjustSubDelay(delta: Double) = postOnUiThread {
+        val cur = try { MPVLib.getPropertyDouble("sub-delay") ?: 0.0 } catch (_: Throwable) { 0.0 }
+        MPVLib.setPropertyDouble("sub-delay", (cur + delta).coerceIn(-10.0, 10.0))
     }
 
     override fun setSubScale(scale: Double) =
@@ -821,8 +842,10 @@ Log.i(TAG, "MpvController detached")
     }
 
     override fun adjustAudioDelay(delta: Double): Boolean {
-        val cur = MPVLib.getPropertyDouble("audio-delay") ?: 0.0
-        setAudioDelay(cur + delta)
+        postOnUiThread {
+            val cur = try { MPVLib.getPropertyDouble("audio-delay") ?: 0.0 } catch (_: Throwable) { 0.0 }
+            MPVLib.setPropertyDouble("audio-delay", (cur + delta).coerceIn(-10.0, 10.0))
+        }
         return true
     }
 

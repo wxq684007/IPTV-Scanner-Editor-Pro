@@ -83,7 +83,7 @@ fun PlayerSettingsPanel(viewModel: AppViewModel) {
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     Surface(
-        color = Color.Transparent,
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
         modifier = Modifier.fillMaxSize()
     ) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

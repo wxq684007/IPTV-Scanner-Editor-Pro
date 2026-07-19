@@ -472,7 +472,7 @@ private fun ChannelListItem(
         // 收藏标记
         if (isFavorite) {
             Spacer(modifier = Modifier.width(8.dp))
-            Text("★", color = Color(0xFFFFC107), fontSize = 12.sp)
+            Text("★", color = MaterialTheme.colorScheme.tertiary, fontSize = 12.sp)
         }
     }
 }

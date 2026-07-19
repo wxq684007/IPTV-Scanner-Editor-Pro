@@ -493,13 +493,11 @@ private fun ModeIconButton(
             .background(if (isSelected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)
             .tvFocusBorder()
             .onFocusChanged { state ->
-                // 焦点切入时自动触发模式切换（TV 端无需按 OK 键）
-                // 已选中的不重复触发，避免 recomposition 循环
                 if (autoSelectOnFocus && state.isFocused && !isSelected) {
                     onClick()
                 }
             }
-            .clickable { onClick() }
+            .clickable { if (!isSelected) onClick() }
             .padding(horizontal = 8.dp, vertical = 10.dp)
     ) {
         Icon(

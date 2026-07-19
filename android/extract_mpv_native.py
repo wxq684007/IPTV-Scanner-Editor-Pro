@@ -10,6 +10,12 @@ CI 下载 URL:
 但缺少 armeabi-v7a 和 x86 架构的 APK。
 
 此脚本下载所有 4 种架构的 APK 并提取 .so 文件到 app/src/main/jniLibs/。
+
+TODO: 构建流程优化 — 当前依赖预下载 mpv-android APK（4架构约200MB），步骤多且
+依赖外部 GitHub Release。建议改进方案：
+1. 将提取后的 .so 文件直接托管到项目内（git-lfs），消除 CI 下载步骤
+2. 或改用 Maven 依赖（如 com.github.mpv-android:mpv-lib:xxx），由 Gradle 自动解析
+3. 或在 CI 中缓存 jniLibs/ 目录，避免每次构建都重新下载和提取
 """
 import os
 import sys

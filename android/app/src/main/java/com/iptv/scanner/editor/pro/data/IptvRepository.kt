@@ -64,10 +64,7 @@ class IptvRepository private constructor() {
                 result.toString()
             } catch (e: Throwable) {
                 Log.e(TAG, "callPyRaw($funcName) failed", e)
-                // 安全的 JSON 错误构造：使用 kotlinx.serialization 避免手写转义
-                val errMsg = e.message ?: "unknown"
-                json.encodeToString(JsonObject.serializer(),
-                    buildJsonObject { put("error", JsonPrimitive(errMsg)) })
+                return@withContext "FAILED: ${e.message ?: "unknown"}"
             }
         }
 

@@ -295,6 +295,7 @@ data class SubtitleSearchResponse(
  * @param fastStep2 二级快放步进（如 1.0，速度 >= threshold 时使用）
  * @param fastStep2Threshold 二级快放触发阈值（如 2.0）
  */
+@Serializable
 data class SpeedConfig(
     val min: Double = 0.5,
     val max: Double = 3.0,
